@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 140">
+  <!-- 桌面绿底 + 白边，呼应游戏内牌面与桌面配色 -->
+  <rect x="0" y="0" width="100" height="140" rx="14" fill="#1d5c47"/>
+  <rect x="7" y="7" width="86" height="126" rx="9" fill="#ffffff"/>
+  <!-- 黑桃 A：拖拉机/升级的标志性花色 -->
+  <path d="M50 22 C50 22 26 46 26 63 a13 13 0 0 0 24 7 c-1 8 -4 13 -4 13 h8 c0 0 -3 -5 -4 -13 a13 13 0 0 0 24 -7 C74 46 50 22 50 22 z" fill="#2c2c2a"/>
+  <text x="50" y="122" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#2c2c2a">A</text>
+</svg>

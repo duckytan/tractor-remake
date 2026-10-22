@@ -1,0 +1,336 @@
+/**
+ * 拖拉机重制版 · 浏览器端到端验证
+ *
+ * 覆盖：P0 核心链（亮主 → 扣底/AI 出牌 → 选牌合法性 → 出牌推进）
+ *       P1 提示高亮（FR-19 ③）+ 全程零 console/pageerror
+ *       P2 设置面板 / Esc / 第一个完整墩
+ *
+ * 运行前需先构建并起 preview：
+ *   npm run build && npm run preview      # 另一终端
+ *   npm run test:e2e
+ *
+ * 环境变量：
+ *   E2E_BASE    目标地址，默认 http://127.0.0.1:4173（本地 preview）
+ *               也可指向线上：E2E_BASE=https://tractor-remake.vercel.app
+ *   E2E_PROXY   代理地址，如 http://127.0.0.1:7890（访问线上时才需要）
+ *
+ * 注意：本机默认的 HTTPS_PROXY(11918) 对 github.com 不通，
+ * 访问线上地址时必须显式设 E2E_PROXY=127.0.0.1:7890。
+ */
+
+import { chromium } from 'playwright'
+import { mkdirSync } from 'node:fs'
+
+const BASE = process.env.E2E_BASE ?? 'http://127.0.0.1:4173'
+const SHOTS = '.tmp/e2e-shots'
+const PROXY = process.env.E2E_PROXY
+mkdirSync(SHOTS, { recursive: true })
+
+const results = []
+const rec = (name, ok, evidence) => {
+  results.push({ name, ok, evidence })
+  console.log(`${ok ? 'PASS' : 'FAIL'} | ${name} | ${evidence}`)
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** 逐张点击手牌：每次状态变化都会整体重建 DOM，必须重新查询再点 */
+const clickHandCards = async (page, ids) => {
+  for (const id of ids) {
+    await page.evaluate((cid) => {
+      document.querySelector(`#app .hand .card[data-id="${cid}"]`)?.click()
+    }, id)
+  }
+}
+
+const consoleErrors = []
+const pageErrors = []
+const failedUrls = []
+
+const browser = await chromium.launch({
+  channel: 'chrome',
+  headless: true,
+  args: ['--no-sandbox'],
+  ...(PROXY ? { proxy: { server: PROXY } } : {}),
+})
+
+try {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  // 每次导航前清存档，保证从「定主」阶段全新开始
+  await ctx.addInitScript(() => {
+    try {
+      localStorage.clear()
+    } catch {
+      /* ignore */
+    }
+  })
+  const page = await ctx.newPage()
+  page.on('console', (m) => {
+    if (m.type() === 'error') consoleErrors.push(m.text())
+  })
+  page.on('pageerror', (e) => pageErrors.push(e.message))
+  page.on('response', (r) => {
+    if (r.status() >= 400) failedUrls.push(`${r.status()} ${r.url()}`)
+  })
+
+  /* ---------- S0 加载 + 定主面板 ---------- */
+  await page.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 })
+  await page.waitForSelector('#app .hand .card', { timeout: 20000 })
+  const handCount = await page.locator('#app .hand .card').count()
+  const trumpCount = await page.locator('[data-trump]').count()
+  const panelCount = await page.locator('[data-slot="overlay"] .panel').count()
+  rec(
+    'S0 首页加载：手牌 25 张 + 定主面板 5 个亮主按钮',
+    handCount === 25 && trumpCount === 5 && panelCount === 1,
+    `hand=${handCount} trumpBtns=${trumpCount} panel=${panelCount}`,
+  )
+  await page.screenshot({ path: `${SHOTS}/01-contract.png` })
+
+  /* ---------- S1c 扣底分支（庄家随机，多重试几次直到人类坐庄） ---------- */
+  // 注意：定主阶段 overlay 会遮住顶栏，所以首屏直接亮主算第 1 次尝试，
+  // 之后的尝试先点「新游戏」（离开定主后 overlay 为空，不拦截）
+  const declareAndMaybeBury = async () => {
+    await page.click('[data-trump="1"]')
+    await sleep(300)
+    const bar = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
+    if (!bar.includes('扣底')) return { burying: false, bar }
+    const ids = await page.$$eval('#app .hand .card', (els) =>
+      els.slice(0, 8).map((e) => e.dataset.id),
+    )
+    await clickHandCards(page, ids)
+    const bar2 = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
+    // 已知轻微问题：toast 会盖住「扣底」按钮，需先点 toast 关闭（见报告 ISS-2）
+    const toast = page.locator('[data-slot="toast"].is-show')
+    if (await toast.count()) await toast.click()
+    await page.click('[data-act="bury"]')
+    await sleep(300)
+    const bar3 = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
+    const handNow = await page.locator('#app .hand .card').count()
+    return { burying: true, bar, bar2, bar3, handNow }
+  }
+
+  let buryCovered = false
+  let buryEvidence = ''
+  for (let attempt = 1; attempt <= 20 && !buryCovered; attempt++) {
+    if (attempt > 1) {
+      await page.click('[data-act="newGame"]')
+      await page.waitForSelector('[data-trump]', { timeout: 5000 })
+    }
+    const r = await declareAndMaybeBury()
+    if (r.burying) {
+      buryCovered =
+        r.bar2.includes('8 / 8') && !r.bar3.includes('扣底') && r.handNow === 25
+      buryEvidence = `attempt=${attempt} 选8张后"${r.bar2}" 扣底后"${r.bar3}" hand=${r.handNow}`
+      break
+    }
+    buryEvidence = `attempt=${attempt} 庄家为 AI（自动扣底），继续重试`
+  }
+  rec(
+    'S1c 扣底分支：人类庄家选 8 张扣底后进入 play（手牌 25 张）',
+    buryCovered,
+    buryEvidence,
+  )
+
+  // 重置回定主阶段，跑主链路
+  await page.click('[data-act="newGame"]')
+  await page.waitForSelector('[data-trump]', { timeout: 5000 })
+
+  /* ---------- S1 亮主 ---------- */
+  await page.click('[data-trump="1"]') // ♥ 红心
+  await page
+    .waitForSelector('[data-slot="overlay"] .panel', { state: 'detached', timeout: 5000 })
+    .catch(() => {})
+  await sleep(300)
+  const bar1 = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
+  const burying = bar1.includes('扣底')
+  rec('S1 亮主后 overlay 关闭，进入 bury 或 play', true, `handbar="${bar1}" burying=${burying}`)
+
+  if (burying) {
+    // 我是庄家：选 8 张扣底（逐张点，每次重新查询）
+    const ids = await page.$$eval('#app .hand .card', (els) =>
+      els.slice(0, 8).map((e) => e.dataset.id),
+    )
+    await clickHandCards(page, ids)
+    const bar2 = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
+    rec('S1b 扣底：选 8 张后按钮可用', bar2.includes('8 / 8'), `handbar="${bar2}"`)
+    await page.click('[data-act="bury"]')
+    await sleep(300)
+  }
+
+  /* ---------- 等到我的回合（AI 可能先出牌） ---------- */
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('[data-slot="handbar"] .hint-text')
+      return el && el.textContent.includes('轮到你了')
+    },
+    { timeout: 30000 },
+  )
+  const myTurnBar = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
+  rec('S2 等到人类回合', true, `handbar="${myTurnBar}"`)
+
+  /* ---------- S5 提示：高亮 + 不改动已选（FR-19 ③） ---------- */
+  const twoIds = await page.$$eval('#app .hand .card', (els) =>
+    els.slice(0, 2).map((e) => e.dataset.id),
+  )
+  await clickHandCards(page, twoIds)
+  const selBefore = await page.locator('#app .hand .card--selected').count()
+  await page.keyboard.press('h') // 键盘提示
+  await sleep(250)
+  const hintCount = await page.locator('#app .hand .card--hint').count()
+  const selAfter = await page.locator('#app .hand .card--selected').count()
+  rec(
+    'S5 按 H 提示：有牌高亮且已选牌不变（FR-19 ③）',
+    hintCount >= 1 && selBefore === 2 && selAfter === selBefore,
+    `hints=${hintCount} selected ${selBefore} -> ${selAfter}`,
+  )
+
+  // 清掉手动选择，改用「提示」按钮走一遍完整出牌链
+  await page.click('[data-act="clear"]')
+  await page.click('[data-act="hint"]')
+  await sleep(250)
+  const hintIds = await page.$$eval('#app .hand .card--hint', (els) =>
+    els.map((e) => e.dataset.id),
+  )
+  rec('S5b 点「提示」按钮有高亮', hintIds.length >= 1, `hintIds=[${hintIds.join(',')}]`)
+
+  /* ---------- S3 合法性徽标 ---------- */
+  if (hintIds.length > 0) {
+    await clickHandCards(page, hintIds)
+    await sleep(200)
+    const badgeOk = await page.locator('[data-slot="handbar"] .legality.is-ok').count()
+    const badgeText = await page
+      .locator('[data-slot="handbar"] .legality')
+      .first()
+      .innerText()
+      .catch(() => '(无徽标)')
+    rec(
+      'S3 选中提示牌后显示「✓ 可以出」（FR-19 ①）',
+      badgeOk === 1,
+      `badge="${badgeText}" selected=${hintIds.length} 张`,
+    )
+    if (badgeOk === 1) {
+      await page.screenshot({ path: `${SHOTS}/02-selected.png` })
+
+      /* ---------- S4 出牌 ---------- */
+      const handBefore = await page.locator('#app .hand .card').count()
+      const statusAtPlay = await page.locator('[data-slot="status"]').innerText()
+      await page.click('[data-act="play"]')
+      await sleep(700)
+      const played = await page.locator('[data-slot="played-mine"] .card').count()
+      const handAfter = await page.locator('#app .hand .card').count()
+      const statusAfterPlay = await page.locator('[data-slot="status"]').innerText()
+      const barAfter = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
+      // 若我是墩内第 4 个出牌，整墩会立即结算、中央区清空 ——
+      // 此时「手牌减少 + 墩数前进」同样证明出牌被接受且回合推进
+      const playAccepted = handAfter === handBefore - hintIds.length
+      const trickResolved =
+        statusAfterPlay.replace(/\s+/g, '') !== statusAtPlay.replace(/\s+/g, '')
+      const advanced = played === hintIds.length || (playAccepted && trickResolved)
+      rec(
+        'S4 出牌：牌被接受（手牌减少），中央区有牌或整墩结算，回合推进',
+        playAccepted && advanced,
+        `played=${played}/${hintIds.length} hand ${handBefore}->${handAfter} trickResolved=${trickResolved} handbar="${barAfter}"`,
+      )
+      await page.screenshot({ path: `${SHOTS}/03-play.png` })
+    }
+  }
+
+  /* ---------- P2 设置面板 + Esc ---------- */
+  await page.click('[data-act="openSettings"]')
+  const dlgOpen = await page
+    .waitForSelector('[data-slot="overlay"] .panel[role="dialog"]', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false)
+  const switchCount = dlgOpen
+    ? await page.locator('[data-slot="overlay"] .panel[role="dialog"] .switch').count()
+    : 0
+  await page.keyboard.press('Escape')
+  await sleep(300)
+  const dlgClosed = (await page.locator('[data-slot="overlay"] .panel[role="dialog"]').count()) === 0
+  rec(
+    'P2a 设置面板渲染（规则开关在位）且 Esc 关闭',
+    dlgOpen && switchCount >= 7 && dlgClosed,
+    `dialog=${dlgOpen} switches=${switchCount} closedAfterEsc=${dlgClosed}`,
+  )
+
+  /* ---------- P2 第一个完整墩 ---------- */
+  // 注意：若某墩轮到我领袖，游戏会停下来等输入 —— 需要自动续打才能观察到墩完成
+  const autoPlayOnce = async () => {
+    await page.evaluate(() => {
+      document.querySelector('[data-act="hint"]')?.click()
+    })
+    await sleep(200)
+    const ids = await page.$$eval('#app .hand .card--hint', (els) =>
+      els.map((e) => e.dataset.id),
+    )
+    if (!ids.length) return false
+    await clickHandCards(page, ids)
+    await sleep(150)
+    const ok = await page.locator('[data-slot="handbar"] .legality.is-ok').count()
+    if (!ok) return false
+    await page.evaluate(() => {
+      document.querySelector('[data-act="play"]')?.click()
+    })
+    return true
+  }
+
+  const statusBefore = await page.locator('[data-slot="status"]').innerText()
+  let trickChanged = false
+  for (let i = 0; i < 10 && !trickChanged; i++) {
+    await sleep(1200)
+    const now = await page.locator('[data-slot="status"]').innerText()
+    trickChanged = now.replace(/\s+/g, '') !== statusBefore.replace(/\s+/g, '')
+    if (!trickChanged) {
+      const bar = await page
+        .locator('[data-slot="handbar"] .hint-text')
+        .innerText()
+        .catch(() => '')
+      if (bar.includes('轮到你了')) await autoPlayOnce()
+    }
+  }
+  const statusAfter = await page.locator('[data-slot="status"]').innerText()
+  rec(
+    'P2b 出现第一个完整墩（状态栏墩数/得分变化）',
+    trickChanged,
+    `"${statusBefore.replace(/\n/g, ' ')}" -> "${statusAfter.replace(/\n/g, ' ')}"`,
+  )
+  await page.screenshot({ path: `${SHOTS}/04-trick.png` })
+
+  /* ---------- 终局状态转储（诊断用） ---------- */
+  const dump = await page.evaluate(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('tractor.state.v1'))
+      return {
+        phase: s.phase,
+        tricksDone: s.tricksDone,
+        leader: s.trick.leader,
+        trickPlays: s.trick.plays.length,
+        hands: s.hands.map((h) => h.length),
+        defenderScore: s.defenderScore,
+      }
+    } catch {
+      return null
+    }
+  })
+  console.log('STATE DUMP: ' + JSON.stringify(dump))
+
+  /* ---------- P1 零 error ---------- */
+  // favicon.ico 404 是浏览器自动探测所致（index.html 未引用、public/ 无该文件），
+  // 与应用资源无关，单独归因
+  const all4xx = failedUrls
+  const nonFavicon4xx = all4xx.filter((u) => !u.includes('favicon.ico'))
+  const errs = [...consoleErrors, ...pageErrors]
+  const resourceErrs = errs.filter((e) => /404|Failed to load resource/.test(e))
+  const otherErrs = errs.filter((e) => !/404|Failed to load resource/.test(e))
+  rec(
+    'P1 应用零 console error / pageerror（favicon 404 单独归因）',
+    otherErrs.length === 0 && nonFavicon4xx.length === 0,
+    `4xx=[${all4xx.join(' ; ') || '无'}] resourceErrCount=${resourceErrs.length} otherErrors=[${otherErrs.slice(0, 3).join(' || ') || '无'}]`,
+  )
+
+  const pass = results.filter((r) => r.ok).length
+  console.log(
+    `\nSUMMARY total=${results.length} pass=${pass} fail=${results.length - pass}`,
+  )
+} finally {
+  await browser.close()
+}

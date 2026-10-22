@@ -316,7 +316,10 @@ html, body {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 26px;
+  /* 必须抬到手牌区之上：south 网格行 = 手牌(--card-w×1.4) + 操作条(34px) + 间距。
+     原先 bottom:26px 正好压在操作条上，而 .is-show 带 pointer-events:auto，
+     会把「扣底」等按钮的点击吃掉 —— 用户得先点掉 toast 才能点按钮。 */
+  bottom: calc(var(--card-w) * 1.4 + 60px);
   transform: translateX(-50%) translateY(12px);
   padding: 9px 18px;
   border-radius: 9px;

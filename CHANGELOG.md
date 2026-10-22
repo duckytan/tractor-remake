@@ -70,11 +70,33 @@
 
 测试内置自检用例断言「同档对同档净胜率恰好为 0%」，保证测量本身正确。
 
+### 修复（E2E 验证发现）
+
+- **favicon 404**：`index.html` 未声明图标、`public/` 仅有 `.gitkeep`，
+  浏览器自动探测 `/favicon.ico` 导致控制台一条 404。
+  补 `public/favicon.svg`（黑桃 A，呼应桌面绿 + 牌面白）并在 `index.html` 声明。
+- **toast 遮挡操作条按钮**：`.toast` 原为 `position:fixed; bottom:26px`，
+  而 `.toast.is-show` 带 `pointer-events:auto` + `z-index:30`，
+  正好压在南网格行的手牌操作条上，把「扣底」等按钮的点击吃掉。
+  且 toast 无自动消失，只能点它消除 —— 用户须先关 toast 才能点按钮。
+  改为 `bottom: calc(var(--card-w) * 1.4 + 60px)`，随牌面尺寸缩放。
+  实测 6 种视口/档位组合均无重叠；用真实 `lastReject` toast 验证
+  `elementFromPoint` 命中按钮本身。
+
+### 新增 · 浏览器端到端测试
+
+- `tests/e2e/game.mjs` + `npm run test:e2e`
+- 覆盖亮主开局、扣底分支、AI 应手、选牌实时合法性（FR-19 ①）、
+  提示不改变选择（FR-19 ③）、出牌推进、设置面板、第一个完整墩、全程零 console error
+- 目标可配置：`E2E_BASE`（默认本地 preview）、`E2E_PROXY`（访问线上时才需设）
+- 这是**唯一覆盖 ui 层**的自动化验证 —— 此前 172 例只覆盖 core/app/ai
+
 ### 验收
 
 | 项 | 结果 |
 |---|---|
 | `npm test` | ✅ 11 文件 / **172 例**全通过 |
+| `npm run test:e2e` | ✅ **11/11** 场景通过，零 console error / 零 4xx |
 | `npm run typecheck` | ✅ 无错误 |
 | `npm run build` | ✅ 通过 |
 | AI 强度（600 副配对） | L2 vs L1 = **59.2%**；L2 vs L0 = 80.7%；L1 vs L0 = 82.3% |
