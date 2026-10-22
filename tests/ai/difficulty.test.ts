@@ -27,6 +27,7 @@ import type { GameState } from '@app/state'
 import { seatToPlay } from '@app/state'
 import { ctx } from '../core/helpers'
 import { C } from '../core/helpers'
+import { declareAndPass } from '../helpers/declare'
 
 /** 队伍：seat % 2。0/2 一队，1/3 一队 */
 const teamOfSeat = (s: Seat): 0 | 1 => (s % 2) as 0 | 1
@@ -62,7 +63,7 @@ function playRound(
   maxSteps = 4000,
 ): GameState {
   let s = newGame(DEFAULT_RULE_CONFIG, levelA, 0, seed)
-  s = reduce(s, { type: 'declareTrump', trump: 0 })
+  s = declareAndPass(s, 0)
   if (s.phase === 'bury') s = reduce(s, { type: 'bury', ids: pickBuryIds(s) })
 
   let steps = 0

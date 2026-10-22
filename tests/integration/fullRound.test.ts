@@ -6,6 +6,7 @@ import type { Card, Play } from '@core'
 import { aiCanAct, newGame, reduce } from '@app/game'
 import { HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import type { Action, GameState } from '@app/state'
+import { declareAndPass } from '../helpers/declare'
 
 /** 模拟「人类」：挑第一个合法出法 */
 function humanMove(s: GameState): Action {
@@ -36,7 +37,7 @@ function playRound(seed: number, maxSteps = 4000): GameState {
   let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, seed)
 
   // 定主
-  s = reduce(s, { type: 'declareTrump', trump: 0 })
+  s = declareAndPass(s, 0)
 
   // 埋底（若我是庄家）
   if (s.phase === 'bury') {
@@ -97,7 +98,7 @@ describe('IT-01 完整一局', () => {
 
   it('牌数守恒：手牌 + 底牌 + 已出的牌 = 108', () => {
     let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 555)
-    s = reduce(s, { type: 'declareTrump', trump: 1 })
+    s = declareAndPass(s, 1)
     if (s.phase === 'bury') {
       const hand = s.hands[HUMAN_SEAT] as readonly Card[]
       s = reduce(s, { type: 'bury', ids: hand.slice(0, 8).map((c) => c.id) })

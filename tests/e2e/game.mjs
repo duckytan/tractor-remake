@@ -74,22 +74,46 @@ try {
 
   /* ---------- S0 加载 + 定主面板 ---------- */
   await page.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 })
+  // 逐张发牌：先确认手牌开始出现（此时不该已经满 25 张）
   await page.waitForSelector('#app .hand .card', { timeout: 20000 })
-  const handCount = await page.locator('#app .hand .card').count()
+  const earlyHand = await page.locator('#app .hand .card').count()
+  // 等到定主面板出现（要么摸到级牌暂停，要么发完）
+  await page.waitForSelector('[data-trump]', { timeout: 20000 })
   const trumpCount = await page.locator('[data-trump]').count()
+  const trumpEnabled = await page.locator('[data-trump]:not([disabled])').count()
   const panelCount = await page.locator('[data-slot="overlay"] .panel').count()
   rec(
-    'S0 首页加载：手牌 25 张 + 定主面板 5 个亮主按钮',
-    handCount === 25 && trumpCount === 5 && panelCount === 1,
-    `hand=${handCount} trumpBtns=${trumpCount} panel=${panelCount}`,
+    'S0 逐张发牌后弹出定主面板（5 个亮主按钮，至少 1 个可点）',
+    earlyHand > 0 && earlyHand < 25 && trumpCount === 5 && trumpEnabled >= 1 && panelCount === 1,
+    `earlyHand=${earlyHand} trumpBtns=${trumpCount} enabled=${trumpEnabled} panel=${panelCount}`,
   )
   await page.screenshot({ path: `${SHOTS}/01-contract.png` })
 
   /* ---------- S1c 扣底分支（庄家随机，多重试几次直到人类坐庄） ---------- */
   // 注意：定主阶段 overlay 会遮住顶栏，所以首屏直接亮主算第 1 次尝试，
   // 之后的尝试先点「新游戏」（离开定主后 overlay 为空，不拦截）
+  // 亮主后可能弹出「反主」面板（AI 反了主、人类又还有别门级牌）——
+  // 主链路不专门测反主，这里一律点「过」放行。
+  // 注意：亮主持牌校验上线后，没有对应级牌的花色按钮会被置灰，
+  // 所以不能硬编码某一门，要挑一个当前可点的。
+  const declareAndPass = async (prefer = '1') => {
+    const enabled = page.locator('[data-trump]:not([disabled])')
+    const n = await enabled.count()
+    if (n === 0) return false
+    const preferBtn = page.locator(`[data-trump="${prefer}"]:not([disabled])`)
+    if (await preferBtn.count()) await preferBtn.click()
+    else await enabled.first().click()
+    await sleep(200)
+    const pass = page.locator('[data-act="passCounter"]')
+    if (await pass.count()) {
+      await pass.click()
+      await sleep(300)
+    }
+    return true
+  }
+
   const declareAndMaybeBury = async () => {
-    await page.click('[data-trump="1"]')
+    await declareAndPass('1')
     await sleep(300)
     const bar = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
     if (!bar.includes('扣底')) return { burying: false, bar }
@@ -135,7 +159,7 @@ try {
   await page.waitForSelector('[data-trump]', { timeout: 5000 })
 
   /* ---------- S1 亮主 ---------- */
-  await page.click('[data-trump="1"]') // ♥ 红心
+  await declareAndPass('1') // ♥ 红心（若弹反主则点「过」）
   await page
     .waitForSelector('[data-slot="overlay"] .panel', { state: 'detached', timeout: 5000 })
     .catch(() => {})

@@ -11,11 +11,12 @@ import type { Card } from '@core'
 import { newGame, reduce, aiPlayFor, aiCanAct } from '@app/game'
 import type { GameState } from '@app/state'
 import { HUMAN_SEAT, seatToPlay } from '@app/state'
+import { declareAndPass } from '../helpers/declare'
 
 /** 跑完一局（四家都由 AI 代打，模拟连续对局） */
 function playRound(seed: number, level: 0 | 1 | 2): GameState {
   let s = newGame(DEFAULT_RULE_CONFIG, level, 0, seed)
-  s = reduce(s, { type: 'declareTrump', trump: 0 })
+  s = declareAndPass(s, 0)
   if (s.phase === 'bury') {
     const hand = s.hands[s.dealer] as readonly Card[]
     s = reduce(s, { type: 'bury', ids: hand.slice(0, 8).map((c) => c.id) })
@@ -49,7 +50,7 @@ describe('M6 · 稳定性', () => {
     let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 42)
     let rounds = 0
     while (rounds < 10 && s.phase !== 'over') {
-      s = reduce(s, { type: 'declareTrump', trump: 0 })
+      s = declareAndPass(s, 0)
       if (s.phase === 'bury') {
         const hand = s.hands[s.dealer] as readonly Card[]
         s = reduce(s, { type: 'bury', ids: hand.slice(0, 8).map((c) => c.id) })
@@ -81,7 +82,7 @@ describe('M6 · 稳定性', () => {
 describe('M6 · 规则开关下一局生效（FR-18 ③）', () => {
   it('改规则开关不改变当前局，下一局才生效', () => {
     let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 100)
-    s = reduce(s, { type: 'declareTrump', trump: 0 })
+    s = declareAndPass(s, 0)
     if (s.phase === 'bury') {
       const hand = s.hands[s.dealer] as readonly Card[]
       s = reduce(s, { type: 'bury', ids: hand.slice(0, 8).map((c) => c.id) })
@@ -138,7 +139,7 @@ describe('M6 · 提示不改变游戏状态（FR-19 ③）', () => {
   /** 造一个「已选好牌」的局面 */
   function setup(): GameState {
     let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 555)
-    s = reduce(s, { type: 'declareTrump', trump: 1 })
+    s = declareAndPass(s, 1)
     if (s.phase === 'bury') {
       const hand = s.hands[s.dealer] as readonly Card[]
       s = reduce(s, { type: 'bury', ids: hand.slice(0, 8).map((c) => c.id) })
@@ -177,7 +178,7 @@ describe('M6 · 提示不改变游戏状态（FR-19 ③）', () => {
   it('定主 / 埋底会清掉提示', () => {
     let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 556)
     s = reduce(s, { type: 'showHint', ids: [1] })
-    s = reduce(s, { type: 'declareTrump', trump: 2 })
+    s = declareAndPass(s, 2)
     expect(s.hintIds).toEqual([])
   })
 

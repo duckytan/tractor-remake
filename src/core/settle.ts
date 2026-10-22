@@ -20,7 +20,8 @@ export function nextLevel(cur: LevelRank, mode: 0 | 1): LevelRank {
  */
 export function isGuardedLevel(lr: LevelRank, config: RuleConfig): boolean {
   if (config.guardScoreLevels && (lr === 5 || lr === 10 || lr === 13)) return true
-  if (config.guardJA && (lr === 11 || lr === 1)) return true
+  if (config.guardJack && lr === 11) return true
+  if (config.guardAce && lr === 1) return true
   if (config.guardKingLevel && lr === 18) return true
   return false
 }

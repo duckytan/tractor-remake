@@ -18,6 +18,7 @@ import { decide } from '@ai/policy'
 import { enumeratePlays } from '@ai/enumerate'
 import { newGame, reduce, aiCanAct } from '@app/game'
 import { seatToPlay } from '@app/state'
+import { declareAndPass } from './helpers/declare'
 
 describe('冒烟 · core 规则引擎可用', () => {
   it('能造出 108 张牌、54 个牌值各两张', () => {
@@ -62,7 +63,7 @@ describe('冒烟 · app 装配可用', () => {
 
   it('定主 → 埋底 → 出牌 能一路推进', () => {
     let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 7)
-    s = reduce(s, { type: 'declareTrump', trump: 0 })
+    s = declareAndPass(s, 0)
     expect(['play', 'bury']).toContain(s.phase)
     if (s.phase === 'bury') {
       const hand = s.hands[s.dealer] as readonly Card[]
@@ -84,7 +85,7 @@ describe('冒烟 · app 装配可用', () => {
 describe('冒烟 · ai 决策可用', () => {
   it('三档 AI 都能给出合法出牌', () => {
     const s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 99)
-    const withTrump = reduce(s, { type: 'declareTrump', trump: 0 })
+    const withTrump = declareAndPass(s, 0)
     const base = withTrump.phase === 'bury'
       ? reduce(withTrump, {
           type: 'bury',

@@ -49,11 +49,18 @@ describe('TC-403 连对（关键：连对不是甩牌）', () => {
     expect(b.isMultiGroup).toBe(false)
   })
 
-  it('不相邻的两对 → 两个 pair 组，仍不是甩牌', () => {
+  /**
+   * 规则修正（对应甩牌漏洞修复）：
+   * 「不相邻的两对」不是一个单一牌型，而是两组混出 ⇒ **属于甩牌**，
+   * 必须走甩牌校验（每组都要全场最大，否则被裁剪）。
+   * 原用例断言 `isMultiGroup === false`，那正是漏洞本身：
+   * 它让「2 个不连续对子」被当成单一牌型在 legality 里直接放行（白甩两对）。
+   */
+  it('不相邻的两对 → 两个 pair 组，属于甩牌', () => {
     const b = analyze([...P(1, 2), ...P(1, 7)], c)
     expect(b.groups).toHaveLength(2)
     expect(b.groups.every((g) => g.kind === 'pair')).toBe(true)
-    expect(b.isMultiGroup).toBe(false)
+    expect(b.isMultiGroup).toBe(true)
   })
 })
 

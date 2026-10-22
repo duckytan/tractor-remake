@@ -113,3 +113,35 @@ describe('获胜牌的代表牌', () => {
     expect(() => resolveTrick([], c)).toThrow()
   })
 })
+
+describe('TC-608 散对不能压连对（结构必须一致）', () => {
+  // ♦ 为主 ⇒ ♠ 是副牌
+  const side = ctx({ trump: 3, levelRank: 2 })
+  const mk = (seat: number, cards: readonly Card[]) => ({
+    seat: seat as Seat,
+    cards,
+    analysis: analyze(cards, side),
+  })
+
+  it('首出 2 连对，跟出 2 个不连续对子 → 首出方仍赢', () => {
+    const lead = mk(0, [...P(0, 7), ...P(0, 6)]) // ♠9♠9 ♠8♠8（连对）
+    const follow = mk(1, [...P(0, 10), ...P(0, 2)]) // ♠Q♠Q + ♠4♠4（不连续）
+    const r = resolveTrick([lead, follow], side)
+    expect(follow.analysis.pairCount).toBe(lead.analysis.pairCount) // 对数相同
+    expect(r.winner).toBe(0)
+  })
+
+  it('更大的 2 连对可以压 2 连对', () => {
+    const lead = mk(0, [...P(0, 7), ...P(0, 6)]) // ♠9♠9 ♠8♠8
+    const follow = mk(1, [...P(0, 11), ...P(0, 10)]) // ♠K♠K ♠Q♠Q
+    const r = resolveTrick([lead, follow], side)
+    expect(r.winner).toBe(1)
+  })
+
+  it('单对仍可压单对（不误伤普通对子）', () => {
+    const lead = mk(0, P(0, 6)) // ♠8♠8
+    const follow = mk(1, P(0, 9)) // ♠J♠J
+    const r = resolveTrick([lead, follow], side)
+    expect(r.winner).toBe(1)
+  })
+})

@@ -16,6 +16,7 @@ export interface Actions {
   readonly hint: () => void
 }
 
+
 const SUIT_LABEL = ['♠ 黑桃', '♥ 红心', '♣ 梅花', '♦ 方片']
 const SEAT_LABEL = ['南（你）', '西', '北', '东']
 const SEAT_CLASS: Record<Seat, string> = { 0: 'center', 1: 'west', 2: 'north', 3: 'east' }
@@ -48,6 +49,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   root.dataset.fourColor = s.fourColor ? 'true' : 'false'
   root.dataset.cardSize = s.cardSize
   root.dataset.anim = s.animation ? 'on' : 'off'
+
 
   const turn = seatToPlay(s)
 
@@ -138,20 +140,32 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   /* ---- 我的手牌 ---- */
   {
     const hand = q('hand')
-    const myHand = s.hands[HUMAN_SEAT] as readonly Card[]
+    const fullHand = s.hands[HUMAN_SEAT] as readonly Card[]
+    // 逐张发牌：只渲染已经发到手上的那部分（hands 里始终是完整的 25 张）
+    const myHand = s.revealed < fullHand.length ? fullHand.slice(0, s.revealed) : fullHand
+    const dealing = s.phase === 'contract' && s.revealed < fullHand.length
+    const newest = dealing ? myHand.length - 1 : -1
     const selected = new Set(s.selected)
     const hinted = new Set(s.hintIds)
     const canAct = s.phase === 'play' && turn === HUMAN_SEAT
     const burying = s.phase === 'bury'
 
-    for (const c of myHand) {
+    for (let i = 0; i < myHand.length; i++) {
+      const c = myHand[i] as Card
       const on = selected.has(c.id)
       const isHint = hinted.has(c.id)
-      const cls = [on ? 'card--selected' : '', isHint ? 'card--hint' : ''].filter(Boolean).join(' ')
+      const cls = [
+        on ? 'card--selected' : '',
+        isHint ? 'card--hint' : '',
+        i === newest ? 'card--deal' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')
       const el = cardEl(c, {
         cls,
         id: c.id,
       })
+      if (i === newest) el.style.setProperty('--i', '0')
       if (burying) el.classList.add('is-pickable')
       else if (!canAct) el.classList.add('card--disabled')
       // NFR-10：可操作时牌可 Tab 聚焦，回车切换选中
@@ -192,20 +206,55 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   /* ---- 弹层 ---- */
   {
     const ov = q('overlay')
+    // 发牌暂停提示时把手牌露出来（否则遮罩+模糊让人看不清自己有什么牌）
+    ov.dataset.mode = s.phase === 'contract' && s.dealPrompt ? 'deal' : ''
     if (s.settingsOpen) {
       ov.innerHTML = settingsPanel(s)
     } else if (s.logOpen) {
       ov.innerHTML = logPanel(s)
     } else if (s.phase === 'contract') {
+      const totalHand = (s.hands[HUMAN_SEAT] as readonly Card[]).length
+      const stillDealing = s.revealed < totalHand
+      if (stillDealing && !s.dealPrompt) {
+        // 正在逐张发牌且还没到该决定的时候 —— 不弹面板，把牌桌让出来
+        ov.innerHTML = ''
+      } else {
+      // 反主阶段看 counterOptions（还持别门级牌的那几门）；
+      // 首次亮主阶段看 declareOptions（持该门级牌的那几门 + 无将）。
+      // 统一由清单决定置灰 —— 规则判定在 app 层，UI 不再自己推。
+      const countering = s.counterPending
+      const allowed = new Set<string>((countering ? s.counterOptions : s.declareOptions).map(String))
+      const trumpBtn = (t: Trump, label: string, cls = ''): string => {
+        const v = String(t)
+        const disabled = !allowed.has(v)
+        return `<button class="btn trump-btn${cls}" data-trump="${v}"${disabled ? ' disabled' : ''}>${label}</button>`
+      }
       ov.innerHTML = `
         <div class="panel">
-          <h2>定主</h2>
-          <p class="muted">本局打 <b>${levelLabel(s.levelRank)}</b>${s.forcedNT ? '（打王级强制无将）' : ''}</p>
+          <h2>${countering ? '反主' : '定主'}</h2>
+          <p class="muted">本局打 <b>${levelLabel(s.levelRank)}</b>${s.forcedNT ? '（打王级强制无将）' : ''}${
+            countering
+              ? ` · 当前主 <b>${trumpLabel(s.trump)}</b>，你还有别门级牌可以反`
+              : stillDealing
+                ? ` · 已发 <b>${s.revealed}</b> / ${totalHand} 张，摸到级牌可以先抢`
+                : ''
+          }</p>
           <div class="trump-grid">
-            ${[0, 1, 2, 3].map((t) => `<button class="btn trump-btn${t === 0 ? ' is-red' : t === 1 ? ' is-red' : ''}" data-trump="${t}">${SUIT_LABEL[t]}</button>`).join('')}
-            <button class="btn trump-btn" data-trump="NT" ${s.forcedNT ? 'disabled' : ''}>无将</button>
+            ${trumpBtn(0, SUIT_LABEL[0] as string)}
+            ${trumpBtn(1, SUIT_LABEL[1] as string, ' is-red')}
+            ${trumpBtn(2, SUIT_LABEL[2] as string)}
+            ${trumpBtn(3, SUIT_LABEL[3] as string, ' is-red')}
+            ${trumpBtn('NT', '无将')}
           </div>
+          ${
+            countering
+              ? '<div class="trump-actions"><button class="btn btn--ghost" data-act="passCounter">过（不反）</button></div>'
+              : stillDealing
+                ? '<div class="trump-actions"><button class="btn btn--ghost" data-act="passDeal">继续发牌</button></div>'
+                : ''
+          }
         </div>`
+      }
     } else if (s.phase === 'settle' || s.phase === 'over') {
       ov.innerHTML = settlePanel(s)
     } else {
@@ -312,7 +361,8 @@ function settingsPanel(s: GameState): string {
       ${sw('allowPartnerGuard', '允许对家保', '对家可保级', c.allowPartnerGuard)}
       ${sw('allowCounterNT', '允许反无将', '无将可被反', c.allowCounterNT)}
       ${sw('guardScoreLevels', '5,10,K 必打', '升级时不可跳过这些级牌', c.guardScoreLevels)}
-      ${sw('guardJA', 'J,A 必打', '升级时不可跳过这些级牌', c.guardJA)}
+      ${sw('guardJack', 'J 必打', '升级时不可跳过 J', c.guardJack)}
+      ${sw('guardAce', 'A 必打', '升级时不可跳过 A', c.guardAce)}
       ${sw('guardKingLevel', '打王必打', '升级时不可跳过打王级', c.guardKingLevel)}
     </div>
 
@@ -462,6 +512,12 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {  root.oncli
         break
       case 'bury':
         act.dispatch({ type: 'bury', ids: [...s.selected] })
+        break
+      case 'passCounter':
+        act.dispatch({ type: 'passCounter' })
+        break
+      case 'passDeal':
+        act.dispatch({ type: 'passDeal' })
         break
       case 'nextRound':
         act.dispatch({ type: 'nextRound' })

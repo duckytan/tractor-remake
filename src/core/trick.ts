@@ -32,6 +32,11 @@ function canBeat(play: PlayAnalysis, lead: PlayAnalysis): boolean {
   }
   // 结构必须一致：张数相同的前提下，对子数相同即结构相同
   if (play.pairCount !== lead.pairCount) return false
+  // 拖拉机长度也要一致：2 个不连续对子不能压 2 连对
+  // （两者 pairCount 都是 2，只比对数会把「散对」误判成能压「连对」）
+  const runLen = (a: PlayAnalysis): number =>
+    a.groups.length === 1 && a.groups[0]?.kind === 'tractor' ? a.groups[0].length : 0
+  if (runLen(play) !== runLen(lead)) return false
   return true
 }
 

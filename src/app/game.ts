@@ -12,23 +12,28 @@ import type { AiLevel } from '@ai/policy'
 import type { PlayContext } from '@ai/enumerate'
 import {
   HAND_SIZE,
+  RANKS_PER_SUIT,
   TRUMP_POWER_BASE,
   advanceLevel,
   analyze,
   buildPowerTable,
   calcBottomBonus,
+  canCounter,
   cardsScore,
   checkPlay,
   dealWithGuard,
+  levelRankToRankIndex,
   levelsFor,
   mulberry32,
   nextSeat,
   partnerOf,
+  rankOfValue,
   resolveTrick,
   settleRound,
+  suitOfValue,
   teamOf,
 } from '@core'
-import type { Card, LevelRank, Play, PlayRejectReason, Rng, RuleContext, Seat, Trump } from '@core'
+import type { Card, LevelRank, Play, PlayRejectReason, Rng, RuleContext, Seat, Suit, Trump } from '@core'
 import type { Action, GameState, TrickRecord } from './state'
 import { HUMAN_SEAT, STATE_VERSION, ctxOf, seatToPlay } from './state'
 
@@ -50,16 +55,67 @@ const buildPower = (mode: 0 | 1, levelRank: LevelRank, trump: Trump) =>
 const levelOfDealer = (levels: { a: LevelRank; b: LevelRank }, dealer: Seat): LevelRank =>
   teamOf(dealer) === 0 ? levels.a : levels.b
 
-/** 手牌按牌力降序排好，便于展示 */
-function sortHand(hand: readonly Card[], ctx: RuleContext): Card[] {
+/**
+ * 副牌花色的展示顺序（重制版编码 0=♠ 1=♥ 2=♣ 3=♦）。
+ * 取自 smallnest/Tractor `CurrentPoker.Sort()` 的非主花色顺序 ♥ ♠ ♦ ♣。
+ */
+const OFF_SUIT_ORDER: readonly Suit[] = [1, 0, 3, 2]
+
+/** 纯按牌力降序。AI 埋底「留大牌」用 —— 与展示序解耦，见 sortHand 注释。 */
+function sortByPowerDesc(hand: readonly Card[], ctx: RuleContext): Card[] {
   return [...hand].sort((a, b) => ctx.power.get(b.value) - ctx.power.get(a.value))
+}
+
+/**
+ * 手牌展示排序 —— 对齐 smallnest/Tractor `CurrentPoker.Sort()`
+ * （用户确认的规则基准，「甚至比原版还好」）。
+ *
+ * 顺序：大王 → 小王 → 主级牌 → 副级牌 → [主2 → 副2] → 主花色(点数降序)
+ *       → 其余三门按 ♥ ♠ ♦ ♣(点数降序)；无将时四门全按 ♥ ♠ ♦ ♣。
+ *
+ * **为什么不能只按牌力降序排**：牌力表给四门副牌的同一点数编了相同牌力
+ * （副牌 A 与副牌 K 之差在所有门相同），按牌力降序会把四张 A 排到一起、
+ * 同花色被拆散 —— 这正是「不是拖拉机排序方式」的根因。
+ * 所以主牌段按牌力（王/级牌/常主2 的先后只有牌力能表达），
+ * 副牌段改按「花色优先、花色内点数降序」。
+ */
+export function sortHand(hand: readonly Card[], ctx: RuleContext): Card[] {
+  const trumpSuit: Suit | null = ctx.forcedNT || ctx.trump === 'NT' ? null : ctx.trump
+  const suitOrder: readonly Suit[] =
+    trumpSuit === null ? OFF_SUIT_ORDER : [trumpSuit, ...OFF_SUIT_ORDER.filter((s) => s !== trumpSuit)]
+  const suitRank = new Map<Suit, number>(suitOrder.map((s, i) => [s, i]))
+  const suitIdx = (v: number): number => suitRank.get(suitOfValue(v) as Suit) as number
+  const rankDesc = (a: number, b: number): number =>
+    (rankOfValue(b) as number) - (rankOfValue(a) as number)
+
+  return [...hand].sort((a, b) => {
+    const pa = ctx.power.get(a.value)
+    const pb = ctx.power.get(b.value)
+    const ta = pa >= TRUMP_POWER_BASE
+    const tb = pb >= TRUMP_POWER_BASE
+    if (ta !== tb) return ta ? -1 : 1 // ① 主牌整段在前
+    const sd = suitIdx(a.value) - suitIdx(b.value)
+    if (ta) {
+      // ② 主牌段按牌力降序 ⇒ 大王 > 小王 > 主级牌 > 副级牌 > 主2 > 副2 > 主花色普通牌
+      if (pa !== pb) return pb - pa
+      // ③ 主牌段并列（副级牌三门 / 副2 三门 / 无将四门级牌）：花色次序 + 点数降序，
+      //    保证输出与输入顺序无关、可复现
+      return sd !== 0 ? sd : rankDesc(a.value, b.value)
+    }
+    // ②′ 副牌段：**花色优先**，花色内点数降序。
+    //     牌力表给四门副牌的同一点数编了相同牌力，先比牌力会把四张 A 排到一起、
+    //     同花色拆散 —— 这正是「不是拖拉机排序方式」的根因。
+    return sd !== 0 ? sd : rankDesc(a.value, b.value)
+  })
 }
 
 /* ---------- 开局 ---------- */
 
 export function startRound(s: GameState, seed: number): GameState {
   const rng = rngFor(seed, 0)
-  const dealer = rng.int(4) as Seat
+  // 第 1 局（全新游戏）随机定庄；之后庄家由上一局结算决定
+  // （nextRound 已把 settle.newDealer 写进 s.dealer，这里不能再用 rng 覆盖）
+  const dealer = s.round > 1 ? s.dealer : (rng.int(4) as Seat)
 
   // FR-18 ③：规则开关改动在下一局生效 —— 开新局时把 pending 合并进 config
   const config = s.pendingConfig
@@ -85,6 +141,15 @@ export function startRound(s: GameState, seed: number): GameState {
     forcedNT,
     // 打王级强制无将；否则默认无将，等玩家亮主
     trump: 'NT',
+    trumpDeclarer: null,
+    usedTrumps: [],
+    counterPending: false,
+    counterOptions: [],
+    declareOptions: [],
+    // 逐张发牌：动画开启时从 0 张开始渐进揭示，关闭时直接给满
+    revealed: s.animation ? 0 : HAND_SIZE,
+    declarePrompted: false,
+    dealPrompt: false,
     hands: deal.hands.map((h) => h.slice()),
     bottom: deal.bottom.slice(),
     bottomScore: 0,
@@ -98,7 +163,76 @@ export function startRound(s: GameState, seed: number): GameState {
     lastSettle: null,
     hintIds: [],
   }
-  return base
+  // 发牌后立刻按展示序排好：定主阶段人类就能看清手牌，
+  // 而不是看到一堆乱序牌。（亮主后主变了还会在 resolveContract 里重排）
+  // declareOptions 依赖手牌，必须在 hands 定稿后算（基于 base 即可，排序不影响「是否持牌」）
+  return {
+    ...base,
+    hands: base.hands.map((h) => sortHand(h, ctxOf(base))),
+    declareOptions: humanDeclareOptions(base),
+  }
+}
+
+/* ---------- 逐张发牌 ---------- */
+
+/** 人类「已揭示」的手牌。规则判定一律用完整手牌，这个只用于发牌过程的提示 */
+function revealedHand(s: GameState): readonly Card[] {
+  const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+  return s.revealed >= hand.length ? hand : hand.slice(0, s.revealed)
+}
+
+/**
+ * 中途提示的最小牌数。
+ * 摸到级牌就立刻暂停的话，玩家手上可能只有两三张牌、根本没法判断该不该亮这门，
+ * 所以等发到 10 张（约 40%）再问 —— 此时看花色分布已经有意义了。
+ */
+const DEAL_PROMPT_MIN = 10
+
+/** 已揭示的牌里能亮的花色（发牌中途暂停用；不含无将） */
+function declareOptionsIn(s: GameState): Trump[] {
+  if (s.forcedNT) return []
+  const lv = levelRankToRankIndex(ctxOf(s).levelRank)
+  if (lv === null) return []
+  const hand = revealedHand(s)
+  const out: Trump[] = []
+  for (const suit of [0, 1, 2, 3] as Suit[]) {
+    if (hand.some((c) => c.value === suit * RANKS_PER_SUIT + lv)) out.push(suit)
+  }
+  return out
+}
+
+/**
+ * 发一张牌（每家各一张）。
+ *
+ * 人类**第一次摸到级牌**时暂停，让 ta 决定「亮主」还是「继续发牌」——
+ * 这就是「发牌中抢庄」：越早摸到级牌越早能抢。
+ */
+export function revealTick(s: GameState): GameState {
+  if (s.phase !== 'contract' || s.dealPrompt) return s
+  const total = (s.hands[HUMAN_SEAT] as readonly Card[]).length
+  if (s.revealed >= total) return s
+
+  const next: GameState = { ...s, revealed: s.revealed + 1 }
+  if (next.revealed >= total) {
+    // 发完 ⇒ 直接进定主面板（人类可能一直没摸到级牌，只能亮无将）
+    return { ...next, declareOptions: humanDeclareOptions(next), notice: null }
+  }
+  // 已经发够牌、且第一次摸到级牌 ⇒ 停下来让玩家决定。
+  // 注意不要把提示塞进 notice：toast 会压住面板底部的「继续发牌」按钮，
+  // 面板文案本身已经说明了情况。
+  if (!s.declarePrompted && next.revealed >= DEAL_PROMPT_MIN) {
+    const opts = declareOptionsIn(next)
+    if (opts.length > 0) {
+      return { ...next, declarePrompted: true, dealPrompt: true, declareOptions: opts }
+    }
+  }
+  return next
+}
+
+/** 人类选择「继续发牌」（放弃这次亮主机会，发完还能在面板里选） */
+export function passDeal(s: GameState): GameState {
+  if (s.phase !== 'contract' || !s.dealPrompt) return s
+  return { ...withStep(s), dealPrompt: false, declareOptions: [], notice: null }
 }
 
 export function newGame(config: GameState['config'], aiLevel: GameState['aiLevel'], aiSpeedMs: number, seed?: number): GameState {
@@ -121,8 +255,9 @@ function emptyBase(): GameState {
       twoAsPermanent: false,
       allowPartnerGuard: false,
       allowCounterNT: false,
-      guardScoreLevels: false,
-      guardJA: true,
+      guardScoreLevels: true,
+      guardJack: false,
+      guardAce: true,
       guardKingLevel: true,
     },
     seed: 1,
@@ -132,6 +267,14 @@ function emptyBase(): GameState {
     dealer: 0,
     trump: 'NT',
     forcedNT: false,
+    trumpDeclarer: null,
+    usedTrumps: [],
+    counterPending: false,
+    counterOptions: [],
+    declareOptions: [],
+    revealed: 25,
+    declarePrompted: true,
+    dealPrompt: false,
     levelRank: 2,
     hands: [[], [], [], []],
     bottom: [],
@@ -157,19 +300,127 @@ function emptyBase(): GameState {
       twoAsPermanent: false,
       allowPartnerGuard: false,
       allowCounterNT: false,
-      guardScoreLevels: false,
-      guardJA: true,
+      guardScoreLevels: true,
+      guardJack: false,
+      guardAce: true,
       guardKingLevel: true,
     },
   }
 }
 
-/* ---------- 亮主 ---------- */
+/* ---------- 亮主 / 反主 ---------- */
 
-export function declareTrump(s: GameState, trump: Trump): GameState {
-  if (s.phase !== 'contract') return s
-  const finalTrump: Trump = s.forcedNT ? 'NT' : trump
-  const withTrump: GameState = { ...withStep(s), trump: finalTrump }
+/**
+ * 人类当前能反成的主（供 UI 置灰按钮用） */
+function humanCounterOptions(s: GameState): Trump[] {
+  // 只能反「别人的主」：自己刚亮的主没有再反一次的道理
+  if (s.trumpDeclarer === HUMAN_SEAT) return []
+  const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+  const ctx = ctxOf(s)
+  const sameTeam = s.trumpDeclarer !== null && teamOf(HUMAN_SEAT) === teamOf(s.trumpDeclarer)
+  const all: Trump[] = [0, 1, 2, 3, 'NT']
+  return all.filter((t) =>
+    canCounter({
+      hand,
+      ctx,
+      currentTrump: s.trump,
+      newTrump: t,
+      sameTeamAsDeclarer: sameTeam,
+      usedTrumps: s.usedTrumps,
+    }),
+  )
+}
+
+/**
+ * 人类首次亮主可选的花色：持该门级牌即可；无将不校验，保证永不卡死。
+ *
+ * 规则依据：smallnest/Tractor `Algorithm.cs:157-178` —— 亮主必须持有该门级牌。
+ * 打王级（强制无将）时主牌固定，只有无将可选。
+ */
+function humanDeclareOptions(s: GameState): Trump[] {
+  if (s.forcedNT) return ['NT'] // 打王级强制无将
+  const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+  const lv = levelRankToRankIndex(ctxOf(s).levelRank)
+  const out: Trump[] = []
+  if (lv !== null) {
+    for (const suit of [0, 1, 2, 3] as Suit[]) {
+      if (hand.some((c) => c.value === suit * RANKS_PER_SUIT + lv)) out.push(suit)
+    }
+  }
+  out.push('NT') // 无将不需要级牌
+  return out
+}
+
+/**
+ * AI 是否愿意反主。
+ * 除了「持新花色级牌」这条硬条件，再加一个「该花色至少 5 张」的门槛 ——
+ * 否则只要摸到一张别门级牌就无脑反，人类每局都被反，体验很差。
+ */
+function aiWantsCounter(hand: readonly Card[], newTrump: Trump): boolean {
+  if (newTrump === 'NT') return true
+  const n = hand.filter((c) => Math.floor(c.value / 13) === newTrump && c.value < 52).length
+  return n >= 5
+}
+
+/** 让 AI 依次反主，然后判断人类是否还能反；不能则进入埋底/出牌 */
+function resolveContract(s: GameState): GameState {
+  let cur = s
+  // 每反一次主就重扫一遍（主变了，其他 AI 的机会也变了）。
+  // 反主必须换一门没用过的花色，最多 5 种主，所以 guard 取 8 足够。
+  for (let guard = 0; guard < 8; guard++) {
+    const ctx = ctxOf(cur)
+    let countered = false
+    for (let seat = 0 as Seat; seat < 4; seat++) {
+      if (seat === HUMAN_SEAT) continue
+      const hand = cur.hands[seat] as readonly Card[]
+      const sameTeam = cur.trumpDeclarer !== null && teamOf(seat) === teamOf(cur.trumpDeclarer)
+      const pick = ([0, 1, 2, 3, 'NT'] as Trump[]).find(
+        (t) =>
+          canCounter({
+            hand,
+            ctx,
+            currentTrump: cur.trump,
+            newTrump: t,
+            sameTeamAsDeclarer: sameTeam,
+            usedTrumps: cur.usedTrumps,
+          }) && aiWantsCounter(hand, t),
+      )
+      if (pick !== undefined) {
+        cur = {
+          ...withStep(cur),
+          trump: pick,
+          usedTrumps: [...cur.usedTrumps, pick],
+          trumpDeclarer: seat,
+        }
+        countered = true
+        break
+      }
+    }
+    if (!countered) break
+  }
+
+  // 主可能被反过 ⇒ 手牌展示序要按新主重排（排序依赖主花色）
+  const finalCtx = ctxOf(cur)
+  cur = { ...cur, hands: cur.hands.map((h) => sortHand(h, finalCtx)) }
+
+  const options = humanCounterOptions(cur)
+  if (options.length > 0) {
+    // 反主阶段没有「首次亮主」这回事 ⇒ 亮主清单失效（UI 改看 counterOptions）
+    return {
+      ...cur,
+      counterPending: true,
+      counterOptions: options,
+      declareOptions: [],
+      notice: '你可以反主，或点「过」',
+    }
+  }
+  return proceedAfterContract(cur)
+}
+
+/** 定约结束：庄家收底 → 埋底（人类手动 / AI 自动） */
+function proceedAfterContract(s: GameState): GameState {
+  // 定约已生效 ⇒ 两份「可选项」清单都失效，避免残留到存档里被 UI 误用
+  const withTrump: GameState = { ...s, counterPending: false, counterOptions: [], declareOptions: [] }
 
   // 庄家收底牌 → 33 张
   const hands = withTrump.hands.map((h) => h.slice())
@@ -180,11 +431,73 @@ export function declareTrump(s: GameState, trump: Trump): GameState {
     return { ...withTrump, hands, phase: 'bury', notice: '你是庄家，选 8 张牌扣底' }
   }
   // AI 庄家自动扣底：留大牌、扣小牌与非分牌
+  // 注意用牌力序而非展示序：埋底要留「最强 25 张」，
+  // 展示序会把整门 ♥ 排在 ♠ 前面，与强弱无关。
   const ctx = ctxOf({ ...withTrump, levelRank: s.levelRank })
-  const sorted = sortHand(hands[s.dealer] as Card[], ctx)
+  const sorted = sortByPowerDesc(hands[s.dealer] as Card[], ctx)
   const keep = new Set(sorted.slice(0, HAND_SIZE).map((c) => c.id))
   const buried = (hands[s.dealer] as Card[]).filter((c) => !keep.has(c.id))
   return finishBury(withTrump, hands, buried)
+}
+
+export function declareTrump(s: GameState, trump: Trump): GameState {
+  if (s.phase !== 'contract') return s
+  const finalTrump: Trump = s.forcedNT ? 'NT' : trump
+
+  // 首次亮主（还没人亮过）：必须持有该门级牌；无将不校验
+  if (s.usedTrumps.length === 0) {
+    if (!humanDeclareOptions(s).includes(finalTrump)) {
+      return reject(s, 'cannot-counter', '你没有这门花色的级牌，不能亮主')
+    }
+  }
+
+  // 已有人亮过主 ⇒ 这是「反主」，必须持有新花色的级牌
+  if (s.usedTrumps.length > 0) {
+    const sameTeam = s.trumpDeclarer !== null && teamOf(HUMAN_SEAT) === teamOf(s.trumpDeclarer)
+    const ok = canCounter({
+      hand: s.hands[HUMAN_SEAT] as readonly Card[],
+      ctx: ctxOf(s),
+      currentTrump: s.trump,
+      newTrump: finalTrump,
+      sameTeamAsDeclarer: sameTeam,
+      usedTrumps: s.usedTrumps,
+    })
+    if (!ok) return reject(s, 'cannot-counter', '你没有这门花色的级牌，不能反主')
+  }
+
+  const isFirstDeclare = s.usedTrumps.length === 0
+  // 第 1 局抢庄：首个亮主者坐庄。
+  // 三个前提：① 首次亮主 ② 第 1 局 ③ 双方同级（换庄不会改变 levelRank）
+  // 打王级不抢（主是强制的，换庄没意义）
+  const grabDealer =
+    isFirstDeclare && s.round === 1 && s.levels.a === s.levels.b && !s.forcedNT
+  const newDealer = grabDealer ? HUMAN_SEAT : s.dealer
+  // 只有换庄时才重算级牌（第 1 局双方同级，重算结果不变；其余情况沿用原值，
+  // 否则会把「打王级」这类由 levelRank 决定的状态冲掉）
+  const newLevel = grabDealer ? levelOfDealer(s.levels, newDealer) : s.levelRank
+
+  const declared: GameState = {
+    ...withStep(s),
+    trump: finalTrump,
+    trumpDeclarer: HUMAN_SEAT,
+    usedTrumps: isFirstDeclare ? [finalTrump] : [...s.usedTrumps, finalTrump],
+    dealer: newDealer,
+    levelRank: newLevel,
+    forcedNT: newLevel === 18,
+    // 亮主后不再逐张发，直接补满（剩下的牌一次性到手上）
+    revealed: HAND_SIZE,
+    declarePrompted: true,
+    dealPrompt: false,
+    ...(grabDealer ? { notice: '你抢到庄，亮主成功' } : {}),
+    lastReject: null,
+  }
+  return resolveContract(declared)
+}
+
+/** 人类放弃反主，定约立即生效 */
+export function passCounter(s: GameState): GameState {
+  if (s.phase !== 'contract' || !s.counterPending) return s
+  return proceedAfterContract(withStep(s))
 }
 
 function finishBury(s: GameState, hands: Card[][], buried: readonly Card[]): GameState {
@@ -392,6 +705,15 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'declareTrump':
       return { ...declareTrump(s, action.trump), hintIds: [] }
+
+    case 'passCounter':
+      return { ...passCounter(s), hintIds: [] }
+
+    case 'revealTick':
+      return revealTick(s)
+
+    case 'passDeal':
+      return { ...passDeal(s), hintIds: [] }
 
     case 'bury':
       return { ...buryCards(s, action.ids), hintIds: [] }

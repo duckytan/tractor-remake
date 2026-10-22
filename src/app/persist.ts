@@ -8,7 +8,7 @@
 import type { GameState } from './state'
 import { STATE_VERSION } from './state'
 import type { CardSize } from './state'
-import { DEFAULT_RULE_CONFIG } from '@core'
+import { DEFAULT_RULE_CONFIG, HAND_SIZE } from '@core'
 import type { RuleConfig } from '@core'
 
 const KEY_STATE = 'tractor.state.v1'
@@ -47,7 +47,8 @@ function sanitizeConfig(o: unknown): RuleConfig {
     allowPartnerGuard: bool(r.allowPartnerGuard, d.allowPartnerGuard),
     allowCounterNT: bool(r.allowCounterNT, d.allowCounterNT),
     guardScoreLevels: bool(r.guardScoreLevels, d.guardScoreLevels),
-    guardJA: bool(r.guardJA, d.guardJA),
+    guardJack: bool(r.guardJack, d.guardJack),
+    guardAce: bool(r.guardAce, d.guardAce),
     guardKingLevel: bool(r.guardKingLevel, d.guardKingLevel),
   }
 }
@@ -89,9 +90,26 @@ export function loadState(): GameState | null {
     const o = JSON.parse(raw) as GameState
     if (o.version !== STATE_VERSION) return null
     if (!Array.isArray(o.hands) || o.hands.length !== 4) return null
+    // 定主阶段不恢复存档：declareOptions 依赖手牌重新计算，
+    // 恢复后必然得到空清单 ⇒ 亮主按钮全灰，等于把玩家锁死在定主界面。
+    // 定主只是开局的头几秒，重新发牌比恢复更划算。
+    if (o.phase === 'contract') return null
     // hintIds 是纯视觉的瞬时状态，不跨会话恢复 ——
     // 否则刷新后会看到上一局残留的「提示」高亮。
-    return { ...o, hintIds: [] }
+    // 反主 / 亮主相关的几个字段同样做兜底（版本升级前的存档缺字段）。
+    return {
+      ...o,
+      hintIds: [],
+      trumpDeclarer: o.trumpDeclarer ?? null,
+      usedTrumps: Array.isArray(o.usedTrumps) ? o.usedTrumps : [],
+      counterPending: o.counterPending === true,
+      counterOptions: Array.isArray(o.counterOptions) ? o.counterOptions : [],
+      declareOptions: Array.isArray(o.declareOptions) ? o.declareOptions : [],
+      // 发牌进度是瞬时状态：读档一律视为「已发完」，避免卡在半副牌
+      revealed: HAND_SIZE,
+      declarePrompted: true,
+      dealPrompt: false,
+    }
   } catch {
     return null
   }

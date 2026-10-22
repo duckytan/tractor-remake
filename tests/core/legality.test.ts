@@ -221,3 +221,44 @@ describe('TC-518 有主牌不垫主牌', () => {
     expect(r.ok).toBe(true)
   })
 })
+
+describe('TC-519 两个不连续对子也算甩牌（原判定漏洞修正）', () => {
+  // ♦ 为主 ⇒ ♠ 是副牌，便于观察「同门多组」
+  const side = ctx({ trump: 3, levelRank: 2 })
+
+  it('analyze 判 isMultiGroup = true（不连续对子各成一组）', () => {
+    const cards = [...P(0, 6), ...P(0, 10)] // ♠8♠8 + ♠Q♠Q
+    const a = analyze(cards, side)
+    expect(a.pairCount).toBe(2)
+    expect(a.groups.length).toBe(2)
+    expect(a.isMultiGroup).toBe(true)
+  })
+
+  it('对手有更大的同门对子时判甩牌失败并裁剪', () => {
+    const cards = [...P(0, 6), ...P(0, 10)]
+    const hand = [...cards, C(2, 5)]
+    const r = checkPlay({ hand, cards, ctx: side, opponents: [[...P(0, 11)], [], []] }) // ♠K 一对
+    expect(r.ok).toBe(true)
+    if (r.ok && r.adjusted) {
+      expect(r.reason).toBe('throw-failed')
+      expect(names(r.cards)).toBe('SQ SQ') // 裁剪为最小的失败组（♠Q♠Q）
+    } else {
+      throw new Error('应当被裁剪')
+    }
+  })
+
+  it('两组都是全场最大时合法通过', () => {
+    const cards = [...P(0, 10), ...P(0, 6)]
+    const hand = [...cards]
+    const r = checkPlay({ hand, cards, ctx: side, opponents: [[C(0, 3)], [], []] })
+    expect(r.ok).toBe(true)
+    expect(r.ok && r.adjusted).toBeFalsy()
+  })
+
+  it('连对仍是单一牌型，不触发甩牌校验', () => {
+    const cards = [...P(0, 6), ...P(0, 7)] // ♠8♠8 + ♠9♠9（连续）
+    const a = analyze(cards, side)
+    expect(a.groups.length).toBe(1)
+    expect(a.isMultiGroup).toBe(false)
+  })
+})

@@ -16,6 +16,7 @@ export type PlayRejectReason =
   | 'must-follow-suit'
   | 'must-follow-pairs'
   | 'throw-failed'
+  | 'cannot-counter'
 
 export type PlayResult =
   /** 合法 */

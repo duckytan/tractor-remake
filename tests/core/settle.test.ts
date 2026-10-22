@@ -16,10 +16,10 @@ import { analyze } from '@core'
 import { C, P, ctx } from './helpers'
 
 const cfg = (o: Partial<RuleConfig> = {}): RuleConfig => ({ ...DEFAULT_RULE_CONFIG, ...o })
-const allGuards = cfg({ guardScoreLevels: true, guardJA: true, guardKingLevel: true })
+const allGuards = cfg({ guardScoreLevels: true, guardJack: true, guardAce: true, guardKingLevel: true })
 /** 只保护 J / A / 打王，5/10/K 不保护 */
-const jaOnly = cfg({ guardScoreLevels: false, guardJA: true, guardKingLevel: true })
-const noGuards = cfg({ guardScoreLevels: false, guardJA: false, guardKingLevel: false })
+const jaOnly = cfg({ guardScoreLevels: false, guardJack: true, guardAce: true, guardKingLevel: true })
+const noGuards = cfg({ guardScoreLevels: false, guardJack: false, guardAce: false, guardKingLevel: false })
 
 describe('TC-801~805 升级级数', () => {
   it('0 分 → 庄家方升 3 级（大光）', () => {

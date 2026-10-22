@@ -112,6 +112,18 @@ html, body {
 .btn--primary:hover:not(:disabled) { background: #23b586; border-color: #23b586; }
 .btn--ghost { background: transparent; }
 
+/* 面板是浅色底：.btn 的默认配色是给深色顶栏用的，直接放进来会「白底白字」看不清。
+   这里给面板内的非主按钮换成深色文字（.trump-btn 另有自己的样式，不受影响）。 */
+.panel .btn:not(.btn--primary):not(.trump-btn) {
+  border-color: var(--line);
+  background: #f7f5f0;
+  color: var(--ink);
+}
+.panel .btn:not(.btn--primary):not(.trump-btn):hover:not(:disabled) {
+  background: #ebe7dc;
+  border-color: #d6d1c4;
+}
+
 /* ---------- 牌桌 ---------- */
 
 .felt {
@@ -252,6 +264,17 @@ html, body {
 }
 .card--hint { animation: hintPulse 1.3s ease-in-out infinite; }
 
+/* 发牌入场：按 --i 逐张错开，模拟「发牌过程」。
+   只在开局那一帧由 render 加上，选牌等普通重绘不会重放（见 render.ts 的 lastDealKey）。 */
+@keyframes dealIn {
+  from { opacity: 0; transform: translateY(58px) scale(0.92); }
+  to   { opacity: 1; transform: none; }
+}
+.card--deal {
+  animation: dealIn 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation-delay: calc(var(--i, 0) * 26ms);
+}
+
 .is-pickable:hover { transform: translateY(-10px); }
 
 /* 牌背 */
@@ -271,6 +294,8 @@ html, body {
   z-index: 20;
 }
 .overlay:not(:empty) { display: flex; }
+/* 发牌暂停提示：淡化遮罩，让玩家能看清自己的手牌再决定 */
+.overlay[data-mode='deal'] { background: rgba(6, 14, 10, 0.22); backdrop-filter: none; }
 
 .panel {
   background: var(--panel);
@@ -310,6 +335,8 @@ html, body {
 }
 .trump-btn:hover:not(:disabled) { background: #ebe7dc; border-color: #d6d1c4; }
 .trump-btn.is-red { color: var(--suit-red); }
+.trump-actions { margin-top: 10px; display: flex; justify-content: center; }
+.trump-actions .btn { min-width: 120px; }
 
 /* ---------- 提示条 ---------- */
 

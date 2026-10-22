@@ -61,19 +61,28 @@ export interface RuleConfig {
   readonly allowCounterNT: boolean
   /** 5,10,K 必打（升级禁跳级） */
   readonly guardScoreLevels: boolean
-  /** J,A 必打（升级禁跳级） */
-  readonly guardJA: boolean
+  /** J 必打（升级禁跳级） */
+  readonly guardJack: boolean
+  /** A 必打（升级禁跳级） */
+  readonly guardAce: boolean
   /** 打王级必打 */
   readonly guardKingLevel: boolean
 }
 
+/**
+ * 默认规则开关。
+ * 必打集合对齐 smallnest `MainForm.cs:167` 的 `",3,8,11,12,13,"`
+ * —— 该表用 rank 下标（0=2），所以 3→5、8→10、11→K、12→A、13→打王：
+ * **5 / 10 / K / A / 打王**，不含 J。
+ */
 export const DEFAULT_RULE_CONFIG: RuleConfig = {
   allowSelfCounter: true,
   twoAsPermanent: false,
   allowPartnerGuard: false,
   allowCounterNT: false,
-  guardScoreLevels: false,
-  guardJA: true,
+  guardScoreLevels: true,
+  guardJack: false,
+  guardAce: true,
   guardKingLevel: true,
 }
 

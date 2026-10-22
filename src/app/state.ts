@@ -19,7 +19,8 @@ import type {
 } from '@core'
 import { DEFAULT_RULE_CONFIG, buildPowerTable } from '@core'
 
-export const STATE_VERSION = 1
+/** 状态结构版本。改动 GameState 形状时 +1，旧存档自动作废 */
+export const STATE_VERSION = 2
 export const HUMAN_SEAT: Seat = 0
 
 export type Phase = 'contract' | 'bury' | 'play' | 'settle' | 'over'
@@ -49,6 +50,26 @@ export interface GameState {
   readonly dealer: Seat
   readonly trump: Trump
   readonly forcedNT: boolean
+  /** 当前定主人（首次亮主或最后一次反主的人）；null = 还没人亮主 */
+  readonly trumpDeclarer: Seat | null
+  /** 本局已用过的定主（含首次亮主）。反主不得重复用同一门，保证流程终止 */
+  readonly usedTrumps: readonly Trump[]
+  /** 是否正等人类反主（此时人类还持有别门花色的级牌） */
+  readonly counterPending: boolean
+  /** 人类当前可以反成的主（空数组 = 无反主选项）。UI 只按这份清单置灰按钮 */
+  readonly counterOptions: readonly Trump[]
+  /** 人类首次亮主可选的主（空 = 不可选）。UI 只按这份清单置灰按钮 */
+  readonly declareOptions: readonly Trump[]
+  /**
+   * 已「发到手上」的牌数（0..25）。**纯展示进度**：
+   * `hands` 里始终是完整的 25 张，UI 只渲染前 `revealed` 张。
+   * 这样做是为了让「逐张发牌」不影响任何规则判定与已有测试。
+   */
+  readonly revealed: number
+  /** 中途暂停提示是否已触发过（人类第一次摸到级牌时置 true，只触发一次） */
+  readonly declarePrompted: boolean
+  /** 是否正暂停等人类决定「亮主 / 继续发牌」 */
+  readonly dealPrompt: boolean
   /** 本局打的级别（= 庄家队的级牌） */
   readonly levelRank: LevelRank
   /** 四家手牌。埋底前庄家 33 张，埋底后都是 25 张 */
@@ -99,6 +120,9 @@ export interface GameState {
 export type Action =
   | { readonly type: 'newGame'; readonly seed?: number }
   | { readonly type: 'declareTrump'; readonly trump: Trump }
+  | { readonly type: 'revealTick' }
+  | { readonly type: 'passDeal' }
+  | { readonly type: 'passCounter' }
   | { readonly type: 'bury'; readonly ids: readonly number[] }
   | { readonly type: 'toggleSelect'; readonly id: number }
   | { readonly type: 'setSelection'; readonly ids: readonly number[] }
@@ -159,6 +183,14 @@ export const emptyState = (): GameState => ({
   dealer: 0,
   trump: 'NT',
   forcedNT: false,
+  trumpDeclarer: null,
+  usedTrumps: [],
+  counterPending: false,
+  counterOptions: [],
+  declareOptions: [],
+  revealed: 25,
+  declarePrompted: true,
+  dealPrompt: false,
   levelRank: 2,
   hands: [[], [], [], []],
   bottom: [],

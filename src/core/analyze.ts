@@ -130,10 +130,11 @@ export function analyze(cards: readonly C[], ctx: RuleContext): PlayAnalysis {
 
   const pairCount = pairSeeds.length
   const singleCount = singles.length
-  const isMultiGroup = !(
-    (pairCount === 0 && singleCount === 1) ||
-    (pairCount > 0 && singleCount === 0)
-  )
+  // 甩牌 = 多组混出。上面已把连续对子合成 tractor、不连续对子各成 pair、
+  // 单张各成 single，所以「多组」恰好等价于 groups.length > 1。
+  // 不能只按 pairCount/singleCount 判 —— 那会把「2 个不连续对子」当成单一牌型，
+  // 从而在 legality 里被当成合法首出直接放行（白甩两对）。
+  const isMultiGroup = groups.length > 1
 
   let keyCard: C = cards[0] as C
   for (const c of cards) if (power.get(c.value) > power.get(keyCard.value)) keyCard = c

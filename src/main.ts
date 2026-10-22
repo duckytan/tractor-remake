@@ -34,6 +34,10 @@ state = {
 }
 
 let aiTimer: number | null = null
+let dealTimer: number | null = null
+
+/** 逐张发牌的节奏（ms/张）。25 张约 1.4s */
+const DEAL_INTERVAL_MS = 55
 
 function scheduleAi(): void {
   if (aiTimer !== null) return
@@ -44,6 +48,25 @@ function scheduleAi(): void {
     state = reduce(state, { type: 'aiStep' })
     afterChange()
   }, Math.max(0, state.aiSpeedMs))
+}
+
+/**
+ * 逐张发牌：只要还在发、且没有停下来等人决定，就继续下一张。
+ * 人类摸到级牌时 `dealPrompt` 会置 true，这里自然停住。
+ */
+function scheduleDeal(): void {
+  if (dealTimer !== null) return
+  if (state.phase !== 'contract') return
+  const total = (state.hands[HUMAN_SEAT] as readonly Card[]).length
+  if (state.revealed >= total || state.dealPrompt) return
+  dealTimer = window.setTimeout(() => {
+    dealTimer = null
+    if (state.phase !== 'contract') return
+    const t = (state.hands[HUMAN_SEAT] as readonly Card[]).length
+    if (state.revealed >= t || state.dealPrompt) return
+    state = reduce(state, { type: 'revealTick' })
+    afterChange()
+  }, DEAL_INTERVAL_MS)
 }
 
 function afterChange(): void {
@@ -57,6 +80,7 @@ function afterChange(): void {
     animation: state.animation,
   })
   paint()
+  scheduleDeal()
   scheduleAi()
 }
 
@@ -66,6 +90,11 @@ function paint(): void {
 
 function dispatch(a: Action): void {
   const prevPhase = state.phase
+  // 任何主动操作都打断正在排队的发牌节奏，由 afterChange 重新判断
+  if (dealTimer !== null) {
+    window.clearTimeout(dealTimer)
+    dealTimer = null
+  }
   state = reduce(state, a)
 
   // 换局 / 新游戏时清掉旧存档
@@ -141,4 +170,5 @@ window.addEventListener('keydown', (ev) => {
 })
 
 paint()
+scheduleDeal()
 scheduleAi()

@@ -62,6 +62,7 @@ function legalOnly(
   ctx: RuleContext,
   play: PlayContext,
   limit: number,
+  opponents: readonly (readonly Card[])[],
 ): Card[][] {
   const raw = enumeratePlays(hand, ctx, play, limit)
   const out: Card[][] = []
@@ -73,7 +74,8 @@ function legalOnly(
       ...(play.kind === 'follow'
         ? { lead: { cards: play.leadCards, analysis: play.leadAnalysis } }
         : {}),
-      opponents: [],
+      // 首出甩牌必须拿真实对手手牌校验，否则 maxCard 恒为 -1、任何甩牌都「合法」
+      opponents,
     })
     if (r.ok) out.push(r.cards.slice())
   }
@@ -150,8 +152,8 @@ function hasTractor(hand: readonly Card[], slot: number, ctx: RuleContext): bool
 }
 
 export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDecision {
-  const { hand, ctx, play } = input
-  const candidates = legalOnly(hand, ctx, play, 60)
+  const { hand, ctx, play, opponents } = input
+  const candidates = legalOnly(hand, ctx, play, 60, opponents)
   if (candidates.length === 0) {
     // 兜底：优先出首出花色的牌，再按牌力从小到大
     const slot = play.kind === 'follow' ? play.leadAnalysis.suitSlot : -1
