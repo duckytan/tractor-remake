@@ -1,0 +1,23 @@
+{
+  "name": "tractor-remake",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "拖拉机（升级 / 80分）网页重制版 —— 规则引擎 + 单机对 AI",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@vitest/coverage-v8": "^2.1.8",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
+  }
+}

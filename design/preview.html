@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>拖拉机重制版 · 素材预览</title>
+<link rel="stylesheet" href="preview.css">
+</head>
+<body>
+<svg class="svg-defs" id="svg-defs" aria-hidden="true"></svg>
+<div class="wrap">
+
+  <header class="page-head">
+    <h1>拖拉机重制版 · 素材预览</h1>
+    <p>全部牌面由 SVG 生成，无位图、无外部资源。改 <code>--card-w</code> 一个变量即可整页等比缩放。</p>
+  </header>
+
+  <!-- ============ 1. 设计令牌 ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>1 · 设计令牌</h2>
+      <span class="note">颜色与尺寸的唯一来源</span>
+    </div>
+
+    <div class="swatches" id="swatches"></div>
+
+    <div style="margin-top:22px; max-width:640px">
+      <table class="spec">
+        <thead><tr><th>元素</th><th>比例</th><th>150px 档实际值</th></tr></thead>
+        <tbody>
+          <tr><td>卡宽 × 卡高</td><td class="num">1 : 1.4</td><td class="num">150 × 210</td></tr>
+          <tr><td>圆角</td><td class="num">卡宽 × 0.06</td><td class="num">9 px</td></tr>
+          <tr><td>内框线内缩</td><td class="num">卡宽 × 0.04</td><td class="num">6 px</td></tr>
+          <tr><td>角标点数高</td><td class="num">卡高 × 0.20</td><td class="num">42 px</td></tr>
+          <tr><td>角标区宽</td><td class="num">卡宽 × 0.30</td><td class="num">45 px</td></tr>
+          <tr><td>中央 pip 直径</td><td class="num">卡宽 × 0.22</td><td class="num">33 px</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 2. 全部牌面 ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>2 · 全部 54 张牌</h2>
+      <span class="note">110px 缩略 · 传统点数布局 · 四角标</span>
+    </div>
+    <div id="deck"></div>
+  </section>
+
+  <!-- ============ 3. 尺寸档位 ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>3 · 尺寸档位</h2>
+      <span class="note">小 120 / 中 150 / 大 190</span>
+    </div>
+    <div class="row" id="sizes"></div>
+    <p class="footnote">低于 120px 时点数开始难辨，等于退回原版（原版牌面仅 71×96）。</p>
+  </section>
+
+  <!-- ============ 4. 四色牌 ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>4 · 两色 / 四色</h2>
+      <span class="note">四色对红绿色盲更友好，且与主牌金边叠加时辨识度更高</span>
+    </div>
+    <div class="toggle-bar" style="margin-bottom:18px">
+      <button id="btn-two" aria-pressed="true">两色（默认）</button>
+      <button id="btn-four" aria-pressed="false">四色</button>
+    </div>
+    <div class="row" id="colors" style="--card-w:130px"></div>
+  </section>
+
+  <!-- ============ 5. 牌面状态 ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>5 · 牌面状态</h2>
+      <span class="note">同一套几何结构，只改 class</span>
+    </div>
+    <div class="row" id="states" style="--card-w:130px"></div>
+  </section>
+
+  <!-- ============ 6. 牌背 ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>6 · 牌背</h2>
+      <span class="note">SVG pattern 生成，无图片；白边 3.5%，内框 + 中心徽记</span>
+    </div>
+    <div class="row" id="backs" style="--card-w:130px"></div>
+  </section>
+
+  <!-- ============ 7. 桌面实景 ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>7 · 桌面实景</h2>
+      <span class="note">径向渐变 + 内阴影 + 噪点，无位图</span>
+    </div>
+    <div class="felt" style="--card-w:100px">
+      <div class="table-area">
+        <div class="seat seat--north" id="seat-north"></div>
+        <div class="seat seat--west" id="seat-west"></div>
+        <div class="seat seat--center" id="seat-center"></div>
+        <div class="seat seat--east" id="seat-east"></div>
+        <div class="seat seat--south">
+          <div class="status-bar">
+            <span>主牌 <b>♠ 黑桃</b></span><span class="sep">|</span>
+            <span>级牌 <b>打 2</b></span><span class="sep">|</span>
+            <span>庄家 <b>南</b></span><span class="sep">|</span>
+            <span>我方 <b>2</b></span><span class="sep">|</span>
+            <span>对方 <b>2</b></span><span class="sep">|</span>
+            <span>闲家得分 <b>35</b> / 200</span>
+          </div>
+          <div class="hand" id="hand"></div>
+        </div>
+      </div>
+    </div>
+    <p class="footnote">
+      手牌重叠 42%，每张露出约 58% 宽度 —— 角标必须落在露出区内（见 150px 档：露出 87px，角标占 45px）。
+    </p>
+  </section>
+
+  <!-- ============ 8. 图标 ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>8 · 图标</h2>
+      <span class="note">全部 SVG path，不用字体图标、不用 emoji</span>
+    </div>
+    <div class="icon-row" id="icons"></div>
+  </section>
+
+  <p class="footnote" style="margin-top:26px">
+    预览文件：<code>design/preview.html</code> · <code>preview.css</code> · <code>card.js</code><br>
+    设计依据见 <code>docs/10-牌面与素材设计参考.md</code>
+  </p>
+
+</div>
+
+<script src="card.js"></script>
+<script>
+;(function () {
+  'use strict'
+  const { cardHTML, backHTML, fullDeck } = window.CardDesign
+
+/* ---------- 1. 色板 ---------- */
+const TOKENS = [
+  ['纸面', '--paper', '#FFFFFF'],
+  ['纸边', '--paper-edge', '#C9C6BC'],
+  ['内框', '--paper-inner', '#EAE7DE'],
+  ['黑桃 / 梅花', '--suit-black', '#2C2C2A'],
+  ['红心 / 方片', '--suit-red', '#A32D2D'],
+  ['主牌金', '--trump', '#BA7517'],
+  ['选中蓝', '--sel', '#185FA5'],
+  ['提示绿', '--hint', '#1D9E75'],
+  ['桌面深', '--felt-3', '#0A2419'],
+]
+document.getElementById('swatches').innerHTML = TOKENS.map(([name, v, hex]) =>
+  `<div class="swatch">
+     <div class="chip" style="background:var(${v})"></div>
+     <div class="meta"><strong>${name}</strong><span>${hex}</span></div>
+   </div>`).join('')
+
+/* ---------- 2. 全部 54 张 ---------- */
+const SUIT_ORDER = [
+  ['spade', '♠ 黑桃'], ['heart', '♥ 红心'], ['club', '♣ 梅花'], ['diamond', '♦ 方片'],
+]
+const deckBox = document.getElementById('deck')
+deckBox.innerHTML = SUIT_ORDER.map(([suit, label]) => {
+  const cards = ['2','3','4','5','6','7','8','9','10','J','Q','K','A']
+    .map(r => cardHTML({ rank: r, suit })).join('')
+  return `<div class="deck-block">
+            <div class="deck-cap">${label}</div>
+            <div class="deck-row">${cards}</div>
+          </div>`
+}).join('') + `<div class="deck-block">
+    <div class="deck-cap">王牌</div>
+    <div class="deck-row">${cardHTML({ joker: 'small' })}${cardHTML({ joker: 'big' })}</div>
+  </div>`
+
+/* ---------- 3. 尺寸档位 ---------- */
+document.getElementById('sizes').innerHTML = [
+  [120, '小 · 120×168'], [150, '中 · 150×210'], [190, '大 · 190×266'],
+].map(([w, label]) => `
+  <div style="text-align:center">
+    ${cardHTML({ rank: '10', suit: 'heart' }, { w })}
+    <div style="font-size:11px;color:var(--text-faint);margin-top:8px">${label}</div>
+  </div>`).join('')
+
+/* ---------- 4. 两色 / 四色 ---------- */
+const colorCards = ['spade','heart','club','diamond'].map(s => cardHTML({ rank: 'A', suit: s })).join('')
+document.getElementById('colors').innerHTML = colorCards
+
+const btnTwo = document.getElementById('btn-two')
+const btnFour = document.getElementById('btn-four')
+function setColorMode(four) {
+  document.documentElement.dataset.fourColor = four ? 'true' : 'false'
+  btnTwo.setAttribute('aria-pressed', String(!four))
+  btnFour.setAttribute('aria-pressed', String(four))
+}
+btnTwo.onclick = () => setColorMode(false)
+btnFour.onclick = () => setColorMode(true)
+
+/* ---------- 5. 状态 ---------- */
+document.getElementById('states').innerHTML = [
+  [cardHTML({ rank: 'Q', suit: 'heart' }), '普通'],
+  [cardHTML({ rank: '2', suit: 'spade' }, { cls: 'card--trump' }), '主牌'],
+  [cardHTML({ rank: 'K', suit: 'diamond' }, { cls: 'card--selected' }), '选中'],
+  [cardHTML({ rank: '9', suit: 'club' }, { cls: 'card--hint' }), '可出提示'],
+  [cardHTML({ rank: '5', suit: 'spade' }, { cls: 'card--disabled' }), '不可出'],
+  [cardHTML({ rank: 'J', suit: 'club' }, { cls: 'card--played' }), '刚打出'],
+].map(([html, label]) => `
+  <div style="text-align:center">
+    ${html}
+    <div style="font-size:11px;color:var(--text-faint);margin-top:8px">${label}</div>
+  </div>`).join('')
+
+/* ---------- 6. 牌背 ---------- */
+document.getElementById('svg-defs').innerHTML = window.CardDesign.backDefs()
+document.getElementById('backs').innerHTML = [1, 2, 3, 4].map(v => `
+  <div style="text-align:center">
+    ${backHTML(v)}
+    <div style="font-size:11px;color:var(--text-faint);margin-top:8px">方案 ${v}</div>
+  </div>`).join('')
+
+/* ---------- 7. 桌面 ---------- */
+// 对家手牌：用牌背表示，n 张
+const oppRow = (n) => `<div class="opp-hand opp-hand--row">${
+  Array.from({ length: n }, () => backHTML(1)).join('')}</div>`
+const oppCol = (n) => `<div class="opp-hand opp-hand--col">${
+  Array.from({ length: n }, () => backHTML(1)).join('')}</div>`
+
+const seatTag = (name, count, win) =>
+  `<div class="seat-tag${win ? ' seat-tag--win' : ''}">${name} · <b>${count}</b> 张</div>`
+
+const playedSet = (html) => `<div class="played-set">${html}</div>`
+
+// 北：手牌（横排牌背）→ 标签 → 出牌
+document.getElementById('seat-north').innerHTML =
+  oppRow(13)
+  + seatTag('北', 13, false)
+  + playedSet([{rank:'4',suit:'club'},{rank:'4',suit:'club'},{rank:'8',suit:'club'}]
+      .map(c => cardHTML(c)).join(''))
+
+// 西：手牌（竖排牌背）→ 标签 + 出牌
+document.getElementById('seat-west').innerHTML =
+  oppCol(13)
+  + `<div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+       ${seatTag('西', 13, false)}
+       ${playedSet(cardHTML({rank:'A',suit:'club'}))}
+     </div>`
+
+// 东：标签 + 出牌 → 手牌（竖排牌背）
+document.getElementById('seat-east').innerHTML =
+  oppCol(13)
+  + `<div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+       ${seatTag('东', 13, false)}
+       ${playedSet(cardHTML({rank:'7',suit:'club'}))}
+     </div>`
+
+// 中央：本墩赢家
+document.getElementById('seat-center').innerHTML =
+  seatTag('南（我）', 25, true)
+  + playedSet([
+      cardHTML({rank:'3',suit:'spade'},{cls:'card--trump'}),
+      cardHTML({rank:'3',suit:'spade'},{cls:'card--trump'}),
+      cardHTML({rank:'6',suit:'spade'},{cls:'card--trump'}),
+    ].join(''))
+
+const handCards = [
+  {rank:'2',suit:'spade'},{rank:'2',suit:'spade'},{rank:'K',suit:'spade'},{rank:'Q',suit:'spade'},
+  {rank:'10',suit:'spade'},{rank:'8',suit:'spade'},{rank:'6',suit:'spade'},{rank:'3',suit:'spade'},
+  {rank:'A',suit:'heart'},{rank:'K',suit:'heart'},{rank:'J',suit:'heart'},{rank:'9',suit:'heart'},
+  {rank:'7',suit:'heart'},{rank:'5',suit:'heart'},{rank:'A',suit:'diamond'},{rank:'Q',suit:'diamond'},
+  {rank:'10',suit:'diamond'},{rank:'8',suit:'diamond'},{rank:'4',suit:'diamond'},
+  {rank:'K',suit:'club'},{rank:'J',suit:'club'},{rank:'9',suit:'club'},{rank:'7',suit:'club'},
+  {rank:'5',suit:'club'},{joker:'big'},
+]
+document.getElementById('hand').innerHTML = handCards.map((c, i) => {
+  const cls = i === 3 ? 'card--selected' : (i === 2 || i === 4 ? 'card--trump' : '')
+  return cardHTML(c, { cls })
+}).join('')
+
+/* ---------- 8. 图标 ---------- */
+const ICONS = [
+  ['黑桃', `<path d="M24 4 C19 11 5 21 5 31 C5 37 10 41 15 40 C18 39 21 37 22 34 C21 38 20 42 17 47 L31 47 C28 42 27 38 26 34 C27 37 30 39 33 40 C38 41 43 37 43 31 C43 21 29 11 24 4 Z"/>`],
+  ['红心', `<path d="M24 45 C24 45 5 31 5 19 C5 12 10 7 16 7 C20 7 23 10 24 14 C25 10 28 7 32 7 C38 7 43 12 43 19 C43 31 24 45 24 45 Z"/>`],
+  ['梅花', `<path d="M16 14 a8 8 0 1 0 16 0 a8 8 0 1 0 -16 0 M5 32 a8 8 0 1 0 16 0 a8 8 0 1 0 -16 0 M27 32 a8 8 0 1 0 16 0 a8 8 0 1 0 -16 0 M21 30 L27 30 L30 46 L18 46 Z"/>`],
+  ['方片', `<path d="M24 3 L39 25 L24 47 L9 25 Z"/>`],
+  ['庄家', `<path d="M6 34 L12 16 L19 26 L24 10 L29 26 L36 16 L42 34 Z M8 38 h32 v4 h-32 Z"/>`],
+  ['主牌', `<path d="M24 4 L28 16 L41 16 L31 24 L35 36 L24 29 L13 36 L17 24 L7 16 L20 16 Z"/>`],
+  ['赢家', `<path d="M10 12 h28 v12 a14 14 0 0 1 -28 0 Z M14 40 h20 v4 h-20 Z M8 8 h32 v4 h-32 Z"/>`],
+  ['分数', `<path d="M13 23 a10 10 0 1 0 20 0 a10 10 0 1 0 -20 0"/><path d="M21 34 a10 10 0 1 0 20 0 a10 10 0 1 0 -20 0"/>`],
+]
+document.getElementById('icons').innerHTML = ICONS.map(([name, path]) =>
+  `<div class="icon-cell">
+     <svg width="30" height="30" viewBox="0 0 48 52" fill="currentColor">${path}</svg>
+     <span>${name}</span>
+   </div>`).join('')
+})()
+</script>
+</body>
+</html>
