@@ -1,6 +1,6 @@
 {
   "name": "tractor-remake",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "拖拉机（升级 / 80分）网页重制版 —— 规则引擎 + 单机对 AI",
