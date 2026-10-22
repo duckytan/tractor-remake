@@ -79,7 +79,13 @@ function dispatch(a: Action): void {
   afterChange()
 }
 
-/** 提示：给出一手合法牌并选中 */
+/**
+ * 提示：高亮一手合法牌。
+ *
+ * FR-19 ③：**不改变游戏状态** —— 只做视觉高亮，不动 selected。
+ * 早先这里派发 setSelection，会把用户已选好的牌覆盖掉，
+ * 而且提示结果还会被 saveState 写进存档。
+ */
 function hint(): void {
   if (seatToPlay(state) !== HUMAN_SEAT) return
   const ctx = ctxOf(state)
@@ -100,7 +106,8 @@ function hint(): void {
       opponents: [1, 2, 3].map((x) => state.hands[x] as readonly Card[]),
     })
     if (r.ok) {
-      dispatch({ type: 'setSelection', ids: r.cards.map((c) => c.id) })
+      // 只高亮，不选中
+      dispatch({ type: 'showHint', ids: r.cards.map((c) => c.id) })
       return
     }
   }

@@ -81,6 +81,14 @@ export interface GameState {
   /** 对局记录弹层是否打开 */
   readonly logOpen: boolean
   /**
+   * 提示高亮的牌 id。
+   *
+   * **纯视觉状态，不参与任何规则判定**（FR-19 ③：提示不改变游戏状态）。
+   * 与 `selected` 分开：selected 是「我要出的牌」，hintIds 只是「看，这手能出」。
+   * 任何会改变局面的动作都应顺手清掉它。
+   */
+  readonly hintIds: readonly number[]
+  /**
    * 待生效的规则配置。
    * FR-18 ③：规则开关改动在下一局生效，当前局不生效。
    * 所以 UI 改的是这份 pending 值，startRound 时才合并进 config。
@@ -108,6 +116,8 @@ export type Action =
   | { readonly type: 'setCardSize'; readonly size: CardSize }
   | { readonly type: 'toggleAnimation' }
   | { readonly type: 'toggleLog' }
+  | { readonly type: 'showHint'; readonly ids: readonly number[] }
+  | { readonly type: 'clearHint' }
 
 /** 由状态推导规则上下文（牌力表现算） */
 export function ctxOf(state: GameState): RuleContext {
@@ -168,5 +178,6 @@ export const emptyState = (): GameState => ({
   animation: true,
   settingsOpen: false,
   logOpen: false,
+  hintIds: [],
   pendingConfig: DEFAULT_RULE_CONFIG,
 })

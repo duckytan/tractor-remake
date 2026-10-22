@@ -140,13 +140,16 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const hand = q('hand')
     const myHand = s.hands[HUMAN_SEAT] as readonly Card[]
     const selected = new Set(s.selected)
+    const hinted = new Set(s.hintIds)
     const canAct = s.phase === 'play' && turn === HUMAN_SEAT
     const burying = s.phase === 'bury'
 
     for (const c of myHand) {
       const on = selected.has(c.id)
+      const isHint = hinted.has(c.id)
+      const cls = [on ? 'card--selected' : '', isHint ? 'card--hint' : ''].filter(Boolean).join(' ')
       const el = cardEl(c, {
-        cls: on ? 'card--selected' : '',
+        cls,
         id: c.id,
       })
       if (burying) el.classList.add('is-pickable')
@@ -156,7 +159,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         el.tabIndex = 0
         el.setAttribute('role', 'button')
         el.setAttribute('aria-pressed', on ? 'true' : 'false')
-        el.setAttribute('aria-label', `第 ${c.id} 张牌`)
+        el.setAttribute('aria-label', isHint ? `第 ${c.id} 张牌（提示）` : `第 ${c.id} 张牌`)
       }
       hand.appendChild(el)
     }

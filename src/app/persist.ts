@@ -89,7 +89,9 @@ export function loadState(): GameState | null {
     const o = JSON.parse(raw) as GameState
     if (o.version !== STATE_VERSION) return null
     if (!Array.isArray(o.hands) || o.hands.length !== 4) return null
-    return o
+    // hintIds 是纯视觉的瞬时状态，不跨会话恢复 ——
+    // 否则刷新后会看到上一局残留的「提示」高亮。
+    return { ...o, hintIds: [] }
   } catch {
     return null
   }

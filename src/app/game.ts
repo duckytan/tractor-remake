@@ -96,6 +96,7 @@ export function startRound(s: GameState, seed: number): GameState {
     lastReject: null,
     notice: deal.degraded ? '发牌约束未能满足，已降级发牌' : null,
     lastSettle: null,
+    hintIds: [],
   }
   return base
 }
@@ -150,6 +151,7 @@ function emptyBase(): GameState {
     animation: true,
     settingsOpen: false,
     logOpen: false,
+    hintIds: [],
     pendingConfig: {
       allowSelfCounter: true,
       twoAsPermanent: false,
@@ -389,10 +391,10 @@ export function reduce(s: GameState, action: Action): GameState {
       return newGame(s.pendingConfig, s.aiLevel, s.aiSpeedMs, action.seed)
 
     case 'declareTrump':
-      return declareTrump(s, action.trump)
+      return { ...declareTrump(s, action.trump), hintIds: [] }
 
     case 'bury':
-      return buryCards(s, action.ids)
+      return { ...buryCards(s, action.ids), hintIds: [] }
 
     case 'toggleSelect': {
       if (s.phase !== 'play' && s.phase !== 'bury') return s
@@ -400,14 +402,15 @@ export function reduce(s: GameState, action: Action): GameState {
       return {
         ...s,
         selected: has ? s.selected.filter((x) => x !== action.id) : [...s.selected, action.id],
+        hintIds: [], // 用户自己动手了，提示失效
       }
     }
 
     case 'clearSelect':
-      return { ...s, selected: [] }
+      return { ...s, selected: [], hintIds: [] }
 
     case 'setSelection':
-      return { ...s, selected: [...action.ids] }
+      return { ...s, selected: [...action.ids], hintIds: [] }
 
     case 'playSelected': {
       if (s.phase !== 'play') return s
@@ -470,6 +473,13 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'setCardSize':
       return { ...s, cardSize: action.size }
+
+    case 'showHint':
+      // 纯视觉提示，不碰 selected / 不推进局面（FR-19 ③）
+      return { ...s, hintIds: [...action.ids] }
+
+    case 'clearHint':
+      return { ...s, hintIds: [] }
 
     case 'toggleAnimation':
       return { ...s, animation: !s.animation }

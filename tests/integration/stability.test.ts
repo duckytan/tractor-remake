@@ -10,7 +10,7 @@ import { DEFAULT_RULE_CONFIG } from '@core'
 import type { Card } from '@core'
 import { newGame, reduce, aiPlayFor, aiCanAct } from '@app/game'
 import type { GameState } from '@app/state'
-import { seatToPlay } from '@app/state'
+import { HUMAN_SEAT, seatToPlay } from '@app/state'
 
 /** 跑完一局（四家都由 AI 代打，模拟连续对局） */
 function playRound(seed: number, level: 0 | 1 | 2): GameState {
@@ -131,5 +131,60 @@ describe('M6 · 状态层可序列化（FR-17）', () => {
     expect(round.hands.length).toBe(4)
     expect(round.history.length).toBe(s.history.length)
     expect(round.version).toBe(s.version)
+  })
+})
+
+describe('M6 · 提示不改变游戏状态（FR-19 ③）', () => {
+  /** 造一个「已选好牌」的局面 */
+  function setup(): GameState {
+    let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 555)
+    s = reduce(s, { type: 'declareTrump', trump: 1 })
+    if (s.phase === 'bury') {
+      const hand = s.hands[s.dealer] as readonly Card[]
+      s = reduce(s, { type: 'bury', ids: hand.slice(0, 8).map((c) => c.id) })
+    }
+    return s
+  }
+
+  it('showHint 只写 hintIds，不碰 selected', () => {
+    const s = setup()
+    const ids = [1, 2, 3]
+    const withHint = reduce(s, { type: 'showHint', ids })
+    expect(withHint.hintIds).toEqual(ids)
+    // 关键：selected 与局面完全没变
+    expect(withHint.selected).toEqual(s.selected)
+    expect(withHint.hands).toEqual(s.hands)
+    expect(withHint.phase).toBe(s.phase)
+    expect(withHint.step).toBe(s.step)
+  })
+
+  it('用户自己选牌会清掉提示', () => {
+    let s = setup()
+    const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+    s = reduce(s, { type: 'showHint', ids: [hand[0]!.id] })
+    expect(s.hintIds.length).toBe(1)
+    s = reduce(s, { type: 'toggleSelect', id: hand[0]!.id })
+    expect(s.hintIds).toEqual([])
+  })
+
+  it('取消选择会清掉提示', () => {
+    let s = setup()
+    s = reduce(s, { type: 'showHint', ids: [1, 2] })
+    s = reduce(s, { type: 'clearSelect' })
+    expect(s.hintIds).toEqual([])
+  })
+
+  it('定主 / 埋底会清掉提示', () => {
+    let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 556)
+    s = reduce(s, { type: 'showHint', ids: [1] })
+    s = reduce(s, { type: 'declareTrump', trump: 2 })
+    expect(s.hintIds).toEqual([])
+  })
+
+  it('开新局会清掉提示', () => {
+    let s = setup()
+    s = reduce(s, { type: 'showHint', ids: [1] })
+    s = reduce(s, { type: 'newGame', seed: 777 })
+    expect(s.hintIds).toEqual([])
   })
 })
