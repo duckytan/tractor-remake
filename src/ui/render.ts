@@ -5,10 +5,10 @@
  * 换来的是「渲染 = state 的纯函数」这种简单性。
  */
 
-import type { Card, LevelRank, Seat, Trump } from '@core'
-import { teamOf } from '@core'
-import type { Action, GameState } from '@app/state'
-import { HUMAN_SEAT, seatToPlay } from '@app/state'
+import type { Card, LevelRank, Play, RuleConfig, Seat, Trump } from '@core'
+import { checkPlay, teamOf } from '@core'
+import type { Action, CardSize, GameState } from '@app/state'
+import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { backEl, cardEl, ensureDefs } from './card'
 
 export interface Actions {
@@ -46,6 +46,8 @@ function cardWrap(cards: readonly Card[], o: { cls?: string; width?: number } = 
 export function render(root: HTMLElement, s: GameState, act: Actions): void {
   ensureDefs()
   root.dataset.fourColor = s.fourColor ? 'true' : 'false'
+  root.dataset.cardSize = s.cardSize
+  root.dataset.anim = s.animation ? 'on' : 'off'
 
   const turn = seatToPlay(s)
 
@@ -60,6 +62,8 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       </div>
       <div class="top-actions">
         <button class="btn btn--ghost" data-act="toggleFourColor">四色</button>
+        <button class="btn btn--ghost" data-act="toggleLog">记录</button>
+        <button class="btn btn--ghost" data-act="openSettings">设置</button>
         <button class="btn btn--ghost" data-act="newGame">新游戏</button>
       </div>
     </header>
@@ -147,6 +151,13 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       })
       if (burying) el.classList.add('is-pickable')
       else if (!canAct) el.classList.add('card--disabled')
+      // NFR-10：可操作时牌可 Tab 聚焦，回车切换选中
+      if (burying || canAct) {
+        el.tabIndex = 0
+        el.setAttribute('role', 'button')
+        el.setAttribute('aria-pressed', on ? 'true' : 'false')
+        el.setAttribute('aria-label', `第 ${c.id} 张牌`)
+      }
       hand.appendChild(el)
     }
     if (myHand.length === 0) hand.innerHTML = '<div class="hand-empty">手牌已出完</div>'
@@ -166,6 +177,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       const myTurn = turn === HUMAN_SEAT
       bar.innerHTML = `
         <span class="hint-text">${myTurn ? '轮到你了' : `${SEAT_LABEL[turn ?? 0]} 出牌中…`}</span>
+        ${legalityBadge(s)}
         <button class="btn" data-act="clear" ${s.selected.length ? '' : 'disabled'}>取消</button>
         <button class="btn" data-act="hint" ${myTurn ? '' : 'disabled'}>提示</button>
         <button class="btn btn--primary" data-act="play" ${myTurn && s.selected.length ? '' : 'disabled'}>出牌</button>`
@@ -177,7 +189,11 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   /* ---- 弹层 ---- */
   {
     const ov = q('overlay')
-    if (s.phase === 'contract') {
+    if (s.settingsOpen) {
+      ov.innerHTML = settingsPanel(s)
+    } else if (s.logOpen) {
+      ov.innerHTML = logPanel(s)
+    } else if (s.phase === 'contract') {
       ov.innerHTML = `
         <div class="panel">
           <h2>定主</h2>
@@ -235,6 +251,161 @@ function settlePanel(s: GameState): string {
 }
 
 /**
+ * FR-19 ①：选牌时实时显示合法性。
+ * 复用 core 的 checkPlay，UI 不自己判断规则。
+ */
+function legalityBadge(s: GameState): string {
+  if (s.phase !== 'play' || s.selected.length === 0) return ''
+  if (seatToPlay(s) !== HUMAN_SEAT) return ''
+
+  const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+  const idSet = new Set(s.selected)
+  const cards = hand.filter((c) => idSet.has(c.id))
+  if (cards.length === 0) return ''
+
+  const leadPlay = s.trick.plays[0] as Play | undefined
+  const result = checkPlay({
+    hand,
+    cards,
+    ctx: ctxOf(s),
+    ...(leadPlay ? { lead: { cards: leadPlay.cards, analysis: leadPlay.analysis } } : {}),
+    opponents: [1, 2, 3].map((x) => s.hands[x] as readonly Card[]),
+  })
+
+  if (result.ok) {
+    return `<span class="legality is-ok">✓ 可以出</span>`
+  }
+  return `<span class="legality is-bad">✕ ${escapeHtml(result.detail)}</span>`
+}
+
+/** 设置面板（FR-18） */
+function settingsPanel(s: GameState): string {
+  const c = s.pendingConfig
+  const sw = (key: string, label: string, desc: string, on: boolean): string => `
+    <div class="set-row">
+      <span>${label}<small class="set-desc">${desc}</small></span>
+      <button class="switch" role="switch" aria-checked="${on ? 'true' : 'false'}" data-cfg="${key}" aria-label="${label}"></button>
+    </div>`
+
+  const seg = (act: string, name: string, opts: { v: string; label: string; on: boolean }[]): string => `
+    <div class="seg" role="group" aria-label="${name}">
+      ${opts.map((o) => `<button data-act="${act}" data-val="${o.v}" class="${o.on ? 'is-on' : ''}" aria-pressed="${o.on ? 'true' : 'false'}">${o.label}</button>`).join('')}
+    </div>`
+
+  const sizeOpts = (['S', 'M', 'L'] as CardSize[]).map((v) => ({
+    v,
+    label: `${v}（${CARD_SIZE_PX[v]}px）`,
+    on: s.cardSize === v,
+  }))
+
+  return `<div class="panel panel--wide" role="dialog" aria-label="设置">
+    <h2>设置</h2>
+    <p class="muted">规则开关改动在<b>下一局</b>生效；体验项立即生效。</p>
+
+    <div class="set-group">
+      <h3>规则</h3>
+      ${sw('allowSelfCounter', '允许自反', '同队也可反主', c.allowSelfCounter)}
+      ${sw('twoAsPermanent', '2 为常主', '两张 2 恒为主牌', c.twoAsPermanent)}
+      ${sw('allowPartnerGuard', '允许对家保', '对家可保级', c.allowPartnerGuard)}
+      ${sw('allowCounterNT', '允许反无将', '无将可被反', c.allowCounterNT)}
+      ${sw('guardScoreLevels', '5,10,K 必打', '升级时不可跳过这些级牌', c.guardScoreLevels)}
+      ${sw('guardJA', 'J,A 必打', '升级时不可跳过这些级牌', c.guardJA)}
+      ${sw('guardKingLevel', '打王必打', '升级时不可跳过打王级', c.guardKingLevel)}
+    </div>
+
+    <div class="set-group">
+      <h3>体验</h3>
+      <div class="set-row">
+        <span>AI 难度</span>
+        ${seg('setAiLevel', 'AI 难度', [
+          { v: '0', label: '简单', on: s.aiLevel === 0 },
+          { v: '1', label: '普通', on: s.aiLevel === 1 },
+          { v: '2', label: '困难', on: s.aiLevel === 2 },
+        ])}
+      </div>
+      <div class="set-row">
+        <span>AI 速度</span>
+        ${seg('setAiSpeed', 'AI 速度', [
+          { v: '0', label: '瞬时', on: s.aiSpeedMs === 0 },
+          { v: '300', label: '慢', on: s.aiSpeedMs === 300 },
+          { v: '800', label: '中', on: s.aiSpeedMs === 800 },
+        ])}
+      </div>
+      <div class="set-row">
+        <span>牌面尺寸</span>
+        ${seg('setCardSize', '牌面尺寸', sizeOpts)}
+      </div>
+      <div class="set-row">
+        <span>动画</span>
+        ${seg('toggleAnimation', '动画', [
+          { v: 'on', label: '开', on: s.animation },
+          { v: 'off', label: '关', on: !s.animation },
+        ])}
+      </div>
+    </div>
+
+    <div class="set-foot">
+      「必打」是<b>升级时禁止跳级</b>的限制，与出牌无关（见规则书 §10.3）。
+    </div>
+
+    <button class="btn btn--primary" data-act="closeSettings">完成</button>
+  </div>`
+}
+
+/** 对局记录面板（FR-20） */
+function logPanel(s: GameState): string {
+  const tricks = [...s.history].reverse()
+  const items = tricks
+    .map((t, i) => {
+      const rows = t.plays
+        .map((p) => {
+          const txt = p.cards
+            .map((c) => cardText(c))
+            .join(' ')
+          return `<div class="log-play${p.seat === t.winner ? ' is-winner' : ''}">
+            <em>${SEAT_LABEL[p.seat]}</em><span>${escapeHtml(txt)}</span>
+          </div>`
+        })
+        .join('')
+      const no = s.history.length - i
+      return `<div class="log-trick${t.plays.some((p) => p.seat === t.winner) ? ' is-win' : ''}">
+        <div class="log-trick-head">
+          <span>第 ${no} 墩</span>
+          <b>${SEAT_LABEL[t.winner]} 赢 · ${t.score} 分</b>
+        </div>
+        <div class="log-plays">${rows}</div>
+      </div>`
+    })
+    .join('')
+
+  return `<div class="panel panel--wide" role="dialog" aria-label="对局记录">
+    <h2>对局记录</h2>
+    <p class="muted">已打完 ${s.history.length} 墩（仅内存，不写存档）</p>
+    ${items ? `<div class="log-list">${items}</div>` : '<div class="log-empty">还没有打完的墩</div>'}
+    <button class="btn btn--primary" data-act="toggleLog">关闭</button>
+  </div>`
+}
+
+/** 牌面文字摘要：♠A ♥10 … */
+function cardText(c: Card): string {
+  const suit = '♠♥♣♦'[c.value % 13 >= 0 ? Math.floor(c.value / 13) : 0] as string
+  const rank = RANK_TEXT[c.value % 13] as string
+  if (c.value === 52) return '小王'
+  if (c.value === 53) return '大王'
+  return `${suit}${rank}`
+}
+
+const RANK_TEXT = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'] as const
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/**
  * 按容器宽度反算手牌重叠率。
  * step = 每张牌前进的比例；下限 0.3 保证角标（占 0.3 卡宽）能露出来。
  */
@@ -263,8 +434,19 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {  root.oncli
       act.dispatch({ type: 'declareTrump', trump })
       return
     }
+
+    // 规则开关
+    const sw = target.closest('[data-cfg]') as HTMLElement | null
+    if (sw?.dataset.cfg) {
+      const key = sw.dataset.cfg as keyof RuleConfig
+      const current = s.pendingConfig[key]
+      act.dispatch({ type: 'updateConfig', patch: { [key]: !current } })
+      return
+    }
+
     const btn = target.closest('[data-act]') as HTMLElement | null
     if (!btn) return
+    const val = btn.dataset.val
     switch (btn.dataset.act) {
       case 'play':
         act.dispatch({ type: 'playSelected' })
@@ -286,6 +468,27 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {  root.oncli
         break
       case 'toggleFourColor':
         act.dispatch({ type: 'toggleFourColor' })
+        break
+      case 'openSettings':
+        act.dispatch({ type: 'openSettings' })
+        break
+      case 'closeSettings':
+        act.dispatch({ type: 'closeSettings' })
+        break
+      case 'toggleLog':
+        act.dispatch({ type: 'toggleLog' })
+        break
+      case 'toggleAnimation':
+        act.dispatch({ type: 'toggleAnimation' })
+        break
+      case 'setAiLevel':
+        if (val !== undefined) act.dispatch({ type: 'setAiLevel', level: Number(val) as 0 | 1 | 2 })
+        break
+      case 'setAiSpeed':
+        if (val !== undefined) act.dispatch({ type: 'setAiSpeed', ms: Number(val) })
+        break
+      case 'setCardSize':
+        if (val !== undefined) act.dispatch({ type: 'setCardSize', size: val as CardSize })
         break
       default:
         break

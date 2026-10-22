@@ -24,6 +24,12 @@ export const HUMAN_SEAT: Seat = 0
 
 export type Phase = 'contract' | 'bury' | 'play' | 'settle' | 'over'
 
+/** 牌面尺寸档位（FR-18） */
+export type CardSize = 'S' | 'M' | 'L'
+
+/** 牌面像素宽度 → CSS 变量 --card-w */
+export const CARD_SIZE_PX: Record<CardSize, number> = { S: 120, M: 150, L: 190 }
+
 export interface TrickRecord {
   readonly leader: Seat
   readonly plays: readonly { readonly seat: Seat; readonly cards: readonly Card[] }[]
@@ -66,6 +72,20 @@ export interface GameState {
   readonly aiLevel: AiLevel
   readonly aiSpeedMs: number
   readonly fourColor: boolean
+  /** 牌面尺寸档位 */
+  readonly cardSize: CardSize
+  /** 动画开关（关闭后 CSS 过渡全部禁用） */
+  readonly animation: boolean
+  /** 设置弹层是否打开 */
+  readonly settingsOpen: boolean
+  /** 对局记录弹层是否打开 */
+  readonly logOpen: boolean
+  /**
+   * 待生效的规则配置。
+   * FR-18 ③：规则开关改动在下一局生效，当前局不生效。
+   * 所以 UI 改的是这份 pending 值，startRound 时才合并进 config。
+   */
+  readonly pendingConfig: RuleConfig
 }
 
 export type Action =
@@ -83,6 +103,11 @@ export type Action =
   | { readonly type: 'setAiSpeed'; readonly ms: number }
   | { readonly type: 'toggleFourColor' }
   | { readonly type: 'dismissNotice' }
+  | { readonly type: 'openSettings' }
+  | { readonly type: 'closeSettings' }
+  | { readonly type: 'setCardSize'; readonly size: CardSize }
+  | { readonly type: 'toggleAnimation' }
+  | { readonly type: 'toggleLog' }
 
 /** 由状态推导规则上下文（牌力表现算） */
 export function ctxOf(state: GameState): RuleContext {
@@ -139,4 +164,9 @@ export const emptyState = (): GameState => ({
   aiLevel: 1,
   aiSpeedMs: 420,
   fourColor: false,
+  cardSize: 'M',
+  animation: true,
+  settingsOpen: false,
+  logOpen: false,
+  pendingConfig: DEFAULT_RULE_CONFIG,
 })

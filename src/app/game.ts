@@ -8,6 +8,7 @@
  */
 
 import { decide } from '@ai/policy'
+import type { AiLevel } from '@ai/policy'
 import type { PlayContext } from '@ai/enumerate'
 import {
   HAND_SIZE,
@@ -59,13 +60,16 @@ function sortHand(hand: readonly Card[], ctx: RuleContext): Card[] {
 export function startRound(s: GameState, seed: number): GameState {
   const rng = rngFor(seed, 0)
   const dealer = rng.int(4) as Seat
+
+  // FR-18 ③：规则开关改动在下一局生效 —— 开新局时把 pending 合并进 config
+  const config = s.pendingConfig
   const levelRank = levelOfDealer(s.levels, dealer)
   const forcedNT = levelRank === 18
 
   const deal = dealWithGuard(
     rngFor(seed, 1),
     dealer,
-    { levels: [s.levels.a, s.levels.b], mode: s.config.twoAsPermanent ? 1 : 0 },
+    { levels: [s.levels.a, s.levels.b], mode: config.twoAsPermanent ? 1 : 0 },
     buildPower,
   )
 
@@ -73,6 +77,7 @@ export function startRound(s: GameState, seed: number): GameState {
     ...s,
     version: STATE_VERSION,
     phase: 'contract',
+    config,
     seed,
     step: 0,
     dealer,
@@ -99,6 +104,7 @@ export function newGame(config: GameState['config'], aiLevel: GameState['aiLevel
   const s: GameState = {
     ...emptyBase(),
     config,
+    pendingConfig: config,
     aiLevel,
     aiSpeedMs,
   }
@@ -140,6 +146,19 @@ function emptyBase(): GameState {
     aiLevel: 1,
     aiSpeedMs: 420,
     fourColor: false,
+    cardSize: 'M',
+    animation: true,
+    settingsOpen: false,
+    logOpen: false,
+    pendingConfig: {
+      allowSelfCounter: true,
+      twoAsPermanent: false,
+      allowPartnerGuard: false,
+      allowCounterNT: false,
+      guardScoreLevels: false,
+      guardJA: true,
+      guardKingLevel: true,
+    },
   }
 }
 
@@ -294,11 +313,32 @@ function settleCurrentRound(s: GameState, lastWinnerAnalysis: ReturnType<typeof 
   }
 }
 
-/* ---------- AI ---------- */
+/**
+ * 当前这一墩的最大牌（首出时为 null）。
+ *
+ * AI 需要知道「现在谁最大」才能判断自己能不能压过 ——
+ * 提取成共享函数，测试与正式路径用同一份逻辑，避免两边行为不一致。
+ */
+export function currentWinnerOf(s: GameState): { seat: Seat; analysis: ReturnType<typeof analyze> } | null {
+  if (s.trick.plays.length === 0) return null
+  const ctx = ctxOf(s)
+  let best = s.trick.plays[0] as Play
+  for (const p of s.trick.plays) {
+    const a = p.analysis.keyCard
+    const b = best.analysis.keyCard
+    if (a && b && ctx.power.get(a.value) > ctx.power.get(b.value)) best = p
+  }
+  return { seat: best.seat, analysis: best.analysis }
+}
 
-function aiPlay(s: GameState): GameState {
-  const seat = seatToPlay(s)
-  if (seat === null || seat === HUMAN_SEAT) return s
+/**
+ * 让指定座位用 AI 出一手牌。
+ *
+ * 抽成独立函数有两个原因：
+ *   1. 座位无关 —— 测试可以给四个座位都套 AI，不必把「人类座位」特殊对待；
+ *   2. 随机源统一 —— 同一步用同一个 rng 派生式，公平对比不同档位。
+ */
+export function aiPlayFor(s: GameState, seat: Seat, level: AiLevel): GameState {
   const ctx = ctxOf(s)
   const isLead = s.trick.plays.length === 0
 
@@ -310,17 +350,7 @@ function aiPlay(s: GameState): GameState {
         leadAnalysis: (s.trick.plays[0] as Play).analysis,
       }
 
-  // 当前领先者（用于评估）
-  let currentWinner: { seat: Seat; analysis: ReturnType<typeof analyze> } | null = null
-  if (!isLead) {
-    let best = s.trick.plays[0] as Play
-    for (const p of s.trick.plays) {
-      const a = p.analysis.keyCard
-      const b = best.analysis.keyCard
-      if (a && b && ctx.power.get(a.value) > ctx.power.get(b.value)) best = p
-    }
-    currentWinner = { seat: best.seat, analysis: best.analysis }
-  }
+  const currentWinner = currentWinnerOf(s)
 
   const decision = decide(
     {
@@ -330,12 +360,24 @@ function aiPlay(s: GameState): GameState {
       play: pc,
       currentWinner,
       partnerLeading: currentWinner !== null && teamOf(currentWinner.seat) === teamOf(seat),
+      // 对家手牌：L2 用它做前瞻（这手能不能守住）
+      opponents: [0, 1, 2, 3]
+        .filter((x) => x !== seat)
+        .map((x) => s.hands[x] as readonly Card[]),
     },
-    s.aiLevel,
+    level,
     rngFor(s.seed, s.step + 1000),
   )
 
   return playCards(s, seat, decision.cards)
+}
+
+/* ---------- AI ---------- */
+
+function aiPlay(s: GameState): GameState {
+  const seat = seatToPlay(s)
+  if (seat === null || seat === HUMAN_SEAT) return s
+  return aiPlayFor(s, seat, s.aiLevel)
 }
 
 /* ---------- reducer ---------- */
@@ -343,7 +385,8 @@ function aiPlay(s: GameState): GameState {
 export function reduce(s: GameState, action: Action): GameState {
   switch (action.type) {
     case 'newGame':
-      return newGame(s.config, s.aiLevel, s.aiSpeedMs, action.seed)
+      // 新游戏也应用待生效的规则设置
+      return newGame(s.pendingConfig, s.aiLevel, s.aiSpeedMs, action.seed)
 
     case 'declareTrump':
       return declareTrump(s, action.trump)
@@ -382,7 +425,19 @@ export function reduce(s: GameState, action: Action): GameState {
     case 'nextRound': {
       if (s.phase !== 'settle' && s.phase !== 'over') return s
       if (s.phase === 'over') {
-        return startRound({ ...emptyBase(), config: s.config, aiLevel: s.aiLevel, aiSpeedMs: s.aiSpeedMs, fourColor: s.fourColor }, s.seed + 1)
+        return startRound(
+          {
+            ...emptyBase(),
+            config: s.config,
+            pendingConfig: s.pendingConfig,
+            aiLevel: s.aiLevel,
+            aiSpeedMs: s.aiSpeedMs,
+            fourColor: s.fourColor,
+            cardSize: s.cardSize,
+            animation: s.animation,
+          },
+          s.seed + 1,
+        )
       }
       const settle = s.lastSettle
       const levels = settle ? settle.newLevels : s.levels
@@ -401,7 +456,8 @@ export function reduce(s: GameState, action: Action): GameState {
     }
 
     case 'updateConfig':
-      return { ...s, config: { ...s.config, ...action.patch } }
+      // FR-18 ③：规则开关改动在下一局生效 —— 只改 pending，不动当前局的 config
+      return { ...s, pendingConfig: { ...s.pendingConfig, ...action.patch } }
 
     case 'setAiLevel':
       return { ...s, aiLevel: action.level }
@@ -411,6 +467,21 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'toggleFourColor':
       return { ...s, fourColor: !s.fourColor }
+
+    case 'setCardSize':
+      return { ...s, cardSize: action.size }
+
+    case 'toggleAnimation':
+      return { ...s, animation: !s.animation }
+
+    case 'openSettings':
+      return { ...s, settingsOpen: true, logOpen: false }
+
+    case 'closeSettings':
+      return { ...s, settingsOpen: false }
+
+    case 'toggleLog':
+      return { ...s, logOpen: !s.logOpen, settingsOpen: false }
 
     case 'dismissNotice':
       return { ...s, notice: null }

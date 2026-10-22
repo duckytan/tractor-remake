@@ -20,19 +20,18 @@ if (!root) throw new Error('#app 未找到')
 const prefs = loadPrefs()
 const restored = loadState()
 let state: GameState = restored ?? newGame(
-  {
-    allowSelfCounter: true,
-    twoAsPermanent: false,
-    allowPartnerGuard: false,
-    allowCounterNT: false,
-    guardScoreLevels: false,
-    guardJA: true,
-    guardKingLevel: true,
-  },
+  prefs.ruleConfig,
   prefs.aiLevel,
   prefs.aiSpeedMs,
 )
-state = { ...state, fourColor: prefs.fourColor }
+// 体验项偏好覆盖存档（存档只存对局进度，体验项以偏好为准）
+state = {
+  ...state,
+  fourColor: prefs.fourColor,
+  cardSize: prefs.cardSize,
+  animation: prefs.animation,
+  pendingConfig: prefs.ruleConfig,
+}
 
 let aiTimer: number | null = null
 
@@ -49,7 +48,14 @@ function scheduleAi(): void {
 
 function afterChange(): void {
   saveState(state)
-  savePrefs({ aiLevel: state.aiLevel, aiSpeedMs: state.aiSpeedMs, fourColor: state.fourColor })
+  savePrefs({
+    aiLevel: state.aiLevel,
+    aiSpeedMs: state.aiSpeedMs,
+    fourColor: state.fourColor,
+    ruleConfig: state.pendingConfig,
+    cardSize: state.cardSize,
+    animation: state.animation,
+  })
   paint()
   scheduleAi()
 }
@@ -100,14 +106,28 @@ function hint(): void {
   }
 }
 
-/* 键盘：空格出牌 / Esc 取消 / H 提示 */
+/* 键盘：空格出牌 / Esc 取消 / H 提示 / 回车选牌
+ * NFR-10：全部操作可用键盘完成。 */
 window.addEventListener('keydown', (ev) => {
   if (ev.repeat) return
+
+  // 焦点在手牌上时，回车/空格切换选中，不触发出牌
+  const onCard = ev.target instanceof HTMLElement && ev.target.closest('.card[data-id]')
+  if (onCard && (ev.code === 'Enter' || ev.code === 'Space')) {
+    ev.preventDefault()
+    const id = Number((ev.target as HTMLElement).closest('.card[data-id]')?.getAttribute('data-id'))
+    if (Number.isFinite(id)) dispatch({ type: 'toggleSelect', id })
+    return
+  }
+
   if (ev.code === 'Space') {
     ev.preventDefault()
     dispatch({ type: 'playSelected' })
   } else if (ev.code === 'Escape') {
-    dispatch({ type: 'clearSelect' })
+    // 弹层优先关闭
+    if (state.settingsOpen) dispatch({ type: 'closeSettings' })
+    else if (state.logOpen) dispatch({ type: 'toggleLog' })
+    else dispatch({ type: 'clearSelect' })
   } else if (ev.key === 'h' || ev.key === 'H') {
     hint()
   }
