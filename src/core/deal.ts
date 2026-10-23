@@ -98,6 +98,10 @@ export interface GuardedDealResult extends DealResult {
  *
  * 主花色 4 种 + 两队级牌 + 两种 mode 都要过，是因为开局前主牌未定，
  * 任何一家在任何可能的定约下都不该拿到现成拖拉机。
+ *
+ * ⚠️ **庄家按 33 张校验**：底牌 8 张最终会并进庄家手牌（`app/game.ts` 的收底），
+ * 所以庄家的「有效手牌」是 25 + 8。只校验 25 张的话，
+ * 庄家就是全场唯一可能拿到现成连对的人（docs/15 KN-8）。
  */
 export function dealWithGuard(
   rng: Rng,
@@ -111,7 +115,7 @@ export function dealWithGuard(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const deck = newShuffledDeck(rng)
     const deal = dealFromDeck(deck, dealer)
-    if (!anyNaturalTractor(deal.hands, opts, buildPower, trumps)) {
+    if (!anyNaturalTractor(effectiveHands(deal, dealer), opts, buildPower, trumps)) {
       return { ...deal, attempts: attempt, degraded: false }
     }
   }
@@ -120,6 +124,11 @@ export function dealWithGuard(
   const deck = newShuffledDeck(rng)
   const deal = dealFromDeck(deck, dealer)
   return { ...deal, attempts: maxAttempts, degraded: true }
+}
+
+/** 把底牌并进庄家手牌后的「有效手牌」四份 */
+function effectiveHands(deal: DealResult, dealer: Seat): readonly (readonly Card[])[] {
+  return deal.hands.map((h, i) => (i === dealer ? [...h, ...deal.bottom] : h))
 }
 
 function anyNaturalTractor(

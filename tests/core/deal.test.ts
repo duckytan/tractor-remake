@@ -171,3 +171,42 @@ describe('辅助函数', () => {
     expect(maxTrumpPower(c.power)).toBe(c.power.get(53))
   })
 })
+
+describe('TC-107 底牌也受守卫约束（庄家按 33 张校验）', () => {
+  it('庄家 25 + 8 合并后仍无现成连对', () => {
+    // 修复前只校验四家 25 张手牌，底牌 8 张不在校验范围内 ⇒
+    // 庄家是全场唯一可能拿到现成连对的人（docs/15 KN-8）。
+    const rng = mulberry32(2026)
+    const levels: [LevelRank, LevelRank] = [2, 2]
+    const dealer = 1
+    const r = dealWithGuard(rng, dealer, { levels }, buildPower)
+    const dealerHand = [...(r.hands[dealer] ?? []), ...r.bottom]
+    expect(dealerHand).toHaveLength(33)
+    for (const mode of [0, 1] as const) {
+      for (const level of levels) {
+        for (const trump of [0, 1, 2, 3] as Trump[]) {
+          const power = buildPower(mode, level, trump)
+          expect(hasConsecutivePair(dealerHand, power), `mode=${mode} level=${level} trump=${trump}`).toBe(
+            false,
+          )
+        }
+      }
+    }
+  })
+
+  it('多种子下庄家 33 张都不含连对', () => {
+    const levels: [LevelRank, LevelRank] = [2, 3]
+    for (const seed of [1, 7, 42, 99, 2026, 31337]) {
+      const r = dealWithGuard(mulberry32(seed), 2, { levels }, buildPower)
+      const dealerHand = [...(r.hands[2] ?? []), ...r.bottom]
+      for (const mode of [0, 1] as const) {
+        for (const level of levels) {
+          for (const trump of [0, 1, 2, 3] as Trump[]) {
+            const power = buildPower(mode, level, trump)
+            expect(hasConsecutivePair(dealerHand, power)).toBe(false)
+          }
+        }
+      }
+    }
+  })
+})

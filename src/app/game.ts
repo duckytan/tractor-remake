@@ -36,6 +36,7 @@ import {
   settleRound,
   suitOfValue,
   teamOf,
+  trickStanding,
 } from '@core'
 import type { Card, LevelRank, Play, PlayRejectReason, Rng, RuleContext, Seat, Suit, Trump } from '@core'
 import type { Action, GameState, TrickRecord } from './state'
@@ -934,19 +935,15 @@ function settleCurrentRound(s: GameState, lastWinnerAnalysis: ReturnType<typeof 
 /**
  * 当前这一墩的最大牌（首出时为 null）。
  *
- * AI 需要知道「现在谁最大」才能判断自己能不能压过 ——
- * 提取成共享函数，测试与正式路径用同一份逻辑，避免两边行为不一致。
+ * **必须走 core 的 `trickStanding`** —— 一墩判定全项目只此一份。
+ * 这里原来自己写「遍历取 keyCard 最大者」，不比花色也不比结构，
+ * 于是任何人垫牌（非同花色）的大牌都会被当成「当前最大」，
+ * AI 据此误判「我赢不了」而白垫小牌（docs/15 KN-7）。
  */
 export function currentWinnerOf(s: GameState): { seat: Seat; analysis: ReturnType<typeof analyze> } | null {
-  if (s.trick.plays.length === 0) return null
-  const ctx = ctxOf(s)
-  let best = s.trick.plays[0] as Play
-  for (const p of s.trick.plays) {
-    const a = p.analysis.keyCard
-    const b = best.analysis.keyCard
-    if (a && b && ctx.power.get(a.value) > ctx.power.get(b.value)) best = p
-  }
-  return { seat: best.seat, analysis: best.analysis }
+  const standing = trickStanding(s.trick.plays, ctxOf(s))
+  if (standing === null) return null
+  return { seat: standing.winner.seat, analysis: standing.winner.analysis }
 }
 
 /**

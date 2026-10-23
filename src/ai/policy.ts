@@ -543,6 +543,11 @@ function scoreCandidate(
  * 我这一手能不能压过对方。
  *
  * `rival` 传的是**本墩当前最大牌**的分析（首出方首出时才是 lead）。
+ *
+ * 判定必须与 `core/trick.ts` 的 `canBeat` 保持一致：花色、对子数、**拖拉机长度**三项都过，
+ * 再比 keyCard。原来漏了拖拉机长度 —— 首出 2 连对、跟 2 个不连续对子时
+ * （`legality.test.ts` 明确判为合法跟牌）AI 会以为「我赢了」，
+ * 实际结算时 `canBeat` 的 `runLen` 不等 ⇒ 判首出方赢，AI 打分虚高。
  */
 function canIWin(mine: PlayAnalysis, rival: PlayAnalysis, ctx: RuleContext): boolean {
   if (mine.suitSlot === -1) return false
@@ -555,8 +560,15 @@ function canIWin(mine: PlayAnalysis, rival: PlayAnalysis, ctx: RuleContext): boo
     return false
   }
   if (mine.pairCount !== rival.pairCount) return false
+  // 拖拉机长度一致（与 core/trick.ts canBeat 的 runLen 同源）
+  if (runLenOf(mine) !== runLenOf(rival)) return false
   if (!mine.keyCard || !rival.keyCard) return false
   return ctx.power.get(mine.keyCard.value) > ctx.power.get(rival.keyCard.value)
+}
+
+/** 连对长度：单一拖拉机组返回其对数，其余（散对 / 单张 / 多组）返回 0 */
+function runLenOf(a: PlayAnalysis): number {
+  return a.groups.length === 1 && a.groups[0]?.kind === 'tractor' ? a.groups[0].length : 0
 }
 
 export { handStrength }

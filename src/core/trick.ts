@@ -21,7 +21,7 @@ export interface TrickResult {
 }
 
 /** 该手牌是否具备「压过首出」的资格 */
-function canBeat(play: PlayAnalysis, lead: PlayAnalysis): boolean {
+export function canBeat(play: PlayAnalysis, lead: PlayAnalysis): boolean {
   if (play.suitSlot === -1) return false
   const leadIsTrump = lead.suitSlot === 4
   const playIsTrump = play.suitSlot === 4
@@ -40,6 +40,42 @@ function canBeat(play: PlayAnalysis, lead: PlayAnalysis): boolean {
   return true
 }
 
+/** 一墩里「当前谁最大」的完整结论 */
+export interface TrickStanding {
+  /** 当前赢家 */
+  readonly winner: Play
+  /** 参与竞争的座位（含赢家） */
+  readonly contenders: readonly Seat[]
+}
+
+/**
+ * 一墩已出的牌里，谁现在最大。
+ *
+ * **这是全项目唯一的一墩判定入口** —— 结算走 `resolveTrick`，AI 判断「我能不能赢」
+ * 走 `currentWinnerOf`，两者都必须用这个函数。之前它们各写一份，AI 侧那份只比
+ * `keyCard`、不比花色与结构，于是**任何人垫牌（非同花色）的大牌都会被当成「当前最大」**，
+ * AI 据此误判「我赢不了」而白垫小牌（详见 docs/15 KN-7）。
+ *
+ * 垫牌（混花色）的 `suitSlot === -1`，在 `canBeat` 里就被排除，进不了竞争池。
+ */
+export function trickStanding(plays: readonly Play[], ctx: RuleContext): TrickStanding | null {
+  if (plays.length === 0) return null
+  const lead = (plays[0] as Play).analysis
+
+  const qualified = plays.filter((p) => canBeat(p.analysis, lead))
+  const trumpPlays = qualified.filter((p) => p.analysis.suitSlot === 4)
+  const pool = lead.suitSlot === 4 || trumpPlays.length > 0 ? trumpPlays : qualified
+
+  let best = pool[0]
+  if (best === undefined) return null
+  for (const p of pool) {
+    const a = p.analysis.keyCard
+    const b = best.analysis.keyCard
+    if (a && b && ctx.power.get(a.value) > ctx.power.get(b.value)) best = p
+  }
+  return { winner: best, contenders: pool.map((p) => p.seat) }
+}
+
 /**
  * 判定一墩的赢家。
  *
@@ -50,20 +86,9 @@ function canBeat(play: PlayAnalysis, lead: PlayAnalysis): boolean {
  *   ④ 同类型比 keyCard 牌力，最大者赢；牌力相同则先出者赢
  */
 export function resolveTrick(plays: readonly Play[], ctx: RuleContext): TrickResult {
-  if (plays.length === 0) throw new Error('resolveTrick: 没有出牌')
-  const lead = (plays[0] as Play).analysis
-
-  const qualified = plays.filter((p) => canBeat(p.analysis, lead))
-  const trumpPlays = qualified.filter((p) => p.analysis.suitSlot === 4)
-  const pool = lead.suitSlot === 4 || trumpPlays.length > 0 ? trumpPlays : qualified
-
-  let best = pool[0] as Play
-  for (const p of pool) {
-    const a = p.analysis.keyCard
-    const b = best.analysis.keyCard
-    if (!a || !b) continue
-    if (ctx.power.get(a.value) > ctx.power.get(b.value)) best = p
-  }
+  const standing = trickStanding(plays, ctx)
+  if (standing === null) throw new Error('resolveTrick: 没有出牌')
+  const best = standing.winner
 
   let score = 0
   for (const p of plays) score += p.analysis.score
@@ -72,6 +97,6 @@ export function resolveTrick(plays: readonly Play[], ctx: RuleContext): TrickRes
     winner: best.seat,
     score,
     winnerAnalysis: best.analysis,
-    contenders: pool.map((p) => p.seat),
+    contenders: standing.contenders,
   }
 }

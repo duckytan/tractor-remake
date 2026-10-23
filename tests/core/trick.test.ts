@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { analyze, resolveTrick } from '@core'
+import { analyze, resolveTrick, trickStanding } from '@core'
 import type { Card, Seat } from '@core'
 import { C, P, ctx, names } from './helpers'
 
@@ -143,5 +143,41 @@ describe('TC-608 散对不能压连对（结构必须一致）', () => {
     const follow = mk(1, P(0, 9)) // ♠J♠J
     const r = resolveTrick([lead, follow], side)
     expect(r.winner).toBe(1)
+  })
+})
+
+describe('TC-610 trickStanding —— 一墩判定的唯一入口', () => {
+  it('垫牌的大牌不参与竞争（currentWinnerOf 的回归）', () => {
+    // 主 ♠，级牌 2。首出 ♥3，西家无 ♥ 也无主，垫 ♣A。
+    // 修复前 currentWinnerOf 只比 keyCard，会把西家的 ♣A 当成「当前最大」，
+    // AI 据此误判「我赢不了」而白垫小牌。
+    // （注意：♠A 在主♠ 局里是主牌、能合法压副牌，不算垫牌，别拿它当例子）
+    const lead = play(0, [C(1, 0)]) // ♥3
+    const discard = play(1, [C(2, 12)]) // ♣A（异花色、非主 ⇒ 纯垫牌）
+    const s = trickStanding([lead, discard], c)
+    expect(s).not.toBeNull()
+    expect(s?.winner.seat).toBe(0) // 首出方仍然是当前最大
+    expect(s?.contenders).toEqual([0]) // 垫牌者不在竞争池里
+  })
+
+  it('竞争池只含能压过首出的牌', () => {
+    const lead = play(0, [C(1, 3)]) // ♥5
+    const same = play(1, [C(1, 7)]) // ♥9（同花色，压过）
+    const off = play(2, [C(2, 12)]) // ♣A（垫牌）
+    const s = trickStanding([lead, same, off], c)
+    expect(s?.winner.seat).toBe(1)
+    expect(s?.contenders).toEqual([0, 1])
+  })
+
+  it('空列表返回 null', () => {
+    expect(trickStanding([], c)).toBeNull()
+  })
+
+  it('与 resolveTrick 的赢家一致（两者共用同一函数）', () => {
+    const plays = [play(0, [C(1, 0)]), play(1, [C(0, 12)]), play(2, [C(1, 7)])]
+    const r = resolveTrick(plays, c)
+    const s = trickStanding(plays, c)
+    expect(s?.winner.seat).toBe(r.winner)
+    expect(s?.contenders).toEqual(r.contenders)
   })
 })
