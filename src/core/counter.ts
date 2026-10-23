@@ -6,6 +6,16 @@
  *   ② 打王级（强制无将）时主牌固定，不可被花色覆盖（§3.5）
  *   ③ 不能反成当前同一个主
  *   ④ 同队反主需开「允许自反」
+ *   ⑤ 主动亮无将（非打王级）默认不可被花色反，需开「允许反无将」
+ *
+ * ── ⑤ 与 ② 的区别（容易搞混，务必分清）───────────────────────────
+ * 两条都出现在「当前主是无将」的场合，但语义完全不同：
+ *   - ② 管的是**打王级**：`forcedNT` 为真 ⇒ 主牌由级牌强制锁定，
+ *     开关怎么开都反不了（规则书 §3.5「不可被花色覆盖」）；
+ *   - ⑤ 管的是**主动亮无将**：有人主动选了无将 ⇒ 默认也反不了，
+ *     但开 `allowCounterNT` 后可以（原版 `engine[0x8c]` 默认 0 = 关）。
+ * 实现上 ② 在前、⑤ 在后：先被 `forcedNT` 硬挡掉，剩下的才是「主动无将」，
+ * 这样开关就不可能绕过打王级的锁定。
  *
  * 另外用 `usedTrumps` 记录本局已用过的定主，保证同一门花色不会被反复来回反（必然终止）。
  *
@@ -88,6 +98,11 @@ export function canCounter(o: CanCounterOptions): boolean {
 
   // ④ 同队反主需开「允许自反」
   if (sameTeamAsDeclarer && !ctx.config.allowSelfCounter) return false
+
+  // ⑤ 主动亮无将（非打王级）：默认不可被花色反，需开「允许反无将」。
+  //    打王级已在 ② 被挡掉，所以走到这里的 `currentTrump === 'NT'` 一定是主动无将。
+  //    默认值 false ⇒ 与原版 `engine[0x8c]` 默认 0 一致（见 CHANGELOG v1.2.2 / KN-6）。
+  if (currentTrump === 'NT' && !ctx.config.allowCounterNT) return false
 
   // 反成无将：无将没有「级牌」可依（原版算式 `0x10 * 13 + lv` 永不命中）⇒ 不允许
   if (newTrump === 'NT') return false

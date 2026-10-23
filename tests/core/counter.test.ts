@@ -121,6 +121,77 @@ describe('canCounter —— 反主判定', () => {
       }),
     ).toBe(false)
   })
+
+  /* ---- ⑤ 主动亮无将：默认不可被花色反，开关控制（v1.2.2） ---- */
+
+  it('主动亮无将 + 关「允许反无将」→ 持足够级牌也不能反', () => {
+    // ♠3 ×1（value 1）：门槛 1 张已满足，唯一挡住它的就是 allowCounterNT=false
+    expect(
+      canCounter({
+        ...base,
+        hand: [mk(1, 1)],
+        ctx: ctxOf('NT', 3, { allowCounterNT: false }),
+        currentTrump: 'NT',
+        newTrump: 0,
+      }),
+    ).toBe(false)
+  })
+
+  it('主动亮无将 + 开「允许反无将」→ 可反成花色', () => {
+    expect(
+      canCounter({
+        ...base,
+        hand: [mk(1, 1)],
+        ctx: ctxOf('NT', 3, { allowCounterNT: true }),
+        currentTrump: 'NT',
+        newTrump: 0,
+      }),
+    ).toBe(true)
+  })
+
+  it('打王级是硬锁：开关打开也反不动（⑤ 不能绕过 ②）', () => {
+    // 刻意把 levelRank 保持 3（此时 ①「持新花色级牌」是满足的），
+    // 只把 forcedNT 置真 —— 这样断言 false 就只可能来自 ② 的打王级硬锁，
+    // 而不是被「打王级没有级牌可依」这条 ① 顺带挡掉（那样测不出短路顺序）。
+    expect(
+      canCounter({
+        ...base,
+        hand: [mk(1, 1)],
+        ctx: { ...ctxOf('NT', 3, { allowCounterNT: true }), forcedNT: true },
+        currentTrump: 'NT',
+        newTrump: 0,
+      }),
+    ).toBe(false)
+    // 真实局面：打王级 = levelRank 18（没有级牌可依），同样 false
+    expect(
+      canCounter({
+        ...base,
+        hand: [mk(1, 1)],
+        ctx: ctxOf('NT', 18, { allowCounterNT: true }),
+        currentTrump: 'NT',
+        newTrump: 0,
+      }),
+    ).toBe(false)
+  })
+
+  it('花色主之间互反不受「允许反无将」影响（⑤ 只拦当前主为无将）', () => {
+    // 防误拦的回归用例。危险退化方向：有人把 ⑤ 写成
+    //   `if (!ctx.config.allowCounterNT) return false`
+    // —— 漏掉前半句 `currentTrump === 'NT'`。此时上面 3 例（默认关 / 打开 / 打王级）
+    // 会**全绿**，而线上「花色主之间互相反主」会整体失效（默认配置下再也反不动）。
+    //
+    // 这里 `ctxOf(0, 3)` 的 config 就是 `cfg()` 的默认值，其中 `allowCounterNT: false`
+    // （见文件顶部的 cfg 定义），正好复现「开关关着」的真实默认环境。
+    expect(
+      canCounter({
+        ...base,
+        hand: [mk(1, 1)], // ♠3，即想反成的 newTrump=0 的级牌
+        ctx: ctxOf(0, 3), // allowCounterNT: false
+        currentTrump: 1, // 当前主是 ♥（花色，不是无将）
+        newTrump: 0,
+      }),
+    ).toBe(true)
+  })
 })
 
 /* ================================================================

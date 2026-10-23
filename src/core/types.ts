@@ -53,11 +53,11 @@ export interface PowerTable {
 export interface RuleConfig {
   /** 允许自反（原版未实现，本项目实现为「同队可反」） */
   readonly allowSelfCounter: boolean
-  /** 2 为常主 */
+  /** 2 为常主（默认开：对齐原版，偏离 smallnest，见 KN-4） */
   readonly twoAsPermanent: boolean
   /** 允许队友用同花色加固（抬高反主门槛：张数 1 → 2 ⇒ 门槛 2 → 3） */
   readonly allowPartnerGuard: boolean
-  /** 允许反无将 */
+  /** 允许反无将：主动亮无将（非打王级）能否被花色反 */
   readonly allowCounterNT: boolean
   /** 5,10,K 必打（升级禁跳级） */
   readonly guardScoreLevels: boolean
@@ -74,10 +74,15 @@ export interface RuleConfig {
  * 必打集合对齐 smallnest `MainForm.cs:167` 的 `",3,8,11,12,13,"`
  * —— 该表用 rank 下标（0=2），所以 3→5、8→10、11→K、12→A、13→打王：
  * **5 / 10 / K / A / 打王**，不含 J。
+ *
+ * **例外：`twoAsPermanent: true` 是刻意偏离 smallnest、对齐原版。**
+ * 用户提供的原版实战截图（`出牌.png`）里本局打 3，但 `2♣` 仍被当作主牌
+ * ⇒ 原版这一局开了「2 为常主」。smallnest 没有这条规则，我们以「还原原版」优先，
+ * 故默认打开。这构成一处**已知差异**，记录在 `docs/15-待办与已知问题.md` 的 KN-4。
  */
 export const DEFAULT_RULE_CONFIG: RuleConfig = {
   allowSelfCounter: true,
-  twoAsPermanent: false,
+  twoAsPermanent: true,
   allowPartnerGuard: true,
   allowCounterNT: false,
   guardScoreLevels: true,

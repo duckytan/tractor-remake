@@ -338,10 +338,24 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       const guardBtn = s.guardOption
         ? `<div class="trump-actions"><button class="btn btn--primary guard-btn" data-act="guard">加固（需 ${GUARD_NEED} 张同花色级牌）</button></div>`
         : ''
+      // 亮主按钮三态（对齐原版按钮的三态：已亮 / 可亮 / 不可选，文档里记作 U/D/X）
+      //
+      // 优先级：**已亮 > 不可选 > 可亮**。
+      //   - 已亮：该按钮的花色正是当前主，且确实有人亮过主。
+      //     `trumpDeclarer === null` 是「首次亮主阶段还没人亮」，此时主字段虽然
+      //     有个默认值（'NT'），但不能把它当成「已亮」—— 否则开局就有一个按钮
+      //     显示「已亮」，玩家会以为已经定完主了。
+      //   - 已亮也 disabled：点自己没有再亮一次的道理。
+      //     视觉上靠 `.is-current`（高亮边框 + 「已亮」角标）与普通置灰区分，
+      //     不只靠颜色 —— 同时给 `aria-pressed` + `title`，读屏也能拿到状态。
       const trumpBtn = (t: Trump, label: string, cls = ''): string => {
         const v = String(t)
-        const disabled = !allowed.has(v)
-        return `<button class="btn trump-btn${cls}" data-trump="${v}"${disabled ? ' disabled' : ''}>${label}</button>`
+        const isCurrent = s.trumpDeclarer !== null && String(s.trump) === v
+        const disabled = isCurrent || !allowed.has(v)
+        const stateCls = isCurrent ? ' is-current' : ''
+        const a11y = isCurrent ? ' aria-pressed="true" title="当前主"' : ''
+        const tag = isCurrent ? '<span class="trump-btn__tag">已亮</span>' : ''
+        return `<button class="btn trump-btn${cls}${stateCls}" data-trump="${v}"${disabled ? ' disabled' : ''}${a11y}>${label}${tag}</button>`
       }
       ov.innerHTML = `
         <div class="panel">
@@ -490,7 +504,7 @@ function settingsPanel(s: GameState): string {
       ${sw('allowSelfCounter', '允许自反', '同队也可反主', c.allowSelfCounter)}
       ${sw('twoAsPermanent', '2 为常主', '两张 2 恒为主牌', c.twoAsPermanent)}
       ${sw('allowPartnerGuard', '允许对家保', '对家可保级', c.allowPartnerGuard)}
-      ${sw('allowCounterNT', '允许反无将', '无将可被反', c.allowCounterNT)}
+      ${sw('allowCounterNT', '允许反无将', '主动亮无将可被花色反（打王级除外）', c.allowCounterNT)}
       ${sw('guardScoreLevels', '5,10,K 必打', '升级时不可跳过这些级牌', c.guardScoreLevels)}
       ${sw('guardJack', 'J 必打', '升级时不可跳过 J', c.guardJack)}
       ${sw('guardAce', 'A 必打', '升级时不可跳过 A', c.guardAce)}

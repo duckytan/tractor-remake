@@ -431,6 +431,34 @@ html, body {
 }
 .trump-btn:hover:not(:disabled) { background: #ebe7dc; border-color: #d6d1c4; }
 .trump-btn.is-red { color: var(--suit-red); }
+
+/* 已亮态（对齐原版按钮的三态：已亮 / 可亮 / 不可选，文档里记作 U/D/X）：
+   高亮绿边框 + 右上角「已亮」角标，和普通置灰（.btn:disabled 的 opacity .4）明确区分。
+   注意：本段**只改 background / border / box-shadow，不碰 color** ——
+   红桃/方块按钮同时带 `.is-red`，一旦在这里写 color 就会把红色文字覆盖掉。
+   已亮按钮也是 disabled（不能点自己），所以要单独把 opacity 还原成 1，
+   否则会和「不可选」长得一模一样。 */
+.trump-btn.is-current {
+  position: relative;
+  background: #eef6f1;
+  border-color: #1d9e75;
+  box-shadow: inset 0 0 0 1px rgba(29, 158, 117, 0.35);
+  cursor: default;
+}
+.trump-btn.is-current:disabled { opacity: 1; }
+.trump-btn__tag {
+  position: absolute;
+  top: -7px;
+  right: -5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #1d9e75;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.5;
+  pointer-events: none;
+}
 .trump-actions { margin-top: 10px; display: flex; justify-content: center; }
 .trump-actions .btn { min-width: 120px; }
 
