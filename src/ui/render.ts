@@ -87,9 +87,29 @@ export function trumpLabel(t: Trump): string {
   return SUIT_LABEL[t] as string
 }
 
-/** 队名：庄家队 / 闲家队 */
-function teamLabel(s: GameState, team: 0 | 1): string {
-  return teamOf(s.dealer) === team ? '庄' : '闲'
+/**
+ * 座位角色标签：**庄**（庄家本人）/ **友**（庄家的队友）/ **闲**（闲家）。
+ *
+ * 不能按「队伍」给四家发庄/闲 —— 庄家的队友与庄家同队，也会显示「庄」，
+ * 于是庄家坐东西边时左右两家同时显示「庄」，用户会误以为有两个庄家
+ * （v1.3.6 用户反馈：「怎么左右两边同时是庄家？只能是其中一个」）。
+ * 真正的庄家只有 s.dealer 一个；顶部信息栏的「庄 <座位>」也始终指向本人。
+ */
+function seatRoleLabel(
+  s: GameState,
+  seat: Seat,
+): { text: string; title: string; isDealer: boolean } {
+  if (seat === s.dealer) return { text: '庄', title: '庄家（本局坐庄）', isDealer: true }
+  if (teamOf(seat) === teamOf(s.dealer)) {
+    return { text: '友', title: '庄家的队友（庄家队）', isDealer: false }
+  }
+  return { text: '闲', title: '闲家', isDealer: false }
+}
+
+/** 角色标签的 HTML（庄家本人加 is-dealer 高亮 + 悬停说明） */
+function roleTag(s: GameState, seat: Seat): string {
+  const r = seatRoleLabel(s, seat)
+  return `<b class="seat-role${r.isDealer ? ' is-dealer' : ''}" title="${r.title}">${r.text}</b>`
 }
 
 function cardWrap(cards: readonly Card[], o: { cls?: string; width?: number } = {}): HTMLElement {
@@ -227,7 +247,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const side = seat === 1 || seat === 3
 
     box.innerHTML = `<div class="seat-tag${isWinner ? ' is-win' : ''}">
-        ${SEAT_LABEL[seat]} · ${hand.length} 张 · ${teamLabel(s, teamOf(seat))}
+        ${SEAT_LABEL[seat]} · ${hand.length} 张 · ${roleTag(s, seat)}
         ${turn === seat ? '<span class="turn-dot"></span>' : ''}
       </div>
       <div class="seat-body">
@@ -289,7 +309,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       </div>`
         : ''
     box.innerHTML = `<div class="seat-tag${isWinner ? ' is-win' : ''}">
-        ${SEAT_LABEL[HUMAN_SEAT]} · ${held} 张 · ${teamLabel(s, 0)}
+        ${SEAT_LABEL[HUMAN_SEAT]} · ${held} 张 · ${roleTag(s, HUMAN_SEAT)}
       </div>${deck}`
   }
 

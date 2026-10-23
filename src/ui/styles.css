@@ -202,6 +202,10 @@ html, body {
   gap: 6px;
 }
 .seat-tag.is-win { color: #f0c674; }
+/* 座位角色：庄（庄家本人，金色高亮）/ 友（庄家的队友）/ 闲（闲家）。
+   全局只有一个「庄」—— 顶部信息栏的「庄 <座位>」与这里指的是同一人。 */
+.seat-role { font-weight: 600; color: rgba(255, 255, 255, 0.75); }
+.seat-role.is-dealer { color: #f0c674; }
 .turn-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: #f0c674;
