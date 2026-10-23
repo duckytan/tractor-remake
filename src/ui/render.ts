@@ -5,7 +5,7 @@
  * 换来的是「渲染 = state 的纯函数」这种简单性。
  *
  * 分层铁律：本文件只消费 app 层算好的视图数据（handView / trickLogView /
- * recentTricksView），不出现 power / 主牌判定等规则概念。
+ * pastPlaysView），不出现 power / 主牌判定等规则概念。
  */
 
 import type { Card, LevelRank, Play, RuleConfig, Seat, Trump } from '@core'
@@ -14,7 +14,7 @@ import type { AiLevel } from '@ai/policy'
 import type { Action, CardSize, GameState } from '@app/state'
 import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
-import { recentTricksView, trickLogView } from '@app/view'
+import { pastPlaysView, trickLogView } from '@app/view'
 import { backEl, cardEl, ensureDefs } from './card'
 
 export interface Actions {
@@ -29,8 +29,10 @@ const SUIT_LABEL = ['♠ 黑桃', '♥ 红心', '♣ 梅花', '♦ 方片']
 const SEAT_LABEL = ['南（你）', '西', '北', '东']
 const SEAT_CLASS: Record<Seat, string> = { 0: 'center', 1: 'west', 2: 'north', 3: 'east' }
 
-/** 手牌前方历史牌条显示几墩 */
-const RECENT_DEPTH = 3
+/** 各家出牌区里显示最近几墩的历史小牌 */
+const PAST_DEPTH = 3
+/** 历史小牌的宽度 */
+const TINY_W = 22
 /** 侧家（西/东）竖向牌背最多显示几张 —— 竖向更吃高度，比北家的 13 少 */
 const SIDE_SHOW = 10
 /** 侧家牌背宽度（竖向排列，视觉高度 = 该值） */
@@ -66,6 +68,34 @@ function cardWrap(cards: readonly Card[], o: { cls?: string; width?: number } = 
   box.className = 'cards'
   for (const c of cards) box.appendChild(cardEl(c, o))
   return box
+}
+
+/**
+ * 填一个座位的出牌区。
+ *
+ * - `plays__now`  本墩出的牌（正常尺寸）
+ * - `plays__past` 最近几墩**该座位**出的牌（微小卡牌，每墩一组）
+ *
+ * 现实里打完的牌就摆在自己面前 ⇒ 每个座位各有一个出牌区，
+ * 不再把四家的牌堆在同一个玩家前面。
+ */
+function fillPlays(box: HTMLElement, s: GameState, seat: Seat, playedW: number): void {
+  // 侧家的竖向堆叠步长要用到本墩牌的宽度
+  box.style.setProperty('--played-w', `${playedW}px`)
+  const now = box.querySelector('.plays__now') as HTMLElement
+  const past = box.querySelector('.plays__past') as HTMLElement
+  const play = s.trick.plays.find((p) => p.seat === seat)
+  if (play) now.appendChild(cardWrap(play.cards, { width: playedW }))
+  if (!s.showHistory) return
+  const { nos, tricks } = pastPlaysView(s, seat, PAST_DEPTH)
+  tricks.forEach((cards, i) => {
+    if (cards.length === 0) return
+    const g = document.createElement('div')
+    g.className = 'past__trick'
+    g.title = `第 ${nos[i]} 墩`
+    for (const c of cards) g.appendChild(cardEl(c, { width: TINY_W, cls: 'card--tiny' }))
+    past.appendChild(g)
+  })
 }
 
 export function render(root: HTMLElement, s: GameState, act: Actions): void {
@@ -107,7 +137,10 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       <div class="seat seat--center" data-slot="center"></div>
       <div class="seat seat--east" data-slot="east"></div>
       <div class="south">
-        <div class="recent" data-slot="recent"></div>
+        <div class="plays" data-slot="plays-mine">
+          <div class="plays__now"></div>
+          <div class="plays__past"></div>
+        </div>
         <div class="hand" data-slot="hand"></div>
         <div class="hand-bar" data-slot="handbar"></div>
       </div>
@@ -127,7 +160,6 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   for (const seat of [1, 2, 3] as Seat[]) {
     const box = q(SEAT_CLASS[seat])
     const hand = s.hands[seat] as readonly Card[]
-    const play = s.trick.plays.find((p) => p.seat === seat)
     const isWinner = s.trick.winner === seat
     // 西（1）/ 东（3）竖向堆叠，北（2）保持横向
     const side = seat === 1 || seat === 3
@@ -136,11 +168,15 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         ${SEAT_LABEL[seat]} · ${hand.length} 张 · ${teamLabel(s, teamOf(seat))}
         ${turn === seat ? '<span class="turn-dot"></span>' : ''}
       </div>
-      <div class="back-row${side ? ' back-row--side' : ''}" data-slot="back-${seat}"></div>
-      <div class="played${side ? ' played--side' : ''}" data-slot="played-${seat}"></div>`
+      <div class="seat-body">
+        <div class="back-row${side ? ' back-row--side' : ''}" data-slot="back-${seat}"></div>
+        <div class="plays${side ? ' plays--side' : ''}" data-slot="plays-${seat}">
+          <div class="plays__now"></div>
+          <div class="plays__past"></div>
+        </div>
+      </div>`
 
-    const playedBox = box.querySelector(`[data-slot="played-${seat}"]`) as HTMLElement
-    if (play) playedBox.appendChild(cardWrap(play.cards, { width: playedW }))
+    fillPlays(box.querySelector(`[data-slot="plays-${seat}"]`) as HTMLElement, s, seat, playedW)
   }
   // 填牌背的顺序必须是「北家先、侧家后」：北家那一行是 auto 高，
   // 它的牌背一进去就会把中间的 1fr 行压矮；先量侧家就会拿到过期高度而溢出。
@@ -163,17 +199,21 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     if (side) fitSideStack(backRow, show, sideW)
   }
 
-  /* ---- 中央：我出的牌 ---- */
+  /* ---- 中央：人类座位信息（本墩的牌已挪到南家自己的出牌区） ---- */
   {
     const box = q('center')
-    const play = s.trick.plays.find((p) => p.seat === HUMAN_SEAT)
     const isWinner = s.trick.winner === HUMAN_SEAT
     box.innerHTML = `<div class="seat-tag${isWinner ? ' is-win' : ''}">
         ${SEAT_LABEL[HUMAN_SEAT]} · ${(s.hands[HUMAN_SEAT] as readonly Card[]).length} 张 · ${teamLabel(s, 0)}
-      </div>
-      <div class="played" data-slot="played-mine"></div>`
-    const playedBox = box.querySelector('[data-slot="played-mine"]') as HTMLElement
-    if (play) playedBox.appendChild(cardWrap(play.cards, { width: playedW }))
+      </div>`
+  }
+
+  /* ---- 南家（你）：自己的出牌区在手牌正前方 ---- */
+  {
+    fillPlays(q('plays-mine'), s, HUMAN_SEAT, playedW)
+    // 提示条浮在手牌区之上 ⇒ 实测出牌区高度后回写变量
+    const box = q('plays-mine')
+    root.style.setProperty('--plays-h', box.offsetHeight ? `${box.offsetHeight + 6}px` : '0px')
   }
 
   /* ---- 积分栏（顶部）---- */
@@ -188,34 +228,6 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       <span>第 ${s.tricksDone + (s.phase === 'play' ? 1 : 0)} / 25 墩</span>
       ${s.bottomScore > 0 ? `<i></i><span>底分 <b>${s.bottomScore}</b></span>` : ''}
     `
-  }
-
-  /* ---- 手牌前方：最近几墩历史牌条 ---- */
-  {
-    const box = q('recent')
-    const tricks = s.showHistory ? recentTricksView(s, RECENT_DEPTH) : []
-    // 红线：这里刻意放在 .hand 之外、且不给小牌 data-id ——
-    // 否则 e2e 的 `#app .hand .card` 计数与 clickHandCards 会被历史牌污染。
-    for (const t of tricks) {
-      const item = document.createElement('div')
-      item.className = 'recent__trick'
-      const no = document.createElement('span')
-      no.className = 'recent__no'
-      no.textContent = `第${t.no}墩`
-      const cards = document.createElement('div')
-      cards.className = 'recent__cards'
-      for (const p of t.plays) {
-        const play = document.createElement('div')
-        play.className = 'recent__play'
-        play.dataset.seat = String(p.seat)
-        for (const c of p.cards) play.appendChild(cardEl(c, { width: 22, cls: 'card--tiny' }))
-        cards.appendChild(play)
-      }
-      item.append(no, cards)
-      box.appendChild(item)
-    }
-    // 提示条要浮在手牌区之上，历史牌条的高度随墩数变化 ⇒ 实测后回写变量
-    root.style.setProperty('--recent-h', tricks.length ? `${box.offsetHeight + 6}px` : '0px')
   }
 
   /* ---- 我的手牌 ---- */
@@ -524,7 +536,7 @@ function settingsPanel(s: GameState): string {
           { v: 'off', label: '关', on: !s.animation },
         ])}
       </div>
-      ${swAct('toggleShowHistory', '历史牌条', `手牌前方显示最近 ${RECENT_DEPTH} 墩`, s.showHistory)}
+      ${swAct('toggleShowHistory', '各家出牌留痕', `各家面前显示最近 ${PAST_DEPTH} 墩的历史小牌`, s.showHistory)}
       ${swAct('toggleHintSelects', '提示即选中', '点「提示」直接选中提示的牌（会覆盖已选牌，并写入存档）', s.hintSelects)}
     </div>
 

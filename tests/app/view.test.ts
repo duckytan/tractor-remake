@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { Card } from '@core'
 import { emptyState } from '@app/state'
-import { recentTricksView, trickLogView } from '@app/view'
+import { pastPlaysView, trickLogView } from '@app/view'
 
 /**
  * 对局记录 / 历史牌条视图测试。
@@ -63,13 +63,26 @@ describe('trickLogView —— 对局记录', () => {
   })
 })
 
-describe('recentTricksView —— 手牌前方历史牌条', () => {
-  it('取最近 depth 墩，保持时间正序', () => {
-    expect(recentTricksView(state(), 3).map((t) => t.no)).toEqual([1, 2])
-    expect(recentTricksView(state(), 1).map((t) => t.no)).toEqual([2])
+describe('pastPlaysView —— 各家出牌区的历史小牌', () => {
+  it('按座位分开取：每个座位只拿到自己出的牌', () => {
+    const s = state()
+    // 第 1 墩：座位 0 出 ♠A、座位 1 出 ♥A；第 2 墩：座位 2 出 ♣6、座位 3 出 ♦6
+    expect(pastPlaysView(s, 0, 3).tricks).toEqual([[mk(0, 12, 1)], []])
+    expect(pastPlaysView(s, 1, 3).tricks).toEqual([[mk(1, 12, 2)], []])
+    expect(pastPlaysView(s, 2, 3).tricks).toEqual([[], [mk(2, 4, 3)]])
+    expect(pastPlaysView(s, 3, 3).tricks).toEqual([[], [mk(3, 4, 4)]])
   })
 
-  it('没有历史时返回空数组', () => {
-    expect(recentTricksView({ ...emptyState(), history: [] }, 3)).toEqual([])
+  it('墩号与 tricks 一一对应，按时间正序', () => {
+    const s = state()
+    expect(pastPlaysView(s, 0, 3).nos).toEqual([1, 2])
+    expect(pastPlaysView(s, 2, 1).nos).toEqual([2])
+    expect(pastPlaysView(s, 2, 1).tricks).toEqual([[mk(2, 4, 3)]])
+  })
+
+  it('没有历史时返回空', () => {
+    const v = pastPlaysView({ ...emptyState(), history: [] }, 0, 3)
+    expect(v.nos).toEqual([])
+    expect(v.tricks).toEqual([])
   })
 })

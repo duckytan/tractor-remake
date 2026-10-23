@@ -1,13 +1,13 @@
 /**
  * 对局展示视图（app 层）
  *
- * 记录面板 / 历史牌条需要「花色、是否主牌、队伍、赢家」这些**规则概念**，
+ * 记录面板 / 各家出牌区需要「花色、是否主牌、队伍、赢家」这些**规则概念**，
  * 全部在这里算成纯数据，ui 层只做 DOM 与样式（分层铁律）。
  */
 
 import type { Card, Seat, Team } from '@core'
 import { teamOf } from '@core'
-import type { GameState } from './state'
+import type { GameState, TrickRecord } from './state'
 import { ctxOf } from './state'
 
 const SHORT_SEAT = ['南', '西', '北', '东'] as const
@@ -85,21 +85,29 @@ export function trickLogView(s: GameState): LogTrick[] {
     .reverse()
 }
 
-export interface RecentTrick {
-  /** 墩号（1 起） */
-  readonly no: number
-  readonly plays: readonly { readonly seat: Seat; readonly cards: readonly Card[] }[]
+export interface PastPlays {
+  /** 墩号（1 起），与 tricks 一一对应 */
+  readonly nos: readonly number[]
+  /** 每一墩该座位出的牌（按时间正序，最新一墩在最后） */
+  readonly tricks: readonly (readonly Card[])[]
 }
 
 /**
- * 最近 `depth` 墩（按时间正序，最新一墩在最后）。
- * `depth` 由调用方 clamp 到 1..5。
+ * 某个座位在最近 `depth` 墩里出的牌。
+ *
+ * 现实里打完的牌就摆在自己面前，所以历史小牌**按座位分开**，
+ * 不再把四家的牌堆在同一个玩家前面（那既不真实，也会让人误读成"谁的牌多"）。
  */
-export function recentTricksView(s: GameState, depth: number): RecentTrick[] {
+export function pastPlaysView(s: GameState, seat: Seat, depth: number): PastPlays {
   const total = s.history.length
   const from = Math.max(0, total - depth)
-  return s.history.slice(from).map((t, i) => ({
-    no: from + i + 1,
-    plays: t.plays.map((p) => ({ seat: p.seat, cards: p.cards })),
-  }))
+  const nos: number[] = []
+  const tricks: (readonly Card[])[] = []
+  for (let i = from; i < total; i++) {
+    const t = s.history[i] as TrickRecord
+    const p = t.plays.find((x) => x.seat === seat)
+    nos.push(i + 1)
+    tricks.push(p ? p.cards : [])
+  }
+  return { nos, tricks }
 }

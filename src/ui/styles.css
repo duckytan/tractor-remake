@@ -167,6 +167,14 @@ html, body {
 .felt > * { position: relative; z-index: 1; }
 
 .seat { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+/* 座位主体：牌背 + 出牌区。
+   北家竖排（出牌区在牌背下方 = 朝向桌心）；
+   西家横排（出牌区在牌背右侧 = 朝向桌心）；
+   东家 row-reverse（出牌区在牌背左侧 = 朝向桌心）。 */
+.seat-body { display: flex; align-items: center; gap: 10px; }
+.seat--north .seat-body { flex-direction: column; gap: 5px; }
+.seat--west .seat-body { flex-direction: row; }
+.seat--east .seat-body { flex-direction: row-reverse; }
 .seat--north { grid-area: north; }
 .seat--west { grid-area: west; justify-self: start; }
 .seat--east { grid-area: east; justify-self: end; }
@@ -205,9 +213,28 @@ html, body {
 }
 .seat--west .back-row--side .card { transform: rotate(-90deg); }
 .seat--east .back-row--side .card { transform: rotate(90deg); }
-.played--side { justify-content: center; }
 
-.played { display: flex; gap: 2px; min-height: 8px; }
+/* 侧家出牌区：牌背与桌心之间，竖向堆叠，卡牌旋转 90° 面向桌心。
+   旋转后视觉高度 = 卡宽，步长按「视觉高度的一半」算（与 .back-row--side 同一套思路）。 */
+.plays--side { flex-direction: column; align-items: center; gap: 6px; }
+.plays--side .plays__now { flex-direction: column; align-items: center; }
+.plays--side .plays__now .card + .card { margin-top: calc(var(--played-w) * -1.05); }
+.plays--side .plays__past { flex-direction: column; align-items: center; gap: 5px; }
+.plays--side .past__trick { flex-direction: column; }
+.plays--side .past__trick + .past__trick { border-left: none; padding-left: 0; }
+.seat--west .plays--side .plays__now .card,
+.seat--west .plays--side .plays__past .card { transform: rotate(-90deg); }
+.seat--east .plays--side .plays__now .card,
+.seat--east .plays--side .plays__past .card { transform: rotate(90deg); }
+/* ---------- 各家出牌区：本墩的牌 + 最近几墩的历史小牌 ---------- */
+/* 现实里打完的牌摆在自己面前 ⇒ 每家一个出牌区，统一朝向桌心。 */
+.plays { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.plays__now { display: flex; gap: 2px; }
+.plays__past { display: flex; align-items: center; gap: 8px; }
+.plays__past:empty { display: none; }
+.past__trick { display: flex; gap: 1px; }
+.past__trick + .past__trick { border-left: 1px solid rgba(255, 255, 255, 0.12); padding-left: 8px; }
+
 .cards { display: flex; gap: 2px; }
 
 /* ---------- 底部：历史牌条 + 手牌 + 操作条 ---------- */
@@ -219,28 +246,6 @@ html, body {
   gap: 6px;
   min-height: 0;
 }
-
-/* 手牌前方：最近几墩（小牌，放在 .hand 之外，避免污染 .hand .card 计数） */
-.recent {
-  display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  gap: 10px;
-  min-height: 0;
-}
-.recent__trick {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 3px 8px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-}
-.recent__no { font-size: 10px; color: rgba(255, 255, 255, 0.45); letter-spacing: 0.3px; }
-.recent__cards { display: flex; align-items: center; gap: 7px; }
-.recent__play { display: flex; gap: 1px; }
-.recent__play + .recent__play { border-left: 1px solid rgba(255, 255, 255, 0.1); padding-left: 7px; }
 
 .card--tiny { cursor: default; border-radius: 3px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
 
@@ -276,8 +281,11 @@ html, body {
 .hand .card + .card--gap {
   margin-left: calc(var(--card-w) * (var(--hand-step) - 1) + var(--hand-gap));
 }
-.hand .card:hover { transform: translateY(-10px); z-index: 5; }
-.hand .card--selected { transform: translateY(-16px); z-index: 6; }
+/* 取消「悬停 / 选中就抬起」：
+   抬起 + z-index 会把右边那张牌盖掉一大半（每张只露出 ~87px），
+   右边那张既看不见、也点不中。改用「描边 + 阴影」表示状态，不改变层叠。 */
+.hand .card:hover { transform: none; }
+.hand .card--selected { transform: none; filter: drop-shadow(0 2px 9px rgba(24, 95, 165, 0.6)); }
 .hand-empty { color: rgba(255, 255, 255, 0.4); font-size: 13px; align-self: center; }
 
 .hand-bar {
@@ -442,11 +450,11 @@ html, body {
 .toast {
   position: fixed;
   left: 50%;
-  /* 必须抬到手牌区之上：south = 历史牌条 + 手牌(--card-w×1.4) + 操作条(34px) + 间距。
-     历史牌条高度随墩数变化，由 render.ts 实测后写入 --recent-h。
+  /* 必须抬到手牌区之上：south = 出牌区 + 手牌(--card-w×1.4) + 操作条(34px) + 间距。
+     出牌区高度随墩数变化，由 render.ts 实测后写入 --plays-h。
      原先 bottom:26px 正好压在操作条上，而 .is-show 带 pointer-events:auto，
      会把「扣底」等按钮的点击吃掉 —— 用户得先点掉 toast 才能点按钮。 */
-  bottom: calc(var(--card-w) * 1.4 + 52px + var(--recent-h, 0px));
+  bottom: calc(var(--card-w) * 1.4 + 52px + var(--plays-h, 0px));
   transform: translateX(-50%) translateY(12px);
   padding: 9px 18px;
   border-radius: 9px;
@@ -478,16 +486,16 @@ html, body {
   :root[data-card-size='L'] { --card-w: 150px; }
   .meta { display: none; }
   .back-row .card + .card { margin-left: -34px; }
-  .recent { gap: 6px; }
+  .plays { gap: 6px; }
 }
 
-/* ---------- 纵向空间不足：历史牌条让位 ---------- */
+/* ---------- 纵向空间不足：历史小牌让位 ---------- */
 
 @media (max-height: 820px) {
-  .recent__trick:nth-child(n + 3) { display: none; }
+  .plays__past .past__trick:nth-child(n + 3) { display: none; }
 }
 @media (max-height: 760px) {
-  .recent__trick:nth-child(n + 2) { display: none; }
+  .plays__past .past__trick:nth-child(n + 2) { display: none; }
 }
 
 /* ---------- 设置 / 记录弹层 ---------- */
