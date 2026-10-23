@@ -4,12 +4,12 @@ import type { Card, LevelRank, RuleContext, Suit, Trump } from '@core'
 import { sortHand } from '@app/game'
 
 /**
- * 手牌展示排序测试 —— 基准是 smallnest/Tractor `CurrentPoker.Sort()`
- * （用户确认「规则可信，甚至比原版还好」）。
+ * 手牌展示排序测试。
  *
  * 期望顺序：
  *   大王 → 小王 → 主级牌 → 副级牌 → [主2 → 副2] → 主花色(点数降序)
- *   → 其余三门按 ♥ ♠ ♦ ♣(点数降序)；无将时四门全按 ♥ ♠ ♦ ♣。
+ *   → 其余三门按「红黑相间」排（主 ♠ 时 ♥ ♣ ♦ / 主 ♥ 时 ♠ ♦ ♣ /
+ *     主 ♣ 时 ♦ ♠ ♥ / 主 ♦ 时 ♠ ♥ ♣）；无将时四门按 ♠ ♥ ♣ ♦。
  */
 
 /** 重制版花色编码：0=♠ 1=♥ 2=♣ 3=♦；点数下标 0..12 ↔ 2,3,…,K,A */
@@ -44,7 +44,7 @@ function ctxOf(trump: Trump, levelRank: LevelRank, twoAsPermanent = false): Rule
   }
 }
 
-describe('sortHand —— 对齐 smallnest CurrentPoker.Sort()', () => {
+describe('sortHand —— 主牌段在前、副牌段红黑相间', () => {
   it('主牌段整段在前，副牌段按花色优先', () => {
     const ctx = ctxOf(1, 3) // 主 ♥，级牌 3
     // 故意给一个「同点数跨花色」的牌，旧实现（按牌力）会把四张 A 排到一起
@@ -95,7 +95,7 @@ describe('sortHand —— 对齐 smallnest CurrentPoker.Sort()', () => {
     expect(sortHand(hand, ctx).map(txt)).toEqual(['♥2', '♠2', '♣2', '♥A'])
   })
 
-  it('无将：四门全按 ♥ ♠ ♦ ♣，级牌并列在王之后', () => {
+  it('无将：四门全按 ♠ ♥ ♣ ♦，级牌并列在王之后', () => {
     const ctx = ctxOf('NT', 3)
     const hand = [
       mk(0, 12, 1), // ♠A
@@ -105,7 +105,7 @@ describe('sortHand —— 对齐 smallnest CurrentPoker.Sort()', () => {
       mk(2, 1, 5), // ♣3（级牌）
       mk(0, 1, 6), // ♠3（级牌）
     ]
-    expect(sortHand(hand, ctx).map(txt)).toEqual(['♠3', '♣3', '♥A', '♠A', '♦A', '♣A'])
+    expect(sortHand(hand, ctx).map(txt)).toEqual(['♠3', '♣3', '♠A', '♥A', '♣A', '♦A'])
   })
 
   it('原版截图那一手：主 ♥ / 级 3 / 2 为常主', () => {
@@ -143,5 +143,59 @@ describe('sortHand —— 对齐 smallnest CurrentPoker.Sort()', () => {
     const before = hand.map((c) => c.id)
     sortHand(hand, ctx)
     expect(hand.map((c) => c.id)).toEqual(before)
+  })
+})
+
+/* ------------------------------------------------------------------ *
+ * 副牌花色的展示顺序：红黑相间（v1.3.0）
+ * ------------------------------------------------------------------ */
+
+/** 红桃 / 方块是红色，黑桃 / 梅花是黑色 */
+const isRed = (suit: Suit): boolean => suit === 1 || suit === 3
+const label = (t: Trump): string => (t === 'NT' ? '无将' : (SUIT_NAME[t] as string))
+/** 排序结果的花色序列 */
+const suitSeq = (cards: readonly Card[]): Suit[] =>
+  cards.map((c) => Math.floor(c.value / 13) as Suit)
+
+describe('副牌花色顺序 —— 红黑相间', () => {
+  it('四门主花色各自指定的顺序', () => {
+    const cases: readonly { trump: Suit; want: readonly Suit[] }[] = [
+      { trump: 3, want: [0, 1, 2] }, // 主 ♦ → ♠ ♥ ♣
+      { trump: 2, want: [3, 0, 1] }, // 主 ♣ → ♦ ♠ ♥
+      { trump: 1, want: [0, 3, 2] }, // 主 ♥ → ♠ ♦ ♣
+      { trump: 0, want: [1, 2, 3] }, // 主 ♠ → ♥ ♣ ♦
+    ]
+    for (const { trump, want } of cases) {
+      const ctx = ctxOf(trump, 5) // 级牌 5：A 不是级牌，三门都是普通副牌
+      // 故意倒序输入，验证顺序由花色表决定而不是输入顺序
+      const hand = [...want].reverse().map((s, i) => mk(s, 12, i + 1))
+      expect(suitSeq(sortHand(hand, ctx)), `主花色 ${label(trump)}`).toEqual([...want])
+    }
+  })
+
+  it('副牌相邻两组永远一红一黑（四门主花色 + 无将）', () => {
+    const trumps: readonly Trump[] = [0, 1, 2, 3, 'NT']
+    for (const trump of trumps) {
+      const ctx = ctxOf(trump, 5)
+      const off = ([0, 1, 2, 3] as Suit[]).filter((s) => trump === 'NT' || s !== trump)
+      const seq = suitSeq(sortHand(off.map((s, i) => mk(s, 12, i + 1)), ctx))
+      expect(seq).toHaveLength(off.length)
+      for (let i = 1; i < seq.length; i++) {
+        const prev = seq[i - 1] as Suit
+        const cur = seq[i] as Suit
+        expect(isRed(cur), `${label(trump)} 主：${SUIT_NAME[prev]} 与 ${SUIT_NAME[cur]} 撞色了`).not.toBe(
+          isRed(prev),
+        )
+      }
+    }
+  })
+
+  it('三门副牌覆盖完整、不重不漏', () => {
+    for (const trump of [0, 1, 2, 3] as Suit[]) {
+      const ctx = ctxOf(trump, 5)
+      const off = ([0, 1, 2, 3] as Suit[]).filter((s) => s !== trump)
+      const seq = suitSeq(sortHand(off.map((s, i) => mk(s, 12, i + 1)), ctx))
+      expect([...seq].sort(), `主花色 ${label(trump)}`).toEqual([...off].sort())
+    }
   })
 })

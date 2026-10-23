@@ -61,9 +61,34 @@ const levelOfDealer = (levels: { a: LevelRank; b: LevelRank }, dealer: Seat): Le
 
 /**
  * 副牌花色的展示顺序（重制版编码 0=♠ 1=♥ 2=♣ 3=♦）。
- * 取自 smallnest/Tractor `CurrentPoker.Sort()` 的非主花色顺序 ♥ ♠ ♦ ♣。
+ *
+ * **目标是「红黑相间」**：相邻两组一黑一红，一眼能分出花色段（用户要求）。
+ *
+ * 三门副牌必然是「2 + 1」的配色，所以相间只有一种形态 —— 多数色在两端、少数色在中间。
+ * 下面四行就是在「相间」这条硬约束下、各主花色的具体取法：
+ *
+ * | 主花色 | 副牌顺序 |
+ * |---|---|
+ * | ♦(3) | ♠ ♥ ♣ |
+ * | ♣(2) | ♦ ♠ ♥ |
+ * | ♥(1) | ♠ ♦ ♣ |
+ * | ♠(0) | ♥ ♣ ♦ |
+ *
+ * 注：这四行是用户逐条指定的。其中 ♦ / ♥ / ♠ 三档也等价于「同色内按 ♠♥♣♦ 原序」，
+ * 只有 ♣ 档是「同色内倒序」（♦ 在 ♥ 前面）—— 按相间约束两者都成立，这里以用户口径为准。
  */
-const OFF_SUIT_ORDER: readonly Suit[] = [1, 0, 3, 2]
+const SIDE_ORDER: Record<Suit, readonly Suit[]> = {
+  0: [1, 2, 3], // 主 ♠ → ♥ ♣ ♦
+  1: [0, 3, 2], // 主 ♥ → ♠ ♦ ♣
+  2: [3, 0, 1], // 主 ♣ → ♦ ♠ ♥
+  3: [0, 1, 2], // 主 ♦ → ♠ ♥ ♣
+}
+
+/**
+ * 无将 / 打王级：没有主花色，四门都要排。
+ * 取 ♠ ♥ ♣ ♦（原序）—— 它本身就是黑红相间，且与上面三档「同色内按原序」的口径一致。
+ */
+const SIDE_ORDER_NT: readonly Suit[] = [0, 1, 2, 3]
 
 /** 纯按牌力降序。AI 埋底「留大牌」用 —— 与展示序解耦，见 sortHand 注释。 */
 function sortByPowerDesc(hand: readonly Card[], ctx: RuleContext): Card[] {
@@ -71,11 +96,10 @@ function sortByPowerDesc(hand: readonly Card[], ctx: RuleContext): Card[] {
 }
 
 /**
- * 手牌展示排序 —— 对齐 smallnest/Tractor `CurrentPoker.Sort()`
- * （用户确认的规则基准，「甚至比原版还好」）。
+ * 手牌展示排序。
  *
  * 顺序：大王 → 小王 → 主级牌 → 副级牌 → [主2 → 副2] → 主花色(点数降序)
- *       → 其余三门按 ♥ ♠ ♦ ♣(点数降序)；无将时四门全按 ♥ ♠ ♦ ♣。
+ *       → 其余三门按「红黑相间」排（见 `SIDE_ORDER`），花色内点数降序。
  *
  * **为什么不能只按牌力降序排**：牌力表给四门副牌的同一点数编了相同牌力
  * （副牌 A 与副牌 K 之差在所有门相同），按牌力降序会把四张 A 排到一起、
@@ -85,8 +109,10 @@ function sortByPowerDesc(hand: readonly Card[], ctx: RuleContext): Card[] {
  */
 export function sortHand(hand: readonly Card[], ctx: RuleContext): Card[] {
   const trumpSuit: Suit | null = ctx.forcedNT || ctx.trump === 'NT' ? null : ctx.trump
+  // 主花色接在最后：它不参与「副牌顺序」，但花色下标表必须覆盖四门，
+  // 否则主牌段并列时的 sd 会拿到 undefined（NaN 比较器 = 排序结果不确定）。
   const suitOrder: readonly Suit[] =
-    trumpSuit === null ? OFF_SUIT_ORDER : [trumpSuit, ...OFF_SUIT_ORDER.filter((s) => s !== trumpSuit)]
+    trumpSuit === null ? SIDE_ORDER_NT : [...SIDE_ORDER[trumpSuit], trumpSuit]
   const suitRank = new Map<Suit, number>(suitOrder.map((s, i) => [s, i]))
   const suitIdx = (v: number): number => suitRank.get(suitOfValue(v) as Suit) as number
   const rankDesc = (a: number, b: number): number =>
