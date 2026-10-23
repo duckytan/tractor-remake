@@ -9,7 +9,7 @@
  */
 
 import type { Card, LevelRank, Play, RuleConfig, Seat, Trump } from '@core'
-import { checkPlay, teamOf } from '@core'
+import { GUARD_NEED, checkPlay, teamOf } from '@core'
 import type { AiLevel } from '@ai/policy'
 import type { Action, CardSize, GameState } from '@app/state'
 import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
@@ -324,7 +324,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
             ? `<p class="trump-note">反主需 <b>${need}</b> 张该门级牌</p>`
             : ''
       const guardBtn = s.guardOption
-        ? `<div class="trump-actions"><button class="btn btn--primary guard-btn" data-act="guard">加固（需 ${need} 张同花色级牌）</button></div>`
+        ? `<div class="trump-actions"><button class="btn btn--primary guard-btn" data-act="guard">加固（需 ${GUARD_NEED} 张同花色级牌）</button></div>`
         : ''
       const trumpBtn = (t: Trump, label: string, cls = ''): string => {
         const v = String(t)

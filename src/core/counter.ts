@@ -134,6 +134,14 @@ export interface CanGuardOptions {
  * 加固后 `currentCount` 仍从 1 抬到 2 ⇒ 反主门槛升到 3 ⇒ 事实上锁死，
  * 与「加固只抬高门槛、不直接锁死」的语义一致。
  */
+/**
+ * 加固需要的同花色级牌张数。
+ *
+ * 定主人已占走该门 1 张 ⇒ 队友手里最多剩 1 张 ⇒ 门槛只能是 1。
+ * 导出成常量是为了让 UI 的文案和规则判定用同一个来源（UI 不许自己算规则）。
+ */
+export const GUARD_NEED = 1
+
 export function canGuard(o: CanGuardOptions): boolean {
   const { hand, ctx, currentTrump, declarer, seat, currentCount } = o
 
@@ -153,5 +161,5 @@ export function canGuard(o: CanGuardOptions): boolean {
   // 已加固过 ⇒ 门槛 3 张已不可达，再加没有意义
   if (currentCount >= 2) return false
 
-  return levelCardCount({ hand, ctx, trump: currentTrump }) >= 1
+  return levelCardCount({ hand, ctx, trump: currentTrump }) >= GUARD_NEED
 }

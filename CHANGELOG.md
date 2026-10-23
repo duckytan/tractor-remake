@@ -61,6 +61,9 @@
 - **toast 压住面板底部按钮**：提示文案不再塞 `notice`，改用面板内文案
 - **`newGame` 丢体验项**：`reduce` 的 `newGame` 走 `emptyBase()` 会重置四色/牌面尺寸/动画等
 - **`emptyBase()` 的 `RuleConfig` 手抄字面量**与 core 默认值不一致（`allowPartnerGuard` 曾是 false）
+- **加固按钮文案与规则判定不一致**：按钮写「需 N 张」用的是 `trumpCount + 1`，
+  而加固实际只需 1 张 ⇒ 玩家看到「需 2 张」会以为自己不够而不点。
+  现在由 core 导出 `GUARD_NEED` 单一来源，UI 直接引用（UI 不许自己算规则）
 
 ### 一条重要的可达性教训
 
