@@ -216,10 +216,13 @@ html, body {
 
 /* 侧家出牌区：牌背与桌心之间，竖向堆叠，卡牌旋转 90° 面向桌心。
    旋转后视觉高度 = 卡宽，步长按「视觉高度的一半」算（与 .back-row--side 同一套思路）。 */
-.plays--side { flex-direction: column; align-items: center; gap: 6px; }
+.plays--side { flex-direction: column; align-items: center; gap: 4px; }
 .plays--side .plays__now { flex-direction: column; align-items: center; }
 .plays--side .plays__now .card + .card { margin-top: calc(var(--played-w) * -1.05); }
-.plays--side .plays__past { flex-direction: column; align-items: center; gap: 5px; }
+/* 侧家历史小牌同样要竖向压叠：每张牌各自带 --card-w(=TINY_W)，所以直接用 var(--card-w) 即可。
+   不压叠的话，一墩出 4 张就是 4 倍高度，历史区会顶出牌桌被裁掉。 */
+.plays--side .plays__past .card + .card { margin-top: calc(var(--card-w) * -1.05); }
+.plays--side .plays__past { flex-direction: column; align-items: center; gap: 4px; }
 .plays--side .past__trick { flex-direction: column; }
 .plays--side .past__trick + .past__trick { border-left: none; padding-left: 0; }
 .seat--west .plays--side .plays__now .card,
@@ -228,14 +231,14 @@ html, body {
 .seat--east .plays--side .plays__past .card { transform: rotate(90deg); }
 /* ---------- 各家出牌区：本墩的牌 + 最近几墩的历史小牌 ---------- */
 /* 现实里打完的牌摆在自己面前 ⇒ 每家一个出牌区，统一朝向桌心。 */
-.plays { display: flex; align-items: center; justify-content: center; gap: 8px; }
-.plays__now { display: flex; gap: 2px; }
-.plays__past { display: flex; align-items: center; gap: 8px; }
+.plays { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.plays__now { display: flex; gap: 0; }
+.plays__past { display: flex; align-items: center; gap: 6px; }
 .plays__past:empty { display: none; }
-.past__trick { display: flex; gap: 1px; }
-.past__trick + .past__trick { border-left: 1px solid rgba(255, 255, 255, 0.12); padding-left: 8px; }
+.past__trick { display: flex; gap: 0; }
+.past__trick + .past__trick { border-left: 1px solid rgba(255, 255, 255, 0.12); padding-left: 6px; }
 
-.cards { display: flex; gap: 2px; }
+.cards { display: flex; gap: 0; }
 
 /* ---------- 底部：历史牌条 + 手牌 + 操作条 ---------- */
 
@@ -270,9 +273,10 @@ html, body {
 .hand {
   display: flex;
   justify-content: center;
-  min-height: calc(var(--card-w) * 1.4 + 8px);
-  /* 上方留 8px 给提示角标（.card--hint::after 会探出牌顶） */
-  padding: 8px 0 2px;
+  /* 上方留白要同时容下：提示角标（.card--hint::after 会探出牌顶 ~8px）
+     与选中抬起（translateY(-10px)）。留 12px 才不会被出牌区压住。 */
+  min-height: calc(var(--card-w) * 1.4 + 12px);
+  padding: 12px 0 2px;
   --hand-step: 0.58;
   --hand-gap: 14px;
 }
@@ -281,11 +285,18 @@ html, body {
 .hand .card + .card--gap {
   margin-left: calc(var(--card-w) * (var(--hand-step) - 1) + var(--hand-gap));
 }
-/* 取消「悬停 / 选中就抬起」：
-   抬起 + z-index 会把右边那张牌盖掉一大半（每张只露出 ~87px），
-   右边那张既看不见、也点不中。改用「描边 + 阴影」表示状态，不改变层叠。 */
+/* 悬停不抬起：抬起 + z-index 会把右边那张牌盖掉一大半（每张只露出 ~87px），
+   右边那张既看不见、也点不中 —— 这是 v1.2.1 修掉的坑，别再改回来。 */
 .hand .card:hover { transform: none; }
-.hand .card--selected { transform: none; filter: drop-shadow(0 2px 9px rgba(24, 95, 165, 0.6)); }
+/* 但「已选中」必须抬起，否则只有一圈描边，选中状态不够直观（v1.2.3）。
+   幅度取 10px：只盖住右邻牌顶部一条窄带，不影响点选右邻牌。
+   选择器写成 .card.card--selected（0,3,0）与 :hover 同权重、且声明在后
+   ⇒ 鼠标移到已选中的牌上不会被 :hover 压回原位。 */
+.hand .card.card--selected {
+  transform: translateY(-10px);
+  z-index: 2;
+  filter: drop-shadow(0 2px 9px rgba(24, 95, 165, 0.6));
+}
 .hand-empty { color: rgba(255, 255, 255, 0.4); font-size: 13px; align-self: center; }
 
 .hand-bar {
@@ -514,16 +525,18 @@ html, body {
   :root[data-card-size='L'] { --card-w: 150px; }
   .meta { display: none; }
   .back-row .card + .card { margin-left: -34px; }
-  .plays { gap: 6px; }
+  .plays { gap: 4px; }
 }
 
 /* ---------- 纵向空间不足：历史小牌让位 ---------- */
+/* v1.2.3：PAST_DEPTH 由 3 提到 5，这两道裁剪跟着放宽一档，
+   否则「留 5 墩」在 1080p 以下的窗口里实际只能看到 1~2 墩，等于白改。 */
 
 @media (max-height: 820px) {
-  .plays__past .past__trick:nth-child(n + 3) { display: none; }
+  .plays__past .past__trick:nth-child(n + 4) { display: none; }
 }
 @media (max-height: 760px) {
-  .plays__past .past__trick:nth-child(n + 2) { display: none; }
+  .plays__past .past__trick:nth-child(n + 3) { display: none; }
 }
 
 /* ---------- 设置 / 记录弹层 ---------- */

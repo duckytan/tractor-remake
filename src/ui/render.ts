@@ -29,10 +29,10 @@ const SUIT_LABEL = ['♠ 黑桃', '♥ 红心', '♣ 梅花', '♦ 方片']
 const SEAT_LABEL = ['南（你）', '西', '北', '东']
 const SEAT_CLASS: Record<Seat, string> = { 0: 'center', 1: 'west', 2: 'north', 3: 'east' }
 
-/** 各家出牌区里显示最近几墩的历史小牌 */
-const PAST_DEPTH = 3
-/** 历史小牌的宽度 */
-const TINY_W = 22
+/** 各家出牌区里显示最近几墩的历史小牌（v1.2.3：3 → 5，用户反馈「只留 3 墩，新的把旧的顶走」） */
+const PAST_DEPTH = 5
+/** 历史小牌的宽度（v1.2.3：22 → 24，稍微放大一点，牌点更好认） */
+const TINY_W = 24
 /** 侧家（西/东）竖向牌背最多显示几张 —— 竖向更吃高度，比北家的 13 少 */
 const SIDE_SHOW = 10
 /** 侧家牌背宽度（竖向排列，视觉高度 = 该值） */
@@ -109,8 +109,9 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   }
 
   const turn = seatToPlay(s)
-  // 已出的牌：矮屏（<=780px）缩小一档，给两侧竖向牌堆腾出纵向空间
-  const playedW = window.innerHeight <= 780 ? 58 : 74
+  // 已出的牌：矮屏（<=780px）缩小一档，给两侧竖向牌堆腾出纵向空间。
+  // v1.2.3：74 → 84（矮屏 58 → 66），用户反馈「已打出的牌太小」；间隔同时在 CSS 里收到 0。
+  const playedW = window.innerHeight <= 780 ? 66 : 84
 
   root.innerHTML = `
     <header class="topbar">
