@@ -109,6 +109,21 @@ describe('悔牌 undo', () => {
     expect(total).toBe(100)
   })
 
+  it('本墩已有 3 家出牌时撤销 ⇒ 三家 AI 的牌一起回退（用户反馈场景）', () => {
+    const h = harness(15)
+    // 推进到某一墩的第 3 张牌（前三家已出，人类是第 4 家）
+    let guard = 0
+    while (h.state.phase === 'play' && h.state.trick.plays.length !== 3 && guard++ < 400) playOne(h)
+    expect(h.state.trick.plays.length).toBe(3)
+    const totalBefore = h.state.hands.reduce((n, x) => n + x.length, 0)
+
+    expect(undo(h)).toBe(true)
+    // 本墩清空，且**三家 AI 已出的牌也回到各自手里**（+3 张），不是只撤回人类那一手
+    expect(h.state.trick.plays.length).toBe(0)
+    const totalAfter = h.state.hands.reduce((n, x) => n + x.length, 0)
+    expect(totalAfter).toBe(totalBefore + 3)
+  })
+
   it('栈空时撤销是 no-op', () => {
     const h = harness(13)
     expect(h.store.frames.length).toBe(0)

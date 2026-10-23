@@ -45,6 +45,17 @@ let dealTimer: number | null = null
 /** 悔牌快照栈（不持久化，见 app/undo.ts） */
 let undoStore = emptyUndo()
 
+/**
+ * 悔牌后给 AI 的**一次性**额外延迟（ms）。
+ *
+ * 悔牌会把本墩四家的出牌一起撤回（快照是整个 GameState），但撤销后若立刻轮到 AI，
+ * 它会在 aiSpeedMs（420ms，速度设为 0 时瞬间）内把同样的牌重新放回来 ——
+ * 画面上只剩玩家自己那张没回来，看起来像「悔牌只撤了自己的牌」（用户反馈）。
+ * 这里先停一下，让「四家全部撤回」这件事看得见，再让 AI 重出。
+ */
+const UNDO_AI_HOLD_MS = 700
+let aiHoldMs = 0
+
 /** 逐张发牌的节奏（ms/张）。25 张约 1.4s */
 const DEAL_INTERVAL_MS = 55
 
@@ -63,12 +74,15 @@ function step(a: Action): void {
 function scheduleAi(): void {
   if (aiTimer !== null) return
   if (!aiCanAct(state)) return
+  // 悔牌后的一次性停顿（见 UNDO_AI_HOLD_MS），与 AI 常规速度取较大者
+  const hold = aiHoldMs
+  aiHoldMs = 0
   aiTimer = window.setTimeout(() => {
     aiTimer = null
     if (!aiCanAct(state)) return
     step({ type: 'aiStep' })
     afterChange()
-  }, Math.max(0, state.aiSpeedMs))
+  }, Math.max(hold, state.aiSpeedMs))
 }
 
 /**
@@ -163,7 +177,9 @@ function dispatch(a: Action): void {
 /**
  * 悔牌：回到「当前这一墩开始前」（本墩还没出牌时 = 上一墩开始前）。
  *
- * 四家的牌一起回退（含 AI 已出的牌）。撤销后 AI 定时器会重新走同一手 ——
+ * **四家的牌一起回退**（快照是整个 GameState，含 AI 已出的牌）。
+ * 撤销后如果轮到 AI，先按 UNDO_AI_HOLD_MS 停一下再让它重出 ——
+ * 否则 AI 立刻把同样的牌放回来，玩家会以为「悔牌只撤了自己的牌」。
  * 用户连按可以一直退，这是预期行为（不是「悔牌没生效」）。
  */
 function undoMove(): void {
@@ -172,11 +188,19 @@ function undoMove(): void {
   if (!target) return
   undoStore = store
   // 快照自带的 selected / hintIds / lastReject 一并清掉，避免「回来就预选着牌」
-  state = { ...target, selected: [], hintIds: [], lastReject: null, notice: '已回到本墩开始' }
+  state = {
+    ...target,
+    selected: [],
+    hintIds: [],
+    lastReject: null,
+    notice: '已撤回本墩四家出牌',
+  }
   if (aiTimer !== null) {
     window.clearTimeout(aiTimer)
     aiTimer = null
   }
+  // 撤销后若立刻该 AI 出牌，给它一个可见停顿（让「整墩撤回」看得见）
+  aiHoldMs = aiCanAct(state) ? UNDO_AI_HOLD_MS : 0
   afterChange()
 }
 
