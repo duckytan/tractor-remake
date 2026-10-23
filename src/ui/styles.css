@@ -262,20 +262,32 @@ html, body {
 .seat--east .back-row--side .card { transform: rotate(90deg); }
 
 /* 侧家出牌区：牌背与桌心之间，竖向堆叠，卡牌旋转 90° 面向桌心。
-   旋转后视觉高度 = 卡宽，步长按「视觉高度的一半」算（与 .back-row--side 同一套思路）。 */
-.plays--side { flex-direction: column; align-items: center; gap: var(--play-gap); }
+   旋转后视觉高度 = 卡宽，步长按「视觉高度的一半」算（与 .back-row--side 同一套思路）。
+   **定宽**（= --played-w）：宽度绝不能随内容变 —— 本墩有没有出牌、历史组里有几张牌，
+   都会改盒子宽度；而西家贴左沿、东家贴右沿锚定，宽度一变两边就错位（v1.3.4 实测差 40px+）。
+   定宽后东西两家的出牌区是稳定镜像，与行牌进度无关。 */
+.plays--side {
+  flex-direction: column;
+  align-items: center;
+  gap: var(--play-gap);
+  width: var(--played-w);
+}
 .plays--side .plays__now { flex-direction: column; align-items: center; }
 .plays--side .plays__now .card + .card { margin-top: calc(var(--played-w) * -1.05); }
-/* 侧家历史小牌同样要竖向压叠：每张牌各自带 --card-w(=卡宽×0.16)，所以直接用 var(--card-w) 即可。
+/* 侧家历史小牌同样要竖向压叠：每张牌各自带 --card-w(=卡宽×TINY_RATIO)，所以直接用 var(--card-w) 即可。
    不压叠的话，一墩出 4 张就是 4 倍高度，历史区会顶出牌桌被裁掉。 */
 .plays--side .plays__past .card + .card { margin-top: calc(var(--card-w) * -1.05); }
 .plays--side .plays__past { flex-direction: column; align-items: center; gap: var(--play-gap); }
 .plays--side .past__trick { flex-direction: column; }
 .plays--side .past__trick + .past__trick { border-left: none; padding-left: 0; }
+/* 旋转方向 = 牌顶朝向桌心（斗地主等通行做法，也是本块注释一贯的口径）：
+   西家在左 ⇒ 桌心在右 ⇒ rotate(90deg)（顺时针，牌顶转向右）；
+   东家在右 ⇒ 桌心在左 ⇒ rotate(-90deg)。
+   （v1.3.4 之前两边是反的：牌顶朝外、背离桌心，与注释不符。） */
 .seat--west .plays--side .plays__now .card,
-.seat--west .plays--side .plays__past .card { transform: rotate(-90deg); }
+.seat--west .plays--side .plays__past .card { transform: rotate(90deg); }
 .seat--east .plays--side .plays__now .card,
-.seat--east .plays--side .plays__past .card { transform: rotate(90deg); }
+.seat--east .plays--side .plays__past .card { transform: rotate(-90deg); }
 /* ---------- 各家出牌区：本墩的牌 + 最近几墩的历史小牌 ---------- */
 /* 现实里打完的牌摆在自己面前 ⇒ 每家一个出牌区，统一朝向桌心。 */
 .plays { display: flex; align-items: center; justify-content: center; gap: var(--play-gap); }

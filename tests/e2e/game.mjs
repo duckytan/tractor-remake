@@ -74,9 +74,21 @@ try {
 
   /* ---------- S0 加载 + 定主面板 ---------- */
   await page.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 })
-  // 逐张发牌：先确认手牌开始出现（此时不该已经满 25 张）
-  await page.waitForSelector('#app .hand .card', { timeout: 20000 })
-  const earlyHand = await page.locator('#app .hand .card').count()
+  // 逐张发牌：先确认手牌开始出现（此时不该已经满 25 张）。
+  // 必须在**页面内**等到第一张牌并同一帧计数 —— waitForSelector + count() 是两次
+  // 跨进程往返，机器一慢（实测傍晚负载下 >1.4s）就会错过 55ms/张的动画窗口，
+  // 拿到 earlyHand=25 误判发牌动画失效（v1.3.4 修的抖动）。
+  const earlyHand = await page.evaluate(async () => {
+    const t0 = Date.now()
+    await new Promise((res) => {
+      const tick = () => {
+        if (document.querySelector('#app .hand .card') || Date.now() - t0 > 15000) res()
+        else requestAnimationFrame(tick)
+      }
+      tick()
+    })
+    return document.querySelectorAll('#app .hand .card').length
+  })
   // 等到定主面板出现（要么摸到级牌暂停，要么发完）。
   // v1.2 起：人类 25 张里完全没有级牌时（概率 ≈4.8%），AI 会在发牌中直接抢主，
   // 这一局不会出面板 —— 此时断言「已经离开定主阶段」，不算失败。
@@ -262,18 +274,20 @@ try {
       const statusAtPlay = await page.locator('[data-slot="status"]').innerText()
       await page.click('[data-act="play"]')
       await sleep(700)
-      const played = await page.locator('[data-slot="played-mine"] .card').count()
+      // v1.3.4：插槽 v1.2.1 起就叫 plays-mine（出牌区搬到各家面前时改名的），
+      // 这里之前写的是 played-mine ⇒ played 恒为 0，只有「本墩第 4 个出牌」才碰巧通过。
+      const played = await page.locator('[data-slot="plays-mine"] .card').count()
       const handAfter = await page.locator('#app .hand .card').count()
       const statusAfterPlay = await page.locator('[data-slot="status"]').innerText()
       const barAfter = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
-      // 若我是墩内第 4 个出牌，整墩会立即结算、中央区清空 ——
+      // 若我是墩内第 4 个出牌，整墩会立即结算、出牌区清空 ——
       // 此时「手牌减少 + 墩数前进」同样证明出牌被接受且回合推进
       const playAccepted = handAfter === handBefore - hintIds.length
       const trickResolved =
         statusAfterPlay.replace(/\s+/g, '') !== statusAtPlay.replace(/\s+/g, '')
       const advanced = played === hintIds.length || (playAccepted && trickResolved)
       rec(
-        'S4 出牌：牌被接受（手牌减少），中央区有牌或整墩结算，回合推进',
+        'S4 出牌：牌被接受（手牌减少），出牌区有牌或整墩结算，回合推进',
         playAccepted && advanced,
         `played=${played}/${hintIds.length} hand ${handBefore}->${handAfter} trickResolved=${trickResolved} handbar="${barAfter}"`,
       )
