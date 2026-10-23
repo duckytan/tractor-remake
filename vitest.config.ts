@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath, URL } from 'node:url'
+import pkg from './package.json'
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url))
 
@@ -7,6 +8,8 @@ export default defineConfig({
   // Vite 默认把缓存写到系统临时目录，受限环境下会 EPERM。
   // 显式落到项目内，保证任何环境都能跑。
   cacheDir: 'node_modules/.vite',
+  // 与 vite.config.ts 保持一致：版本号构建时内联
+  define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   resolve: {
     alias: {
       '@core': r('./src/core'),

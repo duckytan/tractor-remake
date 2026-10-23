@@ -84,7 +84,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
 
   root.innerHTML = `
     <header class="topbar">
-      <div class="brand">拖拉机 · 重制版</div>
+      <div class="brand">拖拉机 · 重制版<span class="brand__ver" title="版本 ${__APP_VERSION__}">v${__APP_VERSION__}</span></div>
       <div class="meta">
         <span>第 <b>${s.round}</b> 局</span>
         <span>打 <b>${levelLabel(s.levelRank)}</b></span>

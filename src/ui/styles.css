@@ -90,6 +90,19 @@ html, body {
   flex: 0 0 auto;
 }
 .brand { font-weight: 600; letter-spacing: 0.3px; }
+/* 版本号徽标：紧跟品牌名，构建时从 package.json 内联 */
+.brand__ver {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #a8b6ae;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  vertical-align: 2px;
+  white-space: nowrap;
+}
 .meta { display: flex; gap: 16px; font-size: 12.5px; color: #9aa8a1; }
 .meta b { color: #f0eee7; font-weight: 600; }
 .top-actions { margin-left: auto; display: flex; gap: 8px; }
