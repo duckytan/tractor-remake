@@ -25,6 +25,7 @@ import {
   checkPlay,
   counterNeed,
   dealWithGuard,
+  hasJokerPair,
   levelRankToRankIndex,
   levelsFor,
   mulberry32,
@@ -348,9 +349,10 @@ export function revealTick(s: GameState): GameState {
 
   const next: GameState = { ...s, revealed: s.revealed + 1 }
   if (next.revealed >= total) {
-    // 发完 ⇒ 直接进定主面板（含无将），不再仲裁。
-    // 最后一 tick 必须给「完整清单」：中途面板只亮级牌花色、没有「继续发牌」按钮，
-    // 如果在这一刻才弹面板，玩家就既不能选无将也退不回去了。
+    // 发完 ⇒ 直接进定主面板，不再仲裁。
+    // 最后一 tick 必须给「完整清单」：中途面板只列级牌花色、没有「继续发牌」按钮，
+    // 如果在这一刻才弹面板，玩家就既不能改选无将也退不回去了。
+    // 清单由 humanDeclareOptions 决定（无将需一对王；一个选项都没有时兜底放行无将）。
     return { ...next, declareOptions: humanDeclareOptions(next), notice: null }
   }
   return dealArbitrate(next)
@@ -505,18 +507,28 @@ function humanGuardOption(s: GameState): boolean {
 }
 
 /**
- * 人类首次亮主可选的花色：持该门级牌即可；无将不校验，保证永不卡死。
+ * 人类首次亮主可选的项。
  *
- * 规则依据：smallnest/Tractor `Algorithm.cs:157-178` —— 亮主必须持有该门级牌。
- * 打王级（强制无将）时主牌固定，只有无将可选。
+ * - **花色主**：必须持该门级牌（smallnest `Algorithm.cs:157-178`）。
+ * - **无将**：必须持**一对王**（一对小王 或 一对大王）—— smallnest `Algorithm.cs:211`
+ *   的 `SmallJack == 2 || BigJack == 2`。无将没有「某门级牌」可作为亮主凭据，只能拿一对王顶，
+ *   这是升级/拖拉机的通行规则（v1.2.8 之前重制版是无条件可亮，属规则放宽）。
+ * - **打王级**（`forcedNT`）：主牌固定无将，无条件可选。
+ *
+ * **兜底**：若一个花色都亮不了、也没有一对王，仍把无将放进清单 ——
+ * 否则定主面板 5 个按钮全灰、`declareTrump` 也会全部拒绝，玩家无路可走。
+ * 这个兜底实际几乎不触发：AI 见级牌必抢（`AI_GRAB_PCT = 100`），
+ * 真走到「没人亮主」时人类多半也没级牌，才会用到它。
  *
  * 注意：这里用**完整手牌**算「能不能选」，真正的持牌校验在 `declareTrump` 里
  * 用已揭示前缀再做一遍（发牌中途不能拿还没摸到的牌亮主）。
  */
-function humanDeclareOptions(s: GameState): Trump[] {
+export function humanDeclareOptions(s: GameState): Trump[] {
   if (s.forcedNT) return ['NT'] // 打王级强制无将
-  const out: Trump[] = levelSuitsIn(s.hands[HUMAN_SEAT] as readonly Card[], s)
-  out.push('NT') // 无将不需要级牌
+  const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+  const out: Trump[] = levelSuitsIn(hand, s)
+  // 无将需一对王；一手牌一个选项都没有时兜底放行，避免定主面板全灰卡死
+  if (hasJokerPair(hand) || out.length === 0) out.push('NT')
   return out
 }
 
@@ -703,9 +715,17 @@ export function declareTrump(s: GameState, trump: Trump): GameState {
 
   if (s.trumpCount === 0) {
     if (!humanDeclareOptions(s).includes(finalTrump)) {
-      return reject(s, 'cannot-counter', '你没有这门花色的级牌，不能亮主')
+      return reject(
+        s,
+        'cannot-counter',
+        finalTrump === 'NT'
+          ? '无将需要一对王（一对小王或一对大王），你没有'
+          : '你没有这门花色的级牌，不能亮主',
+      )
     }
-    // 持牌校验用「已揭示」的前缀：发牌中途不能用还没摸到的牌亮主
+    // 持牌校验用「已揭示」的前缀：发牌中途不能用还没摸到的牌亮主。
+    // 无将不走这一步 —— 它只在「发完 25 张」的定主面板上出现，
+    // 中途的面板只列级牌花色（见 dealArbitrate / revealTick）。
     if (finalTrump !== 'NT' && !declareOptionsIn(s).includes(finalTrump)) {
       return reject(s, 'cannot-counter', '这张级牌还没发到手，不能亮主')
     }

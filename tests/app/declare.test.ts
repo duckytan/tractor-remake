@@ -1,12 +1,14 @@
 /**
  * 亮主持牌校验（修复 2）
  *
- * 规则依据：smallnest/Tractor `Algorithm.cs:157-178` —— 首次亮主必须持该门级牌。
- * 无将不需要级牌，保证流程永不卡死。
+ * 规则依据：
+ *   - 花色主：smallnest/Tractor `Algorithm.cs:157-178` —— 首次亮主必须持该门级牌。
+ *   - 无将：`Algorithm.cs:211` —— 必须持**一对王**（一对小王 或 一对大王）。
+ *     重制版另留一个兜底：一个选项都没有时仍放行无将，避免定主面板 5 个按钮全灰卡死。
  */
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RULE_CONFIG, levelRankToRankIndex, makeDeck } from '@core'
+import { DEFAULT_RULE_CONFIG, SMALL_JOKER, hasJokerPair, isJokerValue, levelRankToRankIndex, makeDeck } from '@core'
 import type { Card, Suit, Trump } from '@core'
 import { declareTrump, newGame } from '@app/game'
 import { HUMAN_SEAT, emptyState } from '@app/state'
@@ -22,8 +24,13 @@ const V = {
 }
 const LEVEL_VALUES = new Set<number>([V.spade3, V.heart3, V.club3, V.diamond3])
 
-/** 造一个只有人类有手牌、且人类只持 ♥3 的定主阶段 */
-function stateWithOnlyHeartLevel(): GameState {
+/**
+ * 造一个只有人类有手牌、且人类只持 ♥3 的定主阶段。
+ *
+ * `smallJokers` 指定补几张**小王**：0（默认）⇒ 没有一对王 ⇒ 亮不了无将；
+ * 2 ⇒ 一对小王 ⇒ 无将可选。
+ */
+function stateWithOnlyHeartLevel(smallJokers = 0): GameState {
   const deck = makeDeck()
   const used = new Set<number>()
   const pick = (pred: (c: Card) => boolean, n: number): Card[] => {
@@ -39,7 +46,9 @@ function stateWithOnlyHeartLevel(): GameState {
   }
   const human = [
     ...pick((c) => c.value === V.heart3, 2), // ♥3 ×2
-    ...pick((c) => !LEVEL_VALUES.has(c.value), 23), // 补齐 25 张，不带任何级牌
+    ...pick((c) => c.value === SMALL_JOKER, smallJokers), // 小王（一对才能亮无将）
+    // 补齐 25 张：不带任何级牌，也不带王（王由上面单独控制，免得用例之间互相干扰）
+    ...pick((c) => !LEVEL_VALUES.has(c.value) && !isJokerValue(c.value), 25 - 2 - smallJokers),
   ]
   return {
     ...emptyState(),
@@ -50,7 +59,8 @@ function stateWithOnlyHeartLevel(): GameState {
     config: DEFAULT_RULE_CONFIG,
     hands: [human, [], [], []],
     bottom: [],
-    declareOptions: [1, 'NT'],
+    // 无将只在持一对王时可选
+    declareOptions: smallJokers >= 2 ? [1, 'NT'] : [1],
   }
 }
 
@@ -73,8 +83,21 @@ describe('亮主必须持该门级牌', () => {
     expect(after.usedTrumps).toEqual([1])
   })
 
-  it('无将永远可选（不需要级牌）', () => {
-    const s = stateWithOnlyHeartLevel()
+  it('没有一对王时亮无将被拒（v1.2.8：无将需一对王）', () => {
+    const s = stateWithOnlyHeartLevel() // ♥3 ×2，但一张王都没有
+    const after = declareTrump(s, 'NT')
+    expect(after.lastReject?.reason).toBe('cannot-counter')
+    expect(after.trumpDeclarer).toBeNull()
+    expect(after.usedTrumps).toEqual([])
+  })
+
+  it('只有一张王不算一对，亮无将仍被拒', () => {
+    const s = stateWithOnlyHeartLevel(1)
+    expect(declareTrump(s, 'NT').lastReject?.reason).toBe('cannot-counter')
+  })
+
+  it('持一对小王时亮无将成功', () => {
+    const s = stateWithOnlyHeartLevel(2)
     const after = declareTrump(s, 'NT')
     expect(after.lastReject).toBeNull()
     expect(after.trump).toBe('NT')
@@ -107,7 +130,7 @@ describe('第 1 局抢庄（首个亮主者坐庄）', () => {
 })
 
 describe('declareOptions 由 startRound 按手牌算好', () => {
-  it('清单里的每个花色都对应手里真有该门级牌，且一定含无将', () => {
+  it('清单里的每个花色都对应手里真有该门级牌；无将只在持一对王时出现', () => {
     let sawDeclare = 0
     for (const seed of [7, 42, 2024, 88888, 1, 2, 3, 4, 5, 6, 11, 12, 13, 14, 15]) {
       const s = newGame(DEFAULT_RULE_CONFIG, 1, 0, seed)
@@ -123,10 +146,15 @@ describe('declareOptions 由 startRound 按手牌算好', () => {
         continue
       }
       sawDeclare++
-      expect(s.declareOptions).toContain('NT')
+      const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+      // 无将：持一对王才出现；一个花色都亮不了时兜底放行（见 humanDeclareOptions）
+      const suitOpts = s.declareOptions.filter((t) => t !== 'NT')
+      expect(
+        s.declareOptions.includes('NT'),
+        `seed ${seed}: 无将选项应与「一对王 / 无花色可选」一致`,
+      ).toBe(hasJokerPair(hand) || suitOpts.length === 0)
 
       const lv = levelRankToRankIndex(s.levelRank) ?? 0
-      const hand = s.hands[HUMAN_SEAT] as readonly Card[]
       for (const t of s.declareOptions) {
         if (t === 'NT') continue
         expect(

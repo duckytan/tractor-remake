@@ -8,6 +8,56 @@
 
 ---
 
+## [1.2.8] - 2026-10-23
+
+> 规则收紧：**亮无将需要一对王**（对齐 smallnest `Algorithm.cs:211`）。
+
+### 修复
+
+**「无将随便亮」是规则放宽，不是原版行为。** 此前 `humanDeclareOptions` 无条件
+`out.push('NT')`，注释写着「无将不需要级牌，保证永不卡死」—— 于是零张王也能亮无主。
+
+核对 smallnest 源码：
+
+- `Tractor.net/Algorithms/Algorithm.cs:211`
+  `if ((currentPoker.SmallJack == 2 || currentPoker.BigJack == 2) && showSuits < 3)`
+  ⇒ 亮无将的持牌条件是「**一对小王** 或 **一对大王**」。
+- `Tractor.net/GameConfig.cs:137-142` 的 `CanRankJack` 只是「允不允许亮无主」的**总开关**
+  （源码注释原文 `//如果不允许无主`），默认 `true`。它跟「用王亮主 / 抬牌力」无关
+  —— `docs/15` 早先那个描述是错的，已在上一轮 docs 提交里更正。
+
+现在：`core/cards.ts` 新增 `hasJokerPair()`（**同种王两张**才算一对，一大一小不算，
+照抄源码的判定）；`humanDeclareOptions` 只在持一对王时给出无将。
+
+### 兜底（重要）
+
+一个花色都亮不了、也没有一对王时，**仍然放行无将** —— 否则定主面板 5 个按钮全灰、
+`declareTrump` 也会全部拒绝，玩家无路可走。这个兜底实际几乎不触发：AI 见级牌必抢
+（`AI_GRAB_PCT = 100`），真走到「没人亮主」时人类多半也没级牌，才会用到它。
+
+### UI
+
+定主面板上「无将」按钮变灰时给出原因：**无将需持一对王（一对小王 或 一对大王）**。
+只在「发完 25 张的首次定主面板」上显示 —— 中途面板与反主面板本来就不列无将，
+在那两处解释反而误导。
+
+### 测试
+
+- `declare.test.ts`：新增 3 例（没有王被拒 / 只有一张王被拒 / 一对小王成功），
+  替换原来的「无将永远可选」；seed 循环改为按 `hasJokerPair` 断言无将是否出现。
+- `dealing.test.ts`：两处断言按新规则改写（只持 ♥3 ⇒ 只有 ♥ 可选）。
+- `tests/helpers/declare.ts`：不再拿 `declareOptions` 当清单（`newGame` 开动画时它是空的），
+  改用 `humanDeclareOptions` 按**完整手牌**重算 —— 否则无将收紧后大量集成测试会卡在定主阶段。
+
+### 说明
+
+- **AI 仍然不会主动亮无将**（`aiGrabPick` 只返回花色），所以这条规则目前只约束玩家。
+  这属 AI 强度限制，不是规则不一致。
+- 未实跑 vitest；`src` + `tests` 已用独立 tsc（`strict` + `noUncheckedIndexedAccess`
+  + `noUnusedLocals`）验证零错误。
+
+---
+
 ## [1.2.7] - 2026-10-23
 
 > 发牌飞行轨迹（FE-1 收尾）+ 两处死代码清理。

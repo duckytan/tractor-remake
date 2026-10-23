@@ -397,12 +397,18 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         : stillDealing
           ? ` · 已发 <b>${s.revealed}</b> / ${totalHand} 张，摸到级牌可以先抢`
           : ''
+      // 无将按钮为什么是灰的：只在「发完后首次定主」的面板上解释。
+      // 中途面板（stillDealing）本来就不列无将，反主面板也不列，说这句反而误导。
+      const ntNeedsJoker =
+        !countering && !stillDealing && !s.forcedNT && !allowed.has('NT')
       const note =
         s.guardBy !== null
           ? `<p class="trump-note">已加固：反主门槛升到 <b>${need}</b> 张（锁死）</p>`
           : countering && s.counterOptions.length > 0
             ? `<p class="trump-note">反主需 <b>${need}</b> 张该门级牌</p>`
-            : ''
+            : ntNeedsJoker
+              ? '<p class="trump-note">无将需持<b>一对王</b>（一对小王 或 一对大王）</p>'
+              : ''
       const guardBtn = s.guardOption
         ? `<div class="trump-actions"><button class="btn btn--primary guard-btn" data-act="guard">加固（需 ${GUARD_NEED} 张同花色级牌）</button></div>`
         : ''

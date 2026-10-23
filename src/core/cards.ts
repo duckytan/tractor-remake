@@ -38,6 +38,27 @@ export function isJokerValue(v: CardValue): boolean {
   return v >= SMALL_JOKER
 }
 
+/**
+ * 手里是否有一对王（**一对小王** 或 **一对大王**）。
+ *
+ * 这是「亮无将」的持牌条件。规则依据：smallnest/Tractor
+ * `Tractor.net/Algorithms/Algorithm.cs:211`
+ *   `if ((currentPoker.SmallJack == 2 || currentPoker.BigJack == 2) && showSuits < 3)`
+ * ⇒ 源码判的是「同种王两张」。**一大一小不算一对**（`SmallJack==1 && BigJack==1` 时
+ * 上面那个条件为假），这里照抄，不做"两张王就算"的放宽。
+ *
+ * 无将没有「某门级牌」可作为亮主凭据，只能拿一对王来顶 —— 这是升级/拖拉机的通行规则。
+ */
+export function hasJokerPair(hand: readonly Card[]): boolean {
+  let small = 0
+  let big = 0
+  for (const c of hand) {
+    if (c.value === SMALL_JOKER) small++
+    else if (c.value === BIG_JOKER) big++
+  }
+  return small >= 2 || big >= 2
+}
+
 /** 牌值 → 花色；王牌返回 null */
 export function suitOfValue(v: CardValue): Suit | null {
   return isJokerValue(v) ? null : (Math.floor(v / RANKS_PER_SUIT) as Suit)

@@ -81,7 +81,7 @@ describe('逐张发牌', () => {
     expect(after.dealPrompt).toBe(true)
   })
 
-  it('「继续发牌」后恢复，发完自动给出完整选项（含无将）', () => {
+  it('「继续发牌」后恢复，发完给出完整选项（只持 ♥3 ⇒ 只有 ♥；无将需一对王）', () => {
     let s = base(13)
     for (let i = 0; i < 13; i++) s = tick(s)
     s = reduce(s, { type: 'passDeal' })
@@ -90,7 +90,8 @@ describe('逐张发牌', () => {
 
     while (s.revealed < 25) s = tick(s)
     expect(s.revealed).toBe(25)
-    expect(s.declareOptions).toContain('NT')
+    // 这手牌只有 ♥3、没有任何王 ⇒ 无将不可选（v1.2.8）
+    expect(s.declareOptions).toEqual([1])
   })
 
   it('发牌中途亮主 ⇒ 立即补满手牌并进入定约', () => {
@@ -102,10 +103,11 @@ describe('逐张发牌', () => {
     expect(after.dealPrompt).toBe(false)
   })
 
-  it('一直没摸到级牌 ⇒ 发完后只剩无将可选', () => {
+  it('一直没摸到级牌、也没有一对王 ⇒ 兜底给无将（否则定主面板全灰卡死）', () => {
     let s = base(null)
     while (s.revealed < 25) s = tick(s)
     expect(s.dealPrompt).toBe(false)
+    // 一个花色都亮不了 ⇒ humanDeclareOptions 兜底放行无将，保证玩家还有路可走
     expect(s.declareOptions).toEqual(['NT'])
   })
 
