@@ -3,21 +3,25 @@
  * 规则依据：规则书 §2.1 §2.2
  */
 
-import { TRUMP_POWER_BASE, makeDeck } from './cards'
+import { DECK_SIZE, TRUMP_POWER_BASE, makeDeck } from './cards'
 import type { Rng } from './rng'
 import { shuffle } from './rng'
 import type { Card, CardValue, LevelRank, PowerTable, Seat, SuitSlot, Trump } from './types'
 import { RANKS_PER_SUIT } from './cards'
 
 export const HAND_SIZE = 25
+/** 庄家比旁多家多少的牌（= 将来埋底时扣下的数量） */
 export const BOTTOM_SIZE = 8
 export const SEAT_COUNT = 4
+/**
+ * 一局发牌的总轮次：前 25 轮每家各得 1 张，第 26..33 轮只有庄家得 1 张。
+ * `state.revealed` 的上限就是它（全局口径，与人类是不是庄家无关）。
+ */
+export const DEAL_TOTAL = HAND_SIZE + BOTTOM_SIZE
 
 export interface DealResult {
-  /** 四家手牌，各 25 张 */
+  /** 四家手牌：庄家 33 张（25 + 多拿的 8 张），其余各 25 张 */
   readonly hands: readonly (readonly Card[])[]
-  /** 底牌 8 张 */
-  readonly bottom: readonly Card[]
 }
 
 /** 手牌槽：主牌槽 4，否则为花色 0..3 */
@@ -33,18 +37,36 @@ export function newShuffledDeck(rng: Rng): Card[] {
 }
 
 /**
- * 发牌：牌堆前 100 张按 25 张一组分给四家，最后 8 张作底牌。
+ * 发牌：**把整副 108 张牌全部派完** —— 四家各 25 张，庄家最后再多拿 8 张（共 33 张）。
  * 第 i 组给座位 (dealer + i) % 4，保证庄家位置随轮庄变化。
+ *
+ * 底牌**不在发牌时分离**：庄家多拿的那 8 张就是将来的底牌，埋底时才确定
+ * （庄家从 33 张里选 8 张扣下，见 `app/game.ts` 的 `buryCards`）。
+ * 这样逐张发牌动画会把 108 张全部派出，庄家的最后 8 张也一张张飞到手上，
+ * 而不是定主后凭空多出 8 张。
  */
 export function dealFromDeck(deck: readonly Card[], dealer: Seat): DealResult {
-  if (deck.length !== 108) throw new Error(`dealFromDeck: 牌堆应为 108 张，收到 ${deck.length}`)
+  if (deck.length !== DECK_SIZE) throw new Error(`dealFromDeck: 牌堆应为 ${DECK_SIZE} 张，收到 ${deck.length}`)
   const hands: Card[][] = [[], [], [], []]
   for (let block = 0; block < SEAT_COUNT; block++) {
     const seat = ((dealer + block) % SEAT_COUNT) as Seat
     hands[seat] = deck.slice(block * HAND_SIZE, (block + 1) * HAND_SIZE) as Card[]
   }
-  const bottom = deck.slice(SEAT_COUNT * HAND_SIZE, SEAT_COUNT * HAND_SIZE + BOTTOM_SIZE)
-  return { hands, bottom }
+  // 庄家最后 8 张（= 将来的底牌），排在四家 25 张之后 ⇒ 发牌顺序上最后到庄家
+  ;(hands[dealer] as Card[]).push(...deck.slice(SEAT_COUNT * HAND_SIZE, DECK_SIZE))
+  return { hands }
+}
+
+/**
+ * 逐张发牌进度 → 「已经派了多少张」。
+ *
+ * 前 25 轮每家各得 1 张（4×revealed），第 26 轮起每轮只有庄家得 1 张。
+ * UI 的牌堆计数用它从 108 递减。入参 clamp 到 [0, DEAL_TOTAL]：
+ * `revealed` 正常不会越界，但牌堆计数要的是「发完即 0」的硬保证。
+ */
+export function dealtCount(revealed: number): number {
+  const rounds = Math.max(0, Math.min(revealed, DEAL_TOTAL))
+  return Math.min(rounds, HAND_SIZE) * SEAT_COUNT + Math.max(0, rounds - HAND_SIZE)
 }
 
 /**
@@ -99,9 +121,8 @@ export interface GuardedDealResult extends DealResult {
  * 主花色 4 种 + 两队级牌 + 两种 mode 都要过，是因为开局前主牌未定，
  * 任何一家在任何可能的定约下都不该拿到现成拖拉机。
  *
- * ⚠️ **庄家按 33 张校验**：底牌 8 张最终会并进庄家手牌（`app/game.ts` 的收底），
- * 所以庄家的「有效手牌」是 25 + 8。只校验 25 张的话，
- * 庄家就是全场唯一可能拿到现成连对的人（docs/15 KN-8）。
+ * ⚠️ **庄家按 33 张校验**：庄家发牌时就拿 25 + 8 张（`dealFromDeck`），
+ * 只校验 25 张的话，庄家就是全场唯一可能拿到现成连对的人（docs/15 KN-8）。
  */
 export function dealWithGuard(
   rng: Rng,
@@ -115,7 +136,7 @@ export function dealWithGuard(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const deck = newShuffledDeck(rng)
     const deal = dealFromDeck(deck, dealer)
-    if (!anyNaturalTractor(effectiveHands(deal, dealer), opts, buildPower, trumps)) {
+    if (!anyNaturalTractor(deal.hands, opts, buildPower, trumps)) {
       return { ...deal, attempts: attempt, degraded: false }
     }
   }
@@ -124,11 +145,6 @@ export function dealWithGuard(
   const deck = newShuffledDeck(rng)
   const deal = dealFromDeck(deck, dealer)
   return { ...deal, attempts: maxAttempts, degraded: true }
-}
-
-/** 把底牌并进庄家手牌后的「有效手牌」四份 */
-function effectiveHands(deal: DealResult, dealer: Seat): readonly (readonly Card[])[] {
-  return deal.hands.map((h, i) => (i === dealer ? [...h, ...deal.bottom] : h))
 }
 
 function anyNaturalTractor(

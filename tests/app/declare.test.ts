@@ -8,9 +8,21 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RULE_CONFIG, SMALL_JOKER, hasJokerPair, isJokerValue, levelRankToRankIndex, makeDeck } from '@core'
+import {
+  DEFAULT_RULE_CONFIG,
+  DEAL_TOTAL,
+  HAND_SIZE,
+  SMALL_JOKER,
+  dealFromDeck,
+  hasJokerPair,
+  isJokerValue,
+  levelRankToRankIndex,
+  makeDeck,
+  mulberry32,
+  newShuffledDeck,
+} from '@core'
 import type { Card, Suit, Trump } from '@core'
-import { declareTrump, newGame } from '@app/game'
+import { declareTrump, newGame, reduce } from '@app/game'
 import { HUMAN_SEAT, emptyState } from '@app/state'
 import type { GameState } from '@app/state'
 
@@ -126,6 +138,92 @@ describe('第 1 局抢庄（首个亮主者坐庄）', () => {
     const after = declareTrump(s, 1)
     expect(after.dealer).toBe(1)
     expect(after.levelRank).toBe(LV) // 级牌没被换庄带跑
+  })
+})
+
+describe('抢庄易主时 8 张底牌的移交（v1.3.3 发牌结构回归）', () => {
+  /**
+   * 真实发牌形状：暂定庄家 = AI 座位 1（33 张），人类 25 张。
+   * 旧结构底牌是独立堆、收底时追加给最终庄家；新结构发牌即把 8 张给暂定庄家，
+   * 抢庄易主时必须把这 8 张移交给新庄家，否则新庄家只有 25 张、埋底时少扣 8 张。
+   */
+  function stateWithRealDeal(seed: number): GameState {
+    const deck = newShuffledDeck(mulberry32(seed))
+    const { hands } = dealFromDeck(deck, 1)
+    return {
+      ...emptyState(),
+      phase: 'contract',
+      round: 1,
+      dealer: 1,
+      levelRank: LV,
+      levels: { a: LV, b: LV },
+      forcedNT: false,
+      config: DEFAULT_RULE_CONFIG,
+      hands,
+      bottom: [],
+      revealed: DEAL_TOTAL, // 33 轮发满
+      declarePrompted: true,
+      dealPrompt: false,
+      declareOptions: [],
+    }
+  }
+
+  it('人类抢庄后拿到暂定庄家的 8 张，旁家退回 25 张，总数仍是 108', () => {
+    const s = stateWithRealDeal(7)
+    const humanHand = s.hands[HUMAN_SEAT] as readonly Card[]
+    // 找一门人类真持级牌的花色来亮（种子 7 下人类至少持一门）
+    const suit = ([0, 1, 2, 3] as Suit[]).find((t) =>
+      humanHand.some((c) => c.value === t * 13 + R),
+    )
+    expect(suit, '种子 7：人类应至少持一门级牌').toBeDefined()
+
+    const after = declareTrump(s, suit as Suit)
+    expect(after.dealer).toBe(HUMAN_SEAT) // 抢庄成功
+    expect(after.hands[HUMAN_SEAT] as readonly Card[]).toHaveLength(33) // 25 + 移交的 8 张
+    expect(after.hands[1] as readonly Card[]).toHaveLength(25) // 暂定庄家退回 25 张
+    expect(after.hands.reduce((n, h) => n + h.length, 0)).toBe(108)
+
+    // 移交的正是牌堆最后 8 张（原暂定庄家 slice(25) 的那 8 张，顺序不变）
+    const oldExtra = (s.hands[1] as readonly Card[]).slice(HAND_SIZE)
+    const got = (after.hands[HUMAN_SEAT] as readonly Card[]).slice(HAND_SIZE)
+    expect(got.map((c) => c.id)).toEqual(oldExtra.map((c) => c.id))
+    // 人类整手可见（埋底界面要看全 33 张）
+    expect(after.revealed).toBe(33)
+  })
+
+  it('抢庄移交后埋底：庄家 33 → 25，底牌 8 张', () => {
+    const s = stateWithRealDeal(7)
+    const humanHand = s.hands[HUMAN_SEAT] as readonly Card[]
+    const suit = ([0, 1, 2, 3] as Suit[]).find((t) =>
+      humanHand.some((c) => c.value === t * 13 + R),
+    ) as Suit
+    const after = declareTrump(s, suit)
+    const buried = reduce(after, {
+      type: 'bury',
+      ids: (after.hands[HUMAN_SEAT] as readonly Card[]).slice(0, 8).map((c) => c.id),
+    })
+    expect(buried.hands[HUMAN_SEAT] as readonly Card[]).toHaveLength(25)
+    expect(buried.bottom).toHaveLength(8)
+    expect(buried.phase).toBe('play')
+  })
+
+  it('不抢庄时（第 2 局）不做移交：人类手牌原样，AI 庄家照旧自动扣底', () => {
+    const s: GameState = { ...stateWithRealDeal(7), round: 2 }
+    const humanHand = s.hands[HUMAN_SEAT] as readonly Card[]
+    const suit = ([0, 1, 2, 3] as Suit[]).find((t) =>
+      humanHand.some((c) => c.value === t * 13 + R),
+    ) as Suit
+    const after = declareTrump(s, suit)
+    expect(after.dealer).toBe(1) // 庄家不变
+    // 移交逻辑没被触发：人类手牌一张不差（finishBury 会按牌力重排，故比 id 集合）
+    const ids = (h: readonly Card[]): number[] => h.map((c) => c.id).sort((a, b) => a - b)
+    expect(ids(after.hands[HUMAN_SEAT] as readonly Card[])).toEqual(ids(humanHand))
+    // AI 庄家照旧自动扣底：33 → 25，底牌 8 张
+    expect(after.hands[1] as readonly Card[]).toHaveLength(25)
+    expect(after.bottom).toHaveLength(8)
+    // 埋底后守恒：手牌 100 + 底牌 8 = 108
+    const total = after.hands.reduce((n, h) => n + h.length, 0) + after.bottom.length
+    expect(total).toBe(108)
   })
 })
 

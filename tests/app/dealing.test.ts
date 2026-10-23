@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RULE_CONFIG, makeDeck } from '@core'
+import { DEFAULT_RULE_CONFIG, DEAL_TOTAL, makeDeck } from '@core'
 import type { Card } from '@core'
 import { reduce, startRound } from '@app/game'
 import { emptyState } from '@app/state'
@@ -8,7 +8,8 @@ import type { GameState } from '@app/state'
 /**
  * 逐张发牌 + 摸到级牌时暂停抢亮。
  *
- * 设计要点：`hands` 里始终是完整手牌，`revealed` 只是**展示进度**，
+ * 设计要点：`hands` 里始终是完整手牌，`revealed` 只是**发牌进度**
+ * （全局轮次口径：0..`DEAL_TOTAL` = 33，第 26..33 轮只有庄家得牌），
  * 所以规则判定与已有测试完全不受影响。
  * 中途提示有 10 张的门槛（少于 10 张信息不足，先不打断）。
  */
@@ -88,8 +89,9 @@ describe('逐张发牌', () => {
     expect(s.dealPrompt).toBe(false)
     expect(s.declareOptions).toEqual([])
 
-    while (s.revealed < 25) s = tick(s)
-    expect(s.revealed).toBe(25)
+    // 发满是 33 轮全局口径：第 26..33 轮只有庄家得牌（v1.3.3）
+    while (s.revealed < DEAL_TOTAL) s = tick(s)
+    expect(s.revealed).toBe(DEAL_TOTAL)
     // 这手牌只有 ♥3、没有任何王 ⇒ 无将不可选（v1.2.8）
     expect(s.declareOptions).toEqual([1])
   })
@@ -105,7 +107,7 @@ describe('逐张发牌', () => {
 
   it('一直没摸到级牌、也没有一对王 ⇒ 兜底给无将（否则定主面板全灰卡死）', () => {
     let s = base(null)
-    while (s.revealed < 25) s = tick(s)
+    while (s.revealed < DEAL_TOTAL) s = tick(s)
     expect(s.dealPrompt).toBe(false)
     // 一个花色都亮不了 ⇒ humanDeclareOptions 兜底放行无将，保证玩家还有路可走
     expect(s.declareOptions).toEqual(['NT'])
@@ -114,7 +116,7 @@ describe('逐张发牌', () => {
   it('关闭动画开关 ⇒ 直接发满，不做逐张', () => {
     const s = startRound({ ...emptyState(), animation: false }, 42)
     expect(s.phase).toBe('contract')
-    expect(s.revealed).toBe(25)
+    expect(s.revealed).toBe(DEAL_TOTAL) // 33 轮全局口径（第 26..33 轮庄家独得）
     expect(s.dealPrompt).toBe(false)
   })
 

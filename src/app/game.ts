@@ -12,6 +12,7 @@ import type { AiLevel } from '@ai/policy'
 import type { PlayContext } from '@ai/enumerate'
 import {
   DEFAULT_RULE_CONFIG,
+  DEAL_TOTAL,
   HAND_SIZE,
   RANKS_PER_SUIT,
   TRUMP_POWER_BASE,
@@ -183,12 +184,15 @@ export function startRound(s: GameState, seed: number): GameState {
     counterOptions: [],
     declareOptions: [],
     guardOption: false,
-    // 逐张发牌：动画开启时从 0 张开始渐进揭示，关闭时直接给满
-    revealed: s.animation ? 0 : HAND_SIZE,
+    // 逐张发牌：动画开启时从 0 张开始渐进揭示，关闭时直接给满。
+    // 「满」= DEAL_TOTAL（33 轮全局口径）—— 不能写人类手牌长（非庄家人类只有 25 张，
+    // 那会导致后 8 轮「庄家独得」永远不发，牌堆计数卡在 8，见 core/deal.ts）。
+    revealed: s.animation ? 0 : DEAL_TOTAL,
     declarePrompted: false,
     dealPrompt: false,
     hands: deal.hands.map((h) => h.slice()),
-    bottom: deal.bottom.slice(),
+    // 底牌在埋底时才确定（庄家从 33 张里扣 8 张）—— 发牌时不再单独放一堆
+    bottom: [],
     bottomScore: 0,
     trick: { leader: dealer, plays: [], winner: null },
     tricksDone: 0,
@@ -371,7 +375,9 @@ function dealArbitrate(s: GameState): GameState {
  */
 export function revealTick(s: GameState): GameState {
   if (s.phase !== 'contract' || s.dealPrompt) return s
-  const total = (s.hands[HUMAN_SEAT] as readonly Card[]).length
+  // 全局发牌轮次：第 26..33 轮只有庄家得牌，人类是不是庄家都要发满 33 轮
+  //（否则非庄家人类的视角里，牌堆会永远停在「剩 8 张」）。
+  const total = DEAL_TOTAL
   if (s.revealed >= total) return s
 
   const next: GameState = { ...s, revealed: s.revealed + 1 }
@@ -467,7 +473,8 @@ function emptyBase(): GameState {
     counterOptions: [],
     declareOptions: [],
     guardOption: false,
-    revealed: 25,
+    // 空状态：发牌进度视为已满（DEAL_TOTAL 轮），避免任何「还在发牌」的残留判断
+    revealed: DEAL_TOTAL,
     declarePrompted: true,
     dealPrompt: false,
     levelRank: 2,
@@ -591,8 +598,24 @@ function applyDeclare(s: GameState, seat: Seat, trump: Trump, count: number): Ga
   // 否则会把「打王级」这类由 levelRank 决定的状态冲掉）
   const newLevel = grabDealer ? levelOfDealer(s.levels, newDealer) : s.levelRank
 
+  // 抢庄易主时，把「庄家多拿的 8 张」从暂定庄家移交给新庄家。
+  // 发牌时这 8 张（牌堆最后 8 张）在暂定庄家手上（见 core/deal.ts），
+  // 但底牌必须跟着**最终的庄家**走 —— 不移交的话新庄家只有 25 张，
+  // 埋底时反而少扣 8 张（旁家 25 张 vs 庄家 25 张，牌局直接歪掉）。
+  let hands = s.hands
+  if (newDealer !== s.dealer) {
+    const oldHand = s.hands[s.dealer] as readonly Card[]
+    const extra = oldHand.length > HAND_SIZE ? oldHand.slice(HAND_SIZE) : []
+    hands = hands.map((h, i) => {
+      if (i === s.dealer) return h.slice(0, HAND_SIZE)
+      if (i === newDealer) return [...h, ...extra]
+      return h
+    })
+  }
+
   return {
     ...withStep(s),
+    hands,
     trump,
     trumpDeclarer: seat,
     trumpCount: count,
@@ -601,7 +624,10 @@ function applyDeclare(s: GameState, seat: Seat, trump: Trump, count: number): Ga
     dealer: newDealer,
     levelRank: newLevel,
     forcedNT: newLevel === 18,
-    revealed: HAND_SIZE,
+    // 补满到「人类整手」：庄家 33 张、旁家 25 张 —— 不能写死 25，
+    // 否则庄家定主后最后 8 张永远停在「未揭示」，埋底界面只能看到 25 张。
+    // 必须用上面易主移交后的 hands 算（人类可能就是新庄家）。
+    revealed: (hands[HUMAN_SEAT] as readonly Card[]).length,
     declarePrompted: true,
     dealPrompt: false,
     declareOptions: [],
@@ -700,7 +726,12 @@ function resolveContract(s: GameState): GameState {
   return proceedAfterContract(cur)
 }
 
-/** 定约结束：庄家收底 → 埋底（人类手动 / AI 自动） */
+/**
+ * 定约结束：庄家埋底（人类手动 / AI 自动）。
+ *
+ * 庄家的手牌在**发牌时就是 33 张**（四家各 25 + 庄家多拿 8，见 `core/deal.ts`），
+ * 所以这里没有「收底」这一步 —— 直接把多出来的 8 张交给埋底。
+ */
 function proceedAfterContract(s: GameState): GameState {
   // 定约已生效 ⇒ 三份「可选项」都失效，避免残留到存档里被 UI 误用
   const withTrump: GameState = {
@@ -711,22 +742,17 @@ function proceedAfterContract(s: GameState): GameState {
     guardOption: false,
   }
 
-  // 庄家收底牌 → 33 张
-  const hands = withTrump.hands.map((h) => h.slice())
-  const dealerHand = hands[s.dealer] as Card[]
-  hands[s.dealer] = [...dealerHand, ...withTrump.bottom]
-
   if (s.dealer === HUMAN_SEAT) {
-    return { ...withTrump, hands, phase: 'bury', notice: '你是庄家，选 8 张牌扣底' }
+    return { ...withTrump, phase: 'bury', notice: '你是庄家，选 8 张牌扣底' }
   }
   // AI 庄家自动扣底：留大牌、扣小牌与非分牌
   // 注意用牌力序而非展示序：埋底要留「最强 25 张」，
   // 展示序会把整门 ♥ 排在 ♠ 前面，与强弱无关。
   const ctx = ctxOf({ ...withTrump, levelRank: s.levelRank })
-  const sorted = sortByPowerDesc(hands[s.dealer] as Card[], ctx)
+  const sorted = sortByPowerDesc(withTrump.hands[s.dealer] as Card[], ctx)
   const keep = new Set(sorted.slice(0, HAND_SIZE).map((c) => c.id))
-  const buried = (hands[s.dealer] as Card[]).filter((c) => !keep.has(c.id))
-  return finishBury(withTrump, hands, buried)
+  const buried = (withTrump.hands[s.dealer] as Card[]).filter((c) => !keep.has(c.id))
+  return finishBury(withTrump, withTrump.hands.map((h) => h.slice()), buried)
 }
 
 /**

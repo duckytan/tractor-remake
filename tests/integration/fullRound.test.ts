@@ -83,8 +83,8 @@ describe('IT-01 完整一局', () => {
     s = reduce(s, { type: 'nextRound' })
     expect(s.round).toBe(round + 1)
     expect(s.phase).toBe('contract')
-    expect(s.hands.reduce((n, h) => n + h.length, 0)).toBe(100)
-    expect(s.bottom).toHaveLength(8)
+    expect(s.hands.reduce((n, h) => n + h.length, 0)).toBe(108) // 108 张全派（庄家 33、旁家各 25）
+    expect(s.bottom).toHaveLength(0) // 底牌在埋底时才确定
   })
 
   it('三个种子都能打完（不同牌局）', () => {

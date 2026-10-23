@@ -18,14 +18,16 @@
  */
 
 import { humanDeclareOptions, reduce } from '@app/game'
-import { HAND_SIZE } from '@core'
+import type { Card } from '@core'
 import type { GameState } from '@app/state'
 import type { Trump } from '@core'
 
 export function declareAndPass(s: GameState, trump: Trump): GameState {
-  // 发牌动画没跑完 ⇒ 先当作已发满（这些用例只关心定约结果）
+  // 发牌动画没跑完 ⇒ 先当作已发满（这些用例只关心定约结果）。
+  // 「满」= 人类手牌全长：庄家 33 张、旁家 25 张（底牌不单独分离，见 core/deal.ts）。
+  const humanTotal = (s.hands[0] as readonly Card[]).length
   const ready: GameState =
-    s.phase === 'contract' && s.revealed < HAND_SIZE ? { ...s, revealed: HAND_SIZE } : s
+    s.phase === 'contract' && s.revealed < humanTotal ? { ...s, revealed: humanTotal } : s
 
   const firstDeclare = ready.phase === 'contract' && ready.usedTrumps.length === 0
   const opts = humanDeclareOptions(ready)

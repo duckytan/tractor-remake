@@ -6,7 +6,7 @@ import './ui/styles.css'
 
 import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
-import { checkPlay } from '@core'
+import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
 import { aiCanAct, newGame, reduce } from '@app/game'
 import { clearState, loadPrefs, loadState, savePrefs, saveState } from '@app/persist'
@@ -74,17 +74,18 @@ function scheduleAi(): void {
 /**
  * 逐张发牌：只要还在发、且没有停下来等人决定，就继续下一张。
  * 人类摸到级牌时 `dealPrompt` 会置 true，这里自然停住。
+ *
+ * 总轮数是全局口径 `DEAL_TOTAL`（33）：第 26..33 轮只有庄家得牌，
+ * 人类是不是庄家都要发满 —— 写人类手牌长会让非庄家人类少发 8 轮。
  */
 function scheduleDeal(): void {
   if (dealTimer !== null) return
   if (state.phase !== 'contract') return
-  const total = (state.hands[HUMAN_SEAT] as readonly Card[]).length
-  if (state.revealed >= total || state.dealPrompt) return
+  if (state.revealed >= DEAL_TOTAL || state.dealPrompt) return
   dealTimer = window.setTimeout(() => {
     dealTimer = null
     if (state.phase !== 'contract') return
-    const t = (state.hands[HUMAN_SEAT] as readonly Card[]).length
-    if (state.revealed >= t || state.dealPrompt) return
+    if (state.revealed >= DEAL_TOTAL || state.dealPrompt) return
     state = reduce(state, { type: 'revealTick' })
     afterChange()
   }, DEAL_INTERVAL_MS)

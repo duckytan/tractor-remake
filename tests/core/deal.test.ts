@@ -5,6 +5,7 @@ import {
   buildPowerTable,
   dealFromDeck,
   dealWithGuard,
+  dealtCount,
   groupBySlot,
   hasConsecutivePair,
   maxTrumpPower,
@@ -19,25 +20,67 @@ const buildPower = (mode: 0 | 1, levelRank: LevelRank, trump: Trump) =>
   buildPowerTable({ mode, levelRank, trump })
 
 describe('TC-101 发牌张数与完整性', () => {
-  it('四家各 25 张，底牌 8 张', () => {
+  it('108 张全派完：庄家 33 张，旁家各 25 张（无独立底牌堆）', () => {
     const deck = newShuffledDeck(mulberry32(1))
-    const { hands, bottom } = dealFromDeck(deck, 0)
+    const { hands } = dealFromDeck(deck, 0)
     expect(hands).toHaveLength(4)
-    for (const h of hands) expect(h).toHaveLength(HAND_SIZE)
-    expect(bottom).toHaveLength(BOTTOM_SIZE)
+    expect(hands[0]).toHaveLength(HAND_SIZE + BOTTOM_SIZE) // 庄家
+    for (const seat of [1, 2, 3] as Seat[]) {
+      expect(hands[seat]).toHaveLength(HAND_SIZE)
+    }
+  })
+
+  it('庄家位置随 dealer 变（33 张永远是 dealer 的）', () => {
+    const deck = newShuffledDeck(mulberry32(6))
+    for (const dealer of [0, 1, 2, 3] as Seat[]) {
+      const { hands } = dealFromDeck(deck, dealer)
+      for (const seat of [0, 1, 2, 3] as Seat[]) {
+        expect(hands[seat]).toHaveLength(seat === dealer ? HAND_SIZE + BOTTOM_SIZE : HAND_SIZE)
+      }
+    }
   })
 
   it('108 张牌不重不漏', () => {
     const deck = newShuffledDeck(mulberry32(2))
-    const { hands, bottom } = dealFromDeck(deck, 0)
-    const ids = [...hands.flat(), ...bottom].map((c) => c.id)
+    const { hands } = dealFromDeck(deck, 0)
+    const ids = hands.flat().map((c) => c.id)
     expect(ids).toHaveLength(108)
     expect(new Set(ids).size).toBe(108)
     expect([...ids].sort((a, b) => a - b)).toEqual(Array.from({ length: 108 }, (_, i) => i))
   })
 
+  it('庄家多拿的 8 张是牌堆的最后 8 张（发牌顺序上最后到庄家）', () => {
+    const deck = newShuffledDeck(mulberry32(8))
+    const { hands } = dealFromDeck(deck, 2)
+    const extra = (hands[2] as readonly Card[]).slice(HAND_SIZE)
+    expect(extra.map((c) => c.id)).toEqual(deck.slice(100).map((c) => c.id))
+  })
+
   it('牌堆长度不对时抛错', () => {
     expect(() => dealFromDeck([], 0)).toThrow()
+  })
+})
+
+describe('dealtCount 逐张发牌进度', () => {
+  it('前 25 轮每家各得 1 张（4 × 轮次）', () => {
+    expect(dealtCount(0)).toBe(0)
+    expect(dealtCount(1)).toBe(4)
+    expect(dealtCount(25)).toBe(100)
+  })
+
+  it('第 26 轮起每轮只有庄家得 1 张', () => {
+    expect(dealtCount(26)).toBe(101)
+    expect(dealtCount(30)).toBe(105)
+    expect(dealtCount(33)).toBe(108) // 108 张全派完
+  })
+
+  it('超过 33 轮 clamp 在 108（revealed 补满后不会再涨）', () => {
+    expect(dealtCount(40)).toBe(108)
+    expect(dealtCount(100)).toBe(108)
+  })
+
+  it('与手牌张数口径一致：dealtCount(33) - dealtCount(25) = 庄家多拿的 8 张', () => {
+    expect(dealtCount(HAND_SIZE + BOTTOM_SIZE) - dealtCount(HAND_SIZE)).toBe(BOTTOM_SIZE)
   })
 })
 
@@ -151,8 +194,7 @@ describe('TC-105 重洗上限兜底', () => {
     const r = dealWithGuard(mulberry32(11), 0, { levels: [2, 2], maxAttempts: 0 }, buildPower)
     expect(r.degraded).toBe(true)
     expect(r.attempts).toBe(0)
-    expect(r.hands.flat()).toHaveLength(100)
-    expect(r.bottom).toHaveLength(8)
+    expect(r.hands.flat()).toHaveLength(108)
   })
 })
 
@@ -172,15 +214,16 @@ describe('辅助函数', () => {
   })
 })
 
-describe('TC-107 底牌也受守卫约束（庄家按 33 张校验）', () => {
-  it('庄家 25 + 8 合并后仍无现成连对', () => {
-    // 修复前只校验四家 25 张手牌，底牌 8 张不在校验范围内 ⇒
-    // 庄家是全场唯一可能拿到现成连对的人（docs/15 KN-8）。
+describe('TC-107 庄家 33 张全程受守卫约束', () => {
+  it('庄家发牌即 33 张，且无现成连对', () => {
+    // 修复前（KN-8）只校验四家 25 张手牌，底牌 8 张不在校验范围内 ⇒
+    // 庄家是全场唯一可能拿到现成连对的人。现在庄家发牌时就拿 33 张，
+    // 守卫直接按 33 张校验（core/deal.ts 的 dealWithGuard）。
     const rng = mulberry32(2026)
     const levels: [LevelRank, LevelRank] = [2, 2]
     const dealer = 1
     const r = dealWithGuard(rng, dealer, { levels }, buildPower)
-    const dealerHand = [...(r.hands[dealer] ?? []), ...r.bottom]
+    const dealerHand = r.hands[dealer] ?? []
     expect(dealerHand).toHaveLength(33)
     for (const mode of [0, 1] as const) {
       for (const level of levels) {
@@ -198,7 +241,7 @@ describe('TC-107 底牌也受守卫约束（庄家按 33 张校验）', () => {
     const levels: [LevelRank, LevelRank] = [2, 3]
     for (const seed of [1, 7, 42, 99, 2026, 31337]) {
       const r = dealWithGuard(mulberry32(seed), 2, { levels }, buildPower)
-      const dealerHand = [...(r.hands[2] ?? []), ...r.bottom]
+      const dealerHand = r.hands[2] ?? []
       for (const mode of [0, 1] as const) {
         for (const level of levels) {
           for (const trump of [0, 1, 2, 3] as Trump[]) {

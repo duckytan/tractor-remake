@@ -9,7 +9,7 @@
  */
 
 import type { Card, LevelRank, Play, PlayResult, RuleConfig, Seat, Trump } from '@core'
-import { GUARD_NEED, checkPlay, teamOf } from '@core'
+import { DEAL_TOTAL, DECK_SIZE, GUARD_NEED, checkPlay, dealtCount, teamOf } from '@core'
 import type { AiLevel } from '@ai/policy'
 import type { Action, CardSize, GameState } from '@app/state'
 import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
@@ -277,9 +277,9 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const full = (s.hands[HUMAN_SEAT] as readonly Card[]).length
     // 逐张发牌期间「手上几张」按已发到的算，别一上来就写 25
     const held = s.phase === 'contract' ? Math.min(full, s.revealed) : full
-    // 牌堆：100 张发给四家（每家 25），另 8 张底牌开局就已扣下、不参与逐张发牌。
-    // 它同时是发牌飞行轨迹的起点（见 ui/dealFly.ts），发完即消失。
-    const left = Math.max(0, 100 - s.revealed * 4)
+    // 牌堆：108 张全部派完 —— 前 25 轮每家各得 1 张，第 26 轮起每轮只有庄家得 1 张
+    //（庄家共 33 张）。它同时是发牌飞行轨迹的起点（见 ui/dealFly.ts），发完即消失。
+    const left = Math.max(0, DECK_SIZE - dealtCount(s.revealed))
     const deck =
       s.phase === 'contract' && left > 0
         ? `<div class="deck" data-slot="deck" aria-hidden="true">
@@ -394,7 +394,9 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       ov.innerHTML = logPanel(s)
     } else if (s.phase === 'contract') {
       const totalHand = (s.hands[HUMAN_SEAT] as readonly Card[]).length
-      const stillDealing = s.revealed < totalHand
+      // 全局发牌轮次口径：第 26..33 轮只有庄家得牌，非庄家人类也要等这 8 轮
+      // 发完才弹定主面板（否则牌还在飞，面板先出来了）。
+      const stillDealing = s.revealed < DEAL_TOTAL
       if (stillDealing && !s.dealPrompt) {
         // 正在逐张发牌且还没到该决定的时候 —— 不弹面板，把牌桌让出来
         ov.innerHTML = ''
@@ -410,7 +412,8 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       const stateText = countering
         ? ` · 当前主 <b>${trumpLabel(s.trump)}</b> · <b>${s.trumpCount}</b> 张`
         : stillDealing
-          ? ` · 已发 <b>${s.revealed}</b> / ${totalHand} 张，摸到级牌可以先抢`
+          ? // 「已发」按人类自己的到手张数算（第 26..33 轮是庄家独得，人类不涨）
+            ` · 已发 <b>${Math.min(s.revealed, totalHand)}</b> / ${totalHand} 张，摸到级牌可以先抢`
           : ''
       // 无将按钮为什么是灰的：只在「发完后首次定主」的面板上解释。
       // 中途面板（stillDealing）本来就不列无将，反主面板也不列，说这句反而误导。

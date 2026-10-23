@@ -57,8 +57,11 @@ describe('冒烟 · app 装配可用', () => {
     const s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 42)
     expect(s.phase).toBe('contract')
     expect(s.hands).toHaveLength(4)
-    expect(s.bottom).toHaveLength(8)
-    expect(s.hands[s.dealer] as readonly Card[]).toHaveLength(25)
+    // 108 张全派：庄家 33 张（25 + 将来的 8 张底牌）、旁家各 25 张，
+    // 底牌在埋底时才确定（v1.3.3 起发牌结构改为「全派 + 庄家多拿 8 张」）
+    expect(s.bottom).toHaveLength(0)
+    expect(s.hands[s.dealer] as readonly Card[]).toHaveLength(33)
+    expect(s.hands.reduce((n, h) => n + h.length, 0)).toBe(108)
   })
 
   it('定主 → 埋底 → 出牌 能一路推进', () => {
@@ -67,7 +70,7 @@ describe('冒烟 · app 装配可用', () => {
     expect(['play', 'bury']).toContain(s.phase)
     if (s.phase === 'bury') {
       const hand = s.hands[s.dealer] as readonly Card[]
-      expect(hand).toHaveLength(33) // 收了 8 张底牌
+      expect(hand).toHaveLength(33) // 发牌时庄家就多拿 8 张（= 将来的底牌）
       s = reduce(s, { type: 'bury', ids: hand.slice(0, 8).map((c) => c.id) })
     }
     expect(s.phase).toBe('play')

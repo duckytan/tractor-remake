@@ -9,6 +9,7 @@ import type { GameState } from './state'
 import { STATE_VERSION } from './state'
 import type { CardSize } from './state'
 import { DEFAULT_RULE_CONFIG, HAND_SIZE } from '@core'
+import type { Card } from '@core'
 import type { RuleConfig } from '@core'
 import type { AiLevel } from '@ai/policy'
 
@@ -167,8 +168,12 @@ export function loadState(): GameState | null {
       counterPending: o.counterPending === true,
       counterOptions: Array.isArray(o.counterOptions) ? o.counterOptions : [],
       declareOptions: Array.isArray(o.declareOptions) ? o.declareOptions : [],
-      // 发牌进度是瞬时状态：读档一律视为「已发完」，避免卡在半副牌
-      revealed: HAND_SIZE,
+      // 发牌进度是瞬时状态：读档一律视为「已发完」。「已发完」= 人类手牌全长
+      //（庄家 33 张、旁家 25 张 —— 底牌不单独分离，见 core/deal.ts），
+      // 写死 25 会把庄家的最后 8 张切掉、埋底界面只显示 25 张。
+      revealed: Array.isArray(o.hands[0])
+        ? (o.hands[0] as readonly Card[]).length
+        : HAND_SIZE,
       declarePrompted: true,
       dealPrompt: false,
       // 体验项由 Prefs 覆盖（见 main.ts），这里只做形状兜底

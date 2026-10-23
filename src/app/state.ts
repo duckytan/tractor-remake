@@ -17,10 +17,17 @@ import type {
   SettleResult,
   Trump,
 } from '@core'
-import { DEFAULT_RULE_CONFIG, buildPowerTable } from '@core'
+import { DEFAULT_RULE_CONFIG, DEAL_TOTAL, buildPowerTable } from '@core'
 
 /** 状态结构版本。改动 GameState 形状时 +1，旧存档自动作废 */
-export const STATE_VERSION = 2
+/**
+ * 存档格式版本（游戏局内状态，与 prefs 的 PREFS_VERSION 是两套）。
+ *
+ * v2 → v3（v1.3.3）：发牌结构改变 —— 底牌不再在发牌时单独分离，
+ * 庄家直接拿 33 张（四家各 25 + 庄家多拿 8）。旧存档的 `hands`/`bottom`
+ * 形状与新代码不兼容（旧档庄家 25 张 + bottom 8 张），一律拒绝读档、开新局。
+ */
+export const STATE_VERSION = 3
 export const HUMAN_SEAT: Seat = 0
 
 export type Phase = 'contract' | 'bury' | 'play' | 'settle' | 'over'
@@ -78,9 +85,10 @@ export interface GameState {
    */
   readonly guardOption: boolean
   /**
-   * 已「发到手上」的牌数（0..25）。**纯展示进度**：
-   * `hands` 里始终是完整的 25 张，UI 只渲染前 `revealed` 张。
-   * 这样做是为了让「逐张发牌」不影响任何规则判定与已有测试。
+   * 发牌进度（0..`DEAL_TOTAL`，**全局轮次口径**，与人类是不是庄家无关）。
+   * 前 25 轮每家各得 1 张，第 26..33 轮只有庄家得 1 张。
+   * `hands` 里始终是完整手牌（庄家 33 张、旁家 25 张），UI 与亮主校验
+   * 按「已揭示前缀」消费它；牌堆计数走 `dealtCount`（见 core/deal.ts）。
    */
   readonly revealed: number
   /** 中途暂停提示是否已触发过（人类第一次摸到级牌时置 true，只触发一次） */
@@ -226,7 +234,8 @@ export const emptyState = (): GameState => ({
   counterOptions: [],
   declareOptions: [],
   guardOption: false,
-  revealed: 25,
+  // 空状态：发牌进度视为已满（33 轮全部发完）
+  revealed: DEAL_TOTAL,
   declarePrompted: true,
   dealPrompt: false,
   levelRank: 2,
