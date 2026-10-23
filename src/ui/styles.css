@@ -603,13 +603,15 @@ html, body {
 
 /* ---------- 纵向空间不足：历史小牌让位 ---------- */
 /* v1.2.3：PAST_DEPTH 由 3 提到 5，这两道裁剪跟着放宽一档，
-   否则「留 5 墩」在 1080p 以下的窗口里实际只能看到 1~2 墩，等于白改。 */
-
+   否则「留 5 墩」在 1080p 以下的窗口里实际只能看到 1~2 墩，等于白改。
+   v1.3.5：裁剪方向改为**保留最新的几墩**（nth-child(-n+k) 藏最旧的 k 组）——
+   小组 DOM 顺序是旧→新，原先 nth-child(n+k) 把最新的一组正好藏掉，
+  玩家刚打完的墩在矮屏上反而看不见。 */
 @media (max-height: 820px) {
-  .plays__past .past__trick:nth-child(n + 4) { display: none; }
+  .plays__past .past__trick:nth-child(-n + 2) { display: none; }
 }
 @media (max-height: 760px) {
-  .plays__past .past__trick:nth-child(n + 3) { display: none; }
+  .plays__past .past__trick:nth-child(-n + 3) { display: none; }
 }
 
 /* ---------- 设置 / 记录弹层 ---------- */

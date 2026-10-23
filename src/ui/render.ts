@@ -34,7 +34,7 @@ const SEAT_CLASS: Record<Seat, string> = { 0: 'center', 1: 'west', 2: 'north', 3
 const PAST_DEPTH = 5
 /** 历史小牌宽度占卡宽的比例（M 档 150 × 0.24 = 36px。
  *  v1.3.4：0.16（24px）用户反馈「牌太小了看不清」—— 24px 的牌 Rank/花色基本不可读，提到 36px） */
-const TINY_RATIO = 0.24
+const TINY_RATIO = 0.32
 /** 已出牌宽度占卡宽的比例：正常 0.56（M 档 84px），矮屏 0.44（66px） */
 const PLAYED_RATIO = 0.56
 const PLAYED_RATIO_SHORT = 0.44
