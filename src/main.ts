@@ -13,7 +13,7 @@ import { clearState, loadPrefs, loadState, savePrefs, saveState } from '@app/per
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
 import { HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
-import { render } from '@ui/render'
+import { refitHand, render } from '@ui/render'
 import { trackDealAnimation } from '@ui/dealFly'
 
 const root = document.getElementById('app')
@@ -223,6 +223,21 @@ window.addEventListener('keydown', (ev) => {
   } else if (ev.key === 'h' || ev.key === 'H') {
     hint()
   }
+})
+
+/* 窗口尺寸变化：重算手牌重叠率与花色分组间隔。
+ *
+ * fitHand 的结果是写在 `.hand` 上的内联 CSS 变量，只在 paint 时算一次。
+ * 改牌面尺寸会重新 paint（所以 S/M/L 切换没问题），但拖动窗口大小不会 ——
+ * 从窄窗口拉宽后手牌会沿用旧宽度算出的重叠率，挤成一团、分组间隔也停在旧值，
+ * 看上去就像「花色间隔消失了」。这里只改 CSS 变量，不重建 DOM。 */
+let resizeTimer: number | null = null
+window.addEventListener('resize', () => {
+  if (resizeTimer !== null) window.clearTimeout(resizeTimer)
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = null
+    refitHand(root as HTMLElement)
+  }, 120)
 })
 
 paint()

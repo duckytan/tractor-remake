@@ -39,6 +39,21 @@ const PLAYED_RATIO = 0.56
 const PLAYED_RATIO_SHORT = 0.44
 /** 花色分组间隔占卡宽的比例（与 CSS 的 --suit-gap 保持一致） */
 const SUIT_GAP_RATIO = 0.2
+/**
+ * 分组间隔的压缩下限（占卡宽）。
+ *
+ * 空间不够时间隔可以缩，但**不能缩到 0** —— 缩到 0 就等于没有分组。
+ * v1.2.9 之前这里走的是「放不下就降级成写死的 6px，再放不下就 0」，
+ * 结果 M 档（6px = 卡宽 4%）和 L 档（0px）的花色间隔彻底看不见，
+ * 只有 S 档因为手牌窄、够放而侥幸保留了 24px。见 docs/14 §2.1。
+ */
+const SUIT_GAP_MIN_RATIO = 0.08
+/** 手牌重叠步长上限：每张露出 58% 卡宽 */
+const HAND_STEP_MAX = 0.58
+/** 手牌重叠步长下限：左上角标约占卡宽 24%（「10」这种两位数最宽），再压就开始切字 */
+const HAND_STEP_MIN = 0.28
+/** 极端拥挤时步长的硬下限：宁可切掉角标的一个数字，也不让手牌横向溢出整张牌 */
+const HAND_STEP_HARD_MIN = 0.18
 /** 侧家（西/东）竖向牌背最多显示几张 —— 竖向更吃高度，比北家的 13 少 */
 const SIDE_SHOW = 10
 /**
@@ -344,7 +359,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
 
     // 手牌重叠率按容器宽度反算（分组间隔一起计入），保证任意张数都铺得下且角标可见
     // 花色分组间隔 = 卡宽的 20%（与 CSS 的 --suit-gap 同源，避免两处各写一个数）
-    fitHand(hand, items.length, gapCountOf(items), Math.round(cardW * SUIT_GAP_RATIO))
+    fitHand(hand, items.length, gapCountOf(items))
   }
 
   /* ---- 手牌操作条 ---- */
@@ -684,33 +699,96 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
+export interface HandFit {
+  /** 花色分组间隔（px，已取整） */
+  readonly gap: number
+  /** 每张牌前进的比例（× 卡宽）；1 = 完全不重叠 */
+  readonly step: number
+}
+
 /**
- * 按容器宽度反算手牌重叠率。
- * step = 每张牌前进的比例；下限 0.3 保证角标（占 0.3 卡宽）能露出来。
+ * 手牌排布求解：给定可用宽度与卡宽，算出「分组间隔」和「重叠步长」。
  *
- * 分组间隔会额外吃掉 `gapCount * gapPx` 的横向空间，必须一起算进来，
- * 否则 25 张牌会溢出容器。空间不够时按三档降级：14px → 6px → 刚好放得下的余量。
+ * 抽成纯函数是为了能单测（`tests/ui/handFit.test.ts`）—— 这里出过两次回归，
+ * 而且都是「某个档位下间隔悄悄变成 0」这种只有肉眼才能发现的形态。
+ *
+ * 两个量都乘卡宽（比例），所以换 S/M/L 档位时观感一致 —— 这是 v1.2.1 定下的规矩。
+ *
+ * **优先级：间隔 > 步长**。旧实现反过来（先保步长、间隔当余量牺牲），
+ * 于是卡越大手牌越宽，间隔就越先被牺牲掉，最后 M/L 档彻底没有分组。
+ * 现在的顺序是：
+ *   ① 按理想间隔（卡宽 20%）算步长，放得下就两全；
+ *   ② 放不下 → 步长压到 `HAND_STEP_MIN`（角标仍可读），间隔按剩余空间等比例缩，
+ *      但保底 `SUIT_GAP_MIN_RATIO`；
+ *   ③ 连保底间隔都还溢出 → 让步长继续下探到 `HAND_STEP_HARD_MIN`，
+ *      宁可把角标切掉一点，也不让手牌横向溢出（溢出会被 .felt 的 overflow:hidden 裁掉整张牌）。
  */
-function fitHand(hand: HTMLElement, count: number, gapCount: number, gapPx: number): void {
+export function solveHandFit(
+  avail: number,
+  cardW: number,
+  count: number,
+  gapCount: number,
+): HandFit {
+  if (count <= 1 || !avail || !cardW) return { gap: 0, step: HAND_STEP_MAX }
+
+  const steps = count - 1
+  const gapMax = cardW * SUIT_GAP_RATIO
+  const gapMin = cardW * SUIT_GAP_MIN_RATIO
+  /** 没有分组间隔时没有「保角标」的包袱，可以压得更紧 */
+  const stepFloor = gapCount > 0 ? HAND_STEP_MIN : 0.3
+
+  let gap = gapMax
+  let step = (avail - cardW - gapCount * gap) / (steps * cardW)
+
+  if (step < stepFloor) {
+    step = stepFloor
+    if (gapCount > 0) {
+      // ② 步长到底，间隔按剩余空间等比例缩（不高于理想值、不低于保底值）
+      const room = avail - cardW - step * steps * cardW
+      gap = Math.max(gapMin, Math.min(gapMax, room / gapCount))
+    } else {
+      // 整手牌只有一个分组：没有间隔可让，全部余量都留给步长
+      gap = 0
+    }
+    // ③ 仍然放不下 ⇒ 让步长继续下探（间隔已经压到底了）
+    const overflow = cardW + step * steps * cardW + gapCount * gap - avail
+    if (overflow > 0.5) {
+      step = Math.max(HAND_STEP_HARD_MIN, (avail - cardW - gapCount * gap) / (steps * cardW))
+    }
+  }
+
+  // gapCount = 0 时没有分组，间隔值无意义，统一归零（别把理想值原样传出去）
+  return { gap: gapCount > 0 ? Math.round(gap) : 0, step: Math.min(HAND_STEP_MAX, step) }
+}
+
+/** 把求解结果写到 `.hand` 的 CSS 变量上（DOM 侧只做这一件事） */
+function fitHand(hand: HTMLElement, count: number, gapCount: number): void {
   if (count <= 1) return
   const cardW = hand.firstElementChild
     ? (hand.firstElementChild as HTMLElement).getBoundingClientRect().width
     : 92
   const avail = hand.clientWidth
   if (!avail || !cardW) return
-  const MIN_STEP = gapCount > 0 ? 0.28 : 0.3
-  /** 未夹紧的重叠率：< MIN_STEP 说明这个间隔放不下 */
-  const raw = (gap: number): number => (avail - cardW - gapCount * gap) / ((count - 1) * cardW)
-  let gap = gapPx
-  if (gapCount > 0 && raw(gap) < MIN_STEP) gap = 6
-  if (gapCount > 0 && raw(gap) < MIN_STEP) {
-    // 还是放不下：把间隔压到「刚好还能放下」，宁可变窄也不溢出容器
-    const room = avail - cardW - MIN_STEP * (count - 1) * cardW
-    gap = Math.max(0, Math.min(gap, Math.floor(room / gapCount)))
-  }
-  const step = Math.min(0.58, Math.max(MIN_STEP, raw(gap)))
+
+  const { gap, step } = solveHandFit(avail, cardW, count, gapCount)
   hand.style.setProperty('--hand-gap', `${gap}px`)
   hand.style.setProperty('--hand-step', step.toFixed(3))
+}
+
+/**
+ * 窗口尺寸变化后重算手牌重叠率。
+ *
+ * `fitHand` 只在 paint 时跑一次，把结果写成 `.hand` 上的内联 CSS 变量。
+ * 之后改窗口大小不会重新 paint（改牌面尺寸会），内联值就留在旧宽度算出来的数上 ——
+ * 从窄窗口拉宽后手牌会挤成一团、分组间隔也停在旧值，看着就像「间隔消失了」。
+ * 这里只改 CSS 变量、不重建 DOM，代价可以忽略。
+ */
+export function refitHand(root: HTMLElement): void {
+  const hand = root.querySelector<HTMLElement>('[data-slot="hand"]')
+  if (!hand) return
+  const count = hand.querySelectorAll('.card').length
+  if (count <= 1) return
+  fitHand(hand, count, hand.querySelectorAll('.card--gap').length)
 }
 
 /**

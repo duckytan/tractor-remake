@@ -14,7 +14,8 @@
 
   /** 选中手牌抬起量 = 卡高的 10% */
   --sel-raise: calc(var(--card-h) * 0.1);
-  /** 花色分组之间的间隔 = 卡宽的 20% */
+  /** 花色分组之间的间隔 = 卡宽的 20%
+   *  （手牌上的实际值由 fitHand 按可用宽度写内联变量覆盖，压缩区间 8%~20%，见 render.ts） */
   --suit-gap: calc(var(--card-w) * 0.2);
   /** 出牌区 / 历史牌之间的小间隔 = 卡宽的 4%（M 档 = 6px） */
   --play-gap: calc(var(--card-w) * 0.04);
@@ -325,7 +326,9 @@ html, body {
   min-height: calc(var(--card-h) + var(--sel-raise));
   padding: var(--sel-raise) 0 2px;
   --hand-step: 0.58;
-  /* 花色分组间隔 = 卡宽的 20% */
+  /* 花色分组间隔 = 卡宽的 20%。
+     这两个变量都是「默认值」：fitHand 每次 paint 会按容器可用宽度重算并写成内联变量覆盖，
+     间隔的压缩下限是卡宽 8%（不能归零，归零就等于没有分组）。 */
   --hand-gap: var(--suit-gap);
 }
 .hand .card + .card { margin-left: calc(var(--card-w) * (var(--hand-step) - 1)); }
