@@ -8,6 +8,49 @@
 
 ---
 
+## [1.3.2] - 2026-10-23
+
+> 三司会审的后续缺口清理：甩牌裁剪不再误导、覆盖率口径补全、分层文档矛盾消除。
+
+### 修复
+
+**甩牌被裁剪时不再显示「✓ 可以出」**（`src/ui/render.ts`、`src/ui/styles.css`）
+
+`checkPlay` 的 `PlayResult` 有三种形态，其中「甩牌失败被裁剪」也是 `ok: true`。
+旧 UI 只看 `result.ok`，于是玩家选 6 张甩牌看到绿色的「✓ 可以出」，
+点下去却只掉最小的那一组（2 张）——观感像 bug。现在把「PlayResult → 徽标」
+的映射抽成导出纯函数 `legalityBadgeOf()`，三分支各自表态：
+
+| 形态 | 徽标 |
+|---|---|
+| 直接合法 | 绿色「✓ 可以出」 |
+| 甩牌失败被裁剪 | 琥珀色「⚠ {原因}（将只出 N 张）」 |
+| 不合法 | 红色「✕ {原因}」 |
+
+新增 `.legality.is-warn` 样式；`tests/ui/legalityBadge.test.ts` 4 例锁定三分支与转义。
+
+### 改进
+
+- **覆盖率口径补全**（`vitest.config.ts`）：coverage 从只统计 `src/core` 扩为
+  core / app / ai / ui 四层。原口径下 app 与 ai 的覆盖率不可见，门槛形同虚设。
+  门槛按 2026-10-23 实测值分层设定（core 98 / ai 93 / app 84 / ui 12 / 全局 70，
+  实测值与依据写在该文件注释里）；QA 已实证门槛真实生效（临时调到 99 会被拦）。
+- **发牌期间不再每 tick 重写 prefs**（`src/main.ts`）：`afterChange` 原先每次调用都
+  无条件写 localStorage 两个键，发牌动画期间每 55ms 一次、prefs 内容完全相同。
+  现加序列化脏检查，内容不变跳过；首次与设置变更后保证落盘。
+
+### 文档
+
+- `docs/03` §3.1 分层契约澄清：铁律是「UI 不得自己实现规则计算」，
+  而非「UI 不 import core」——原表述与 `docs/08` RISK-04 的应对
+  （「UI 只能调用 checkPlay 的结果」）及 `src/ui/render.ts:12` 的实际 import
+  互相矛盾，以此条为准。
+
+### 测试
+
+`tests/ui/legalityBadge.test.ts` 新增 4 例。全量 **24 文件 / 296 例**通过，
+`tsc --noEmit` 零错误，`npm run test:cov` exit 0。
+
 ## [1.3.0] - 2026-10-23
 
 > 手牌排序：副牌三门改为**红黑相间**，相邻花色段一眼能分开。

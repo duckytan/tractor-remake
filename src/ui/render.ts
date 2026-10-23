@@ -8,7 +8,7 @@
  * pastPlaysView），不出现 power / 主牌判定等规则概念。
  */
 
-import type { Card, LevelRank, Play, RuleConfig, Seat, Trump } from '@core'
+import type { Card, LevelRank, Play, PlayResult, RuleConfig, Seat, Trump } from '@core'
 import { GUARD_NEED, checkPlay, teamOf } from '@core'
 import type { AiLevel } from '@ai/policy'
 import type { Action, CardSize, GameState } from '@app/state'
@@ -540,10 +540,30 @@ function legalityBadge(s: GameState): string {
     opponents: [1, 2, 3].map((x) => s.hands[x] as readonly Card[]),
   })
 
-  if (result.ok) {
-    return `<span class="legality is-ok">✓ 可以出</span>`
+  return legalityBadgeOf(result)
+}
+
+/**
+ * PlayResult → 徽标 HTML 的映射。
+ *
+ * 抽成导出纯函数是为了让 node 环境的 vitest 能直接测三分支，
+ * 不必构造整个 GameState（docs/08 RISK-04：UI 只原样消费 core 的结果）。
+ *
+ * 三分支：
+ *   - 直接合法            → 绿色「✓ 可以出」
+ *   - 甩牌失败被裁剪      → 琥珀色警告：明确告知只会出 N 张。
+ *     不警告的话，玩家选 6 张甩牌看到「可以出」，点下去只掉最小的 2 张，
+ *     观感像 bug（ADR-008 的 UI 侧配套）。
+ *   - 不合法              → 红色「✕ 原因」
+ */
+export function legalityBadgeOf(result: PlayResult): string {
+  if (!result.ok) {
+    return `<span class="legality is-bad">✕ ${escapeHtml(result.detail)}</span>`
   }
-  return `<span class="legality is-bad">✕ ${escapeHtml(result.detail)}</span>`
+  if (result.adjusted) {
+    return `<span class="legality is-warn">⚠ ${escapeHtml(result.detail)}（将只出 ${result.cards.length} 张）</span>`
+  }
+  return `<span class="legality is-ok">✓ 可以出</span>`
 }
 
 /** 设置面板（FR-18） */

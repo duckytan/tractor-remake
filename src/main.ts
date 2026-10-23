@@ -12,6 +12,7 @@ import { aiCanAct, newGame, reduce } from '@app/game'
 import { clearState, loadPrefs, loadState, savePrefs, saveState } from '@app/persist'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
+import type { Prefs } from '@app/persist'
 import { HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { refitHand, render } from '@ui/render'
 import { trackDealAnimation } from '@ui/dealFly'
@@ -89,9 +90,26 @@ function scheduleDeal(): void {
   }, DEAL_INTERVAL_MS)
 }
 
+/**
+ * 上次成功写入 localStorage 的 prefs 序列化串。
+ *
+ * 发牌动画期间 afterChange 每 55ms 触发一次（revealTick），而 prefs 的
+ * 九个字段在此期间完全相同 —— 每 tick 重写一遍 localStorage 纯浪费。
+ * 首调用时缓存为空串，必然与首份 prefs 不同 ⇒ 首次一定落盘。
+ */
+let lastPrefsSerialized = ''
+
+/** prefs 内容与上次成功写入一致时跳过写盘（state 仍然每次全写） */
+function savePrefsIfChanged(p: Prefs): void {
+  const serialized = JSON.stringify(p)
+  if (serialized === lastPrefsSerialized) return
+  lastPrefsSerialized = serialized
+  savePrefs(p)
+}
+
 function afterChange(): void {
   saveState(state)
-  savePrefs({
+  savePrefsIfChanged({
     aiLevelPartner: state.aiLevelPartner,
     aiLevelOpponent: state.aiLevelOpponent,
     aiSpeedMs: state.aiSpeedMs,

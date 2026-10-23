@@ -765,3 +765,5 @@ html, body {
 }
 .legality.is-ok { background: rgba(29, 158, 117, 0.18); color: #7fe0bd; }
 .legality.is-bad { background: rgba(200, 70, 70, 0.24); color: #ffc4c4; }
+/* 甩牌失败被裁剪：合法，但只会出其中一小部分 —— 琥珀色警示，别让玩家误以为全出 */
+.legality.is-warn { background: rgba(210, 160, 60, 0.2); color: #ffd98a; }

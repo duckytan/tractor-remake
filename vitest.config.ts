@@ -33,19 +33,65 @@ export default defineConfig({
 
     coverage: {
       provider: 'v8',
-      // 只统计规则引擎；UI 与 AI 不纳入覆盖率门槛
-      include: ['src/core/**/*.ts'],
+      // 统计四层源码（2026-10-23 修订：三司会审指出原口径只含 core，
+      // app / ai / ui 的覆盖率不可见，门槛形同虚设）。ui 渲染代码难测，
+      // 给低档位但纳入统计。
+      include: [
+        'src/core/**/*.ts',
+        'src/app/**/*.ts',
+        'src/ai/**/*.ts',
+        'src/ui/**/*.ts',
+      ],
       exclude: [
-        'src/core/**/*.test.ts',
+        'src/**/*.test.ts',
         // types.ts 只有类型声明，编译后不产生代码
         'src/core/types.ts',
       ],
-      // 低于门槛直接失败（NFR-05 / 05-测试计划 §6）
+      // 低于门槛直接失败（NFR-05 / 05-测试计划 §6）。
+      //
+      // 门槛依据 2026-10-23 实测（296 个用例，v8 provider）：
+      //   全局   statements 71.79 / branches 89.18 / functions 80.20 / lines 71.79
+      //   core   99.53 / 97.05 / 98.30 / 99.53
+      //   ai     95.97 / 90.41 / 89.28 / 95.97
+      //   app    87.03 / 78.63 / 91.89 / 87.03
+      //   ui     14.71 / 100   /  9.67 / 14.71（DOM 渲染，vitest node 环境基本覆盖不到）
+      // 各层门槛 = 实测下浮 2~5 个百分点：既留出小改动的余量，又保留约束力。
+      // ui 特别低是渲染代码的本质决定的（纯 DOM 操作，无单测环境），见
+      // tests/ui/handFit.test.ts 的思路：只把可纯测的几何计算抽出来测。
       thresholds: {
-        lines: 90,
-        branches: 85,
-        functions: 90,
-        statements: 90,
+        // 全局（四层合计）
+        statements: 70,
+        branches: 88,
+        functions: 79,
+        lines: 70,
+        // 规则引擎：接近全覆盖，保持高门槛
+        'src/core/**/*.ts': {
+          statements: 98,
+          branches: 94,
+          functions: 95,
+          lines: 98,
+        },
+        // AI 策略
+        'src/ai/**/*.ts': {
+          statements: 93,
+          branches: 86,
+          functions: 85,
+          lines: 93,
+        },
+        // 装配层（persist 的 localStorage 分支在 node 环境天然测不到，是主要缺口）
+        'src/app/**/*.ts': {
+          statements: 84,
+          branches: 75,
+          functions: 88,
+          lines: 84,
+        },
+        // 渲染层：低档位，仅防「整个文件一行不跑」的回退
+        'src/ui/**/*.ts': {
+          statements: 12,
+          branches: 95,
+          functions: 8,
+          lines: 12,
+        },
       },
     },
   },
