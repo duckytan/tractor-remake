@@ -128,7 +128,9 @@ export function startRound(s: GameState, seed: number): GameState {
   const deal = dealWithGuard(
     rngFor(seed, 1),
     dealer,
-    { levels: [s.levels.a, s.levels.b], mode: config.twoAsPermanent ? 1 : 0 },
+    // 注意：这里不传「2 为常主」开关 —— 发牌守卫内部对 mode 0/1 两种牌力表**双跑**，
+    // 因为定主前主牌未定，任何一家在任何可能的定约下都不该拿到现成拖拉机（见 core/deal.ts）。
+    { levels: [s.levels.a, s.levels.b] },
     buildPower,
   )
 
@@ -522,9 +524,12 @@ function humanDeclareOptions(s: GameState): Trump[] {
  * AI 是否愿意反主。
  * 除了「持新花色级牌」这条硬条件，再加一个「该花色至少 5 张」的门槛 ——
  * 否则只要摸到一张别门级牌就无脑反，人类每局都被反，体验很差。
+ *
+ * 只收 `Suit` —— 没有「反成无将」这个选项：`canCounter` 对 `newTrump === 'NT'`
+ * 恒返回 false（无将没有级牌可依），所以候选清单里本来就不该出现 `'NT'`。
+ * （旧代码里有一个 `if (newTrump === 'NT') return true` 分支，永远走不到，v1.2.7 删掉。）
  */
-function aiWantsCounter(hand: readonly Card[], newTrump: Trump): boolean {
-  if (newTrump === 'NT') return true
+function aiWantsCounter(hand: readonly Card[], newTrump: Suit): boolean {
   const n = hand.filter((c) => suitOfValue(c.value) === newTrump).length
   return n >= 5
 }
@@ -602,7 +607,7 @@ function resolveContract(s: GameState): GameState {
       const hand = cur.hands[seat] as readonly Card[]
       // ① 反主
       const sameTeam = cur.trumpDeclarer !== null && teamOf(seat) === teamOf(cur.trumpDeclarer)
-      const pick = ([0, 1, 2, 3, 'NT'] as Trump[]).find(
+      const pick = ([0, 1, 2, 3] as Suit[]).find(
         (t) =>
           canCounter({
             hand,

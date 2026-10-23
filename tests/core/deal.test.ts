@@ -91,7 +91,7 @@ describe('TC-105/106 发牌约束（禁止天然连对）', () => {
   it('产出的牌局在 16 种牌力表下都没有现成连对', () => {
     const rng = mulberry32(2026)
     const levels: [LevelRank, LevelRank] = [2, 2]
-    const { hands } = dealWithGuard(rng, 0, { levels, mode: 0 }, buildPower)
+    const { hands } = dealWithGuard(rng, 0, { levels }, buildPower)
     for (const mode of [0, 1] as const) {
       for (const level of levels) {
         for (const trump of [0, 1, 2, 3] as Trump[]) {
@@ -106,15 +106,15 @@ describe('TC-105/106 发牌约束（禁止天然连对）', () => {
 
   it('重洗次数被记录，且通常很快通过', () => {
     const rng = mulberry32(7)
-    const r = dealWithGuard(rng, 0, { levels: [2, 3], mode: 0 }, buildPower)
+    const r = dealWithGuard(rng, 0, { levels: [2, 3] }, buildPower)
     expect(r.attempts).toBeGreaterThanOrEqual(0)
     expect(r.degraded).toBe(false)
     expect(r.attempts).toBeLessThan(50)
   })
 
   it('同种子可复现', () => {
-    const a = dealWithGuard(mulberry32(99), 1, { levels: [2, 2], mode: 0 }, buildPower)
-    const b = dealWithGuard(mulberry32(99), 1, { levels: [2, 2], mode: 0 }, buildPower)
+    const a = dealWithGuard(mulberry32(99), 1, { levels: [2, 2] }, buildPower)
+    const b = dealWithGuard(mulberry32(99), 1, { levels: [2, 2] }, buildPower)
     expect(a.hands.map((h) => h.map((c) => c.id))).toEqual(b.hands.map((h) => h.map((c) => c.id)))
     expect(a.attempts).toBe(b.attempts)
   })
@@ -148,7 +148,7 @@ describe('dealFromDeck 不修改输入', () => {
 
 describe('TC-105 重洗上限兜底', () => {
   it('maxAttempts=0 时走降级分支，仍返回完整牌局', () => {
-    const r = dealWithGuard(mulberry32(11), 0, { levels: [2, 2], mode: 0, maxAttempts: 0 }, buildPower)
+    const r = dealWithGuard(mulberry32(11), 0, { levels: [2, 2], maxAttempts: 0 }, buildPower)
     expect(r.degraded).toBe(true)
     expect(r.attempts).toBe(0)
     expect(r.hands.flat()).toHaveLength(100)

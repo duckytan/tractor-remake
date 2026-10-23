@@ -16,6 +16,7 @@ import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
 import { pastPlaysView, trickLogView } from '@app/view'
 import { backEl, cardEl, ensureDefs } from './card'
+import { isInFlight } from './dealFly'
 
 export interface Actions {
   readonly dispatch: (a: Action) => void
@@ -254,13 +255,26 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     if (side) fitSideStack(backRow, show, sideW)
   }
 
-  /* ---- 中央：人类座位信息（本墩的牌已挪到南家自己的出牌区） ---- */
+  /* ---- 中央：牌堆 + 人类座位信息（本墩的牌已挪到南家自己的出牌区） ---- */
   {
     const box = q('center')
     const isWinner = s.trick.winner === HUMAN_SEAT
-    box.innerHTML = `<div class="seat-tag${isWinner ? ' is-win' : ''}">
-        ${SEAT_LABEL[HUMAN_SEAT]} · ${(s.hands[HUMAN_SEAT] as readonly Card[]).length} 张 · ${teamLabel(s, 0)}
+    const full = (s.hands[HUMAN_SEAT] as readonly Card[]).length
+    // 逐张发牌期间「手上几张」按已发到的算，别一上来就写 25
+    const held = s.phase === 'contract' ? Math.min(full, s.revealed) : full
+    // 牌堆：100 张发给四家（每家 25），另 8 张底牌开局就已扣下、不参与逐张发牌。
+    // 它同时是发牌飞行轨迹的起点（见 ui/dealFly.ts），发完即消失。
+    const left = Math.max(0, 100 - s.revealed * 4)
+    const deck =
+      s.phase === 'contract' && left > 0
+        ? `<div class="deck" data-slot="deck" aria-hidden="true">
+        <i class="deck__layer"></i><i class="deck__layer"></i><i class="deck__layer"></i>
+        <span class="deck__count">${left}</span>
       </div>`
+        : ''
+    box.innerHTML = `<div class="seat-tag${isWinner ? ' is-win' : ''}">
+        ${SEAT_LABEL[HUMAN_SEAT]} · ${held} 张 · ${teamLabel(s, 0)}
+      </div>${deck}`
   }
 
   /* ---- 南家（你）：自己的出牌区在手牌正前方 ---- */
@@ -291,9 +305,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const fullHand = s.hands[HUMAN_SEAT] as readonly Card[]
     // 逐张发牌：只渲染已经发到手上的那部分（hands 里始终是完整的 25 张）
     const myHand = s.revealed < fullHand.length ? fullHand.slice(0, s.revealed) : fullHand
-    const dealing = s.phase === 'contract' && s.revealed < fullHand.length
     const items = handView(myHand, ctxOf(s))
-    const newest = dealing ? items.length - 1 : -1
     const selected = new Set(s.selected)
     const hinted = new Set(s.hintIds)
     const canAct = s.phase === 'play' && turn === HUMAN_SEAT
@@ -307,7 +319,8 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       const cls = [
         on ? 'card--selected' : '',
         isHint ? 'card--hint' : '',
-        i === newest ? 'card--deal' : '',
+        // 这张牌还在从牌堆飞过来 ⇒ 先占位不显形，落地那帧由 dealFly 揭开（见 ui/dealFly.ts）
+        isInFlight(c.id) ? 'card--incoming' : '',
         item.gapBefore ? 'card--gap' : '',
       ]
         .filter(Boolean)
@@ -316,7 +329,6 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         cls,
         id: c.id,
       })
-      if (i === newest) el.style.setProperty('--i', '0')
       if (burying) el.classList.add('is-pickable')
       else if (!canAct) el.classList.add('card--disabled')
       // NFR-10：可操作时牌可 Tab 聚焦，回车切换选中

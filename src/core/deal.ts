@@ -78,8 +78,6 @@ export function hasConsecutivePair(hand: readonly Card[], power: PowerTable): bo
 export interface NaturalTractorGuardOptions {
   /** 两队当前级牌 */
   levels: readonly [LevelRank, LevelRank]
-  /** 2 为常主开关 */
-  mode: 0 | 1
   /** 重洗上限，超过则降级为「只校验本局实际牌力表」 */
   maxAttempts?: number
 }

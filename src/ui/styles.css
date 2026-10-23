@@ -207,6 +207,40 @@ html, body {
   box-shadow: 0 0 6px rgba(240, 198, 116, 0.8);
 }
 
+/* 牌堆：逐张发牌期间摆在桌心，发完即消失。
+   它同时是发牌飞行轨迹的起点，所以尺寸要按卡宽派生（三档牌面都跟着缩放）。 */
+.deck {
+  position: relative;
+  width: calc(var(--card-w) * 0.42);
+  aspect-ratio: 5 / 7;
+  margin-top: 2px;
+  pointer-events: none;
+}
+.deck__layer {
+  position: absolute;
+  inset: 0;
+  border-radius: calc(var(--card-radius) * 0.8);
+  background: repeating-linear-gradient(45deg, #16325e 0 3px, #1b3c6e 3px 6px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+/* 三层往右下错开、且靠后的层级更低 —— 只靠 DOM 顺序的话错开的部分会盖在最上面 */
+.deck__layer:nth-child(1) { z-index: 3; }
+.deck__layer:nth-child(2) { z-index: 2; transform: translate(2px, 2px); opacity: 0.85; }
+.deck__layer:nth-child(3) { z-index: 1; transform: translate(4px, 4px); opacity: 0.7; }
+.deck__count {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--card-w) * 0.075);
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
 .back-row { display: flex; }
 .back-row .card + .card { margin-left: calc(var(--card-w) * -0.65); }
 
@@ -384,16 +418,28 @@ html, body {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
-/* 发牌入场：按 --i 逐张错开，模拟「发牌过程」。
-   只在开局那一帧由 render 加上，选牌等普通重绘不会重放（见 render.ts 的 lastDealKey）。 */
-@keyframes dealIn {
-  from { opacity: 0; transform: translateY(58px) scale(0.92); }
-  to   { opacity: 1; transform: none; }
+/* 发牌飞行（FE-1 的飞行轨迹部分）
+   飞行牌挂在 document.body 下的固定层上 —— 必须脱离 #app，否则每次 paint 的
+   `root.innerHTML = ...` 会把它连元素一起清掉（见 ui/dealFly.ts 顶部注释）。 */
+.deal-fly {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
 }
-.card--deal {
-  animation: dealIn 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
-  animation-delay: calc(var(--i, 0) * 26ms);
+/* 权重 0,2,0 压过 .card 的 position: relative 与 transition：
+   位置由 left/top 定死，位移交给 rAF 逐帧写 transform，不能再有过渡去追它。 */
+.deal-fly .card {
+  position: absolute;
+  margin: 0;
+  transition: none;
+  will-change: transform;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.35));
 }
+
+/* 发牌途中还没落地的真牌：占位但不可见。
+   不藏的话会看到「牌已经在手上，同时还有一张在飞」。落地那帧由 dealFly 揭开。 */
+.card--incoming { visibility: hidden; }
 
 .is-pickable:hover { transform: translateY(-10px); }
 

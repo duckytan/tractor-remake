@@ -14,6 +14,7 @@ import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
 import { HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { render } from '@ui/render'
+import { trackDealAnimation } from '@ui/dealFly'
 
 const root = document.getElementById('app')
 if (!root) throw new Error('#app 未找到')
@@ -102,6 +103,8 @@ function afterChange(): void {
     hintSelects: state.hintSelects,
   })
   paint()
+  // 必须在 paint 之后：飞行牌要量「这张牌刚画到哪儿」，以及牌堆的位置
+  trackDealAnimation(root as HTMLElement, state)
   scheduleDeal()
   scheduleAi()
 }
@@ -223,5 +226,8 @@ window.addEventListener('keydown', (ev) => {
 })
 
 paint()
+// 首帧同步一次发牌进度：从存档恢复时 revealed 可能不是 0，
+// 不先对齐的话第一张牌会被当成「批量补满」而跳过飞行
+trackDealAnimation(root as HTMLElement, state)
 scheduleDeal()
 scheduleAi()
