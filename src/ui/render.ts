@@ -31,12 +31,24 @@ const SEAT_CLASS: Record<Seat, string> = { 0: 'center', 1: 'west', 2: 'north', 3
 
 /** 各家出牌区里显示最近几墩的历史小牌（v1.2.3：3 → 5，用户反馈「只留 3 墩，新的把旧的顶走」） */
 const PAST_DEPTH = 5
-/** 历史小牌的宽度（v1.2.3：22 → 24，稍微放大一点，牌点更好认） */
-const TINY_W = 24
+/** 历史小牌宽度占卡宽的比例（M 档 150 × 0.16 = 24px） */
+const TINY_RATIO = 0.16
+/** 已出牌宽度占卡宽的比例：正常 0.56（M 档 84px），矮屏 0.44（66px） */
+const PLAYED_RATIO = 0.56
+const PLAYED_RATIO_SHORT = 0.44
+/** 花色分组间隔占卡宽的比例（与 CSS 的 --suit-gap 保持一致） */
+const SUIT_GAP_RATIO = 0.2
 /** 侧家（西/东）竖向牌背最多显示几张 —— 竖向更吃高度，比北家的 13 少 */
 const SIDE_SHOW = 10
-/** 侧家牌背宽度（竖向排列，视觉高度 = 该值） */
-const SIDE_CARD_W = 52
+/**
+ * 对家牌背宽度占卡宽的比例（竖向排列时视觉高度 = 该值）。
+ * 同样是比例而非 px —— 换 S/L 档位时牌背要跟着手牌一起缩放。
+ * 侧家：正常 0.347（M 档 52px）、窄屏 0.267（40px）、矮屏 0.253（38px）；北家横向 0.307（46px）。
+ */
+const SIDE_RATIO = 0.347
+const SIDE_RATIO_NARROW = 0.267
+const SIDE_RATIO_SHORT = 0.253
+const NORTH_BACK_RATIO = 0.307
 /** 侧家竖向重叠率下限：低于这个值牌与牌就糊成一整块，看不出张数 */
 const SIDE_MIN_STEP = 0.18
 /** AI 四档（弱 / 中 / 强 / 超强） */
@@ -71,15 +83,37 @@ function cardWrap(cards: readonly Card[], o: { cls?: string; width?: number } = 
 }
 
 /**
+ * 当前牌面尺寸档位下的卡宽（px）。
+ *
+ * 牌面尺寸有三档（S/M/L = 120/150/190，窄屏另有覆盖），全部体现在 CSS 变量
+ * `--card-w` 上。UI 里凡与牌相关的尺寸都应从它派生，不要写死 px ——
+ * 否则换档位后比例就崩了（v1.2.6 之前的 playedW / TINY_W 就是写死的）。
+ *
+ * 注意：必须在 `render()` 把 `data-card-size` 挂到 `<html>` **之后**调用，
+ * 否则读到的是上一档的旧值。
+ */
+function cardWidthPx(): number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--card-w')
+  const n = Number.parseFloat(raw)
+  return Number.isFinite(n) && n > 0 ? n : 150
+}
+
+/**
  * 填一个座位的出牌区。
  *
- * - `plays__now`  本墩出的牌（正常尺寸）
+ * - `plays__now`  本墩出的牌（按卡宽比例缩放）
  * - `plays__past` 最近几墩**该座位**出的牌（微小卡牌，每墩一组）
  *
  * 现实里打完的牌就摆在自己面前 ⇒ 每个座位各有一个出牌区，
  * 不再把四家的牌堆在同一个玩家前面。
  */
-function fillPlays(box: HTMLElement, s: GameState, seat: Seat, playedW: number): void {
+function fillPlays(
+  box: HTMLElement,
+  s: GameState,
+  seat: Seat,
+  playedW: number,
+  tinyW: number,
+): void {
   // 侧家的竖向堆叠步长要用到本墩牌的宽度
   box.style.setProperty('--played-w', `${playedW}px`)
   const now = box.querySelector('.plays__now') as HTMLElement
@@ -93,7 +127,7 @@ function fillPlays(box: HTMLElement, s: GameState, seat: Seat, playedW: number):
     const g = document.createElement('div')
     g.className = 'past__trick'
     g.title = `第 ${nos[i]} 墩`
-    for (const c of cards) g.appendChild(cardEl(c, { width: TINY_W, cls: 'card--tiny' }))
+    for (const c of cards) g.appendChild(cardEl(c, { width: tinyW, cls: 'card--tiny' }))
     past.appendChild(g)
   })
 }
@@ -109,9 +143,12 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   }
 
   const turn = seatToPlay(s)
-  // 已出的牌：矮屏（<=780px）缩小一档，给两侧竖向牌堆腾出纵向空间。
-  // v1.2.3：74 → 84（矮屏 58 → 66），用户反馈「已打出的牌太小」；间隔同时在 CSS 里收到 0。
-  const playedW = window.innerHeight <= 780 ? 66 : 84
+  // 与牌相关的尺寸全部按当前档位的卡宽派生，不写死 px。
+  // 注意顺序：上面已经把 data-card-size 挂到 <html>，这里读到的才是本档位的值。
+  const cardW = cardWidthPx()
+  const shortScreen = window.innerHeight <= 780
+  const playedW = Math.round(cardW * (shortScreen ? PLAYED_RATIO_SHORT : PLAYED_RATIO))
+  const tinyW = Math.round(cardW * TINY_RATIO)
 
   root.innerHTML = `
     <header class="topbar">
@@ -157,7 +194,14 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   // 两趟：先立骨架（含已出的牌），再统一填牌背。
   // 一趟做不行 —— 填西家的牌背会改变北家那一行的高度，进而改变后面几家的可用高度，
   // 先量的那家就会拿到过期的高度、把牌堆排出容器。
-  const sideW = window.innerWidth <= 900 ? 40 : window.innerHeight <= 780 ? 38 : SIDE_CARD_W
+  const sideW = Math.round(
+    cardW *
+      (window.innerWidth <= 900
+        ? SIDE_RATIO_NARROW
+        : window.innerHeight <= 780
+          ? SIDE_RATIO_SHORT
+          : SIDE_RATIO),
+  )
   for (const seat of [1, 2, 3] as Seat[]) {
     const box = q(SEAT_CLASS[seat])
     const hand = s.hands[seat] as readonly Card[]
@@ -177,7 +221,13 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         </div>
       </div>`
 
-    fillPlays(box.querySelector(`[data-slot="plays-${seat}"]`) as HTMLElement, s, seat, playedW)
+    fillPlays(
+      box.querySelector(`[data-slot="plays-${seat}"]`) as HTMLElement,
+      s,
+      seat,
+      playedW,
+      tinyW,
+    )
   }
   // 填牌背的顺序必须是「北家先、侧家后」：北家那一行是 auto 高，
   // 它的牌背一进去就会把中间的 1fr 行压矮；先量侧家就会拿到过期高度而溢出。
@@ -196,7 +246,11 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         avail > 0 ? Math.max(2, Math.floor((avail - layoutH) / (layoutH * SIDE_MIN_STEP)) + 1) : show
       show = Math.min(show, maxFit)
     }
-    for (let i = 0; i < show; i++) backRow.appendChild(backEl(1, { width: side ? sideW : 46 }))
+    for (let i = 0; i < show; i++) {
+      backRow.appendChild(
+        backEl(1, { width: side ? sideW : Math.round(cardW * NORTH_BACK_RATIO) }),
+      )
+    }
     if (side) fitSideStack(backRow, show, sideW)
   }
 
@@ -211,7 +265,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
 
   /* ---- 南家（你）：自己的出牌区在手牌正前方 ---- */
   {
-    fillPlays(q('plays-mine'), s, HUMAN_SEAT, playedW)
+    fillPlays(q('plays-mine'), s, HUMAN_SEAT, playedW, tinyW)
     // 提示条浮在手牌区之上 ⇒ 实测出牌区高度后回写变量
     const box = q('plays-mine')
     root.style.setProperty('--plays-h', box.offsetHeight ? `${box.offsetHeight + 6}px` : '0px')
@@ -277,7 +331,8 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     if (items.length === 0) hand.innerHTML = '<div class="hand-empty">手牌已出完</div>'
 
     // 手牌重叠率按容器宽度反算（分组间隔一起计入），保证任意张数都铺得下且角标可见
-    fitHand(hand, items.length, gapCountOf(items), s.cardSize === 'S' ? 10 : 14)
+    // 花色分组间隔 = 卡宽的 20%（与 CSS 的 --suit-gap 同源，避免两处各写一个数）
+    fitHand(hand, items.length, gapCountOf(items), Math.round(cardW * SUIT_GAP_RATIO))
   }
 
   /* ---- 手牌操作条 ---- */

@@ -6,6 +6,18 @@
 :root {
   --card-w: 150px;
   --card-radius: calc(var(--card-w) * 0.06);
+  /* 牌高：卡牌是 5:7，所以高 = 宽 × 1.4（与 .card 的 aspect-ratio 一致） */
+  --card-h: calc(var(--card-w) * 1.4);
+
+  /* ── 与牌相关的尺寸一律从 --card-w / --card-h 派生，不写死 px ──────────
+     牌面尺寸有三档（S/M/L = 120/150/190），写死 px 在大档位下比例就崩了。 */
+
+  /** 选中手牌抬起量 = 卡高的 10% */
+  --sel-raise: calc(var(--card-h) * 0.1);
+  /** 花色分组之间的间隔 = 卡宽的 20% */
+  --suit-gap: calc(var(--card-w) * 0.2);
+  /** 出牌区 / 历史牌之间的小间隔 = 卡宽的 4%（M 档 = 6px） */
+  --play-gap: calc(var(--card-w) * 0.04);
 
   --paper: #ffffff;
   --paper-edge: #c9c6bc;
@@ -171,8 +183,8 @@ html, body {
    北家竖排（出牌区在牌背下方 = 朝向桌心）；
    西家横排（出牌区在牌背右侧 = 朝向桌心）；
    东家 row-reverse（出牌区在牌背左侧 = 朝向桌心）。 */
-.seat-body { display: flex; align-items: center; gap: 10px; }
-.seat--north .seat-body { flex-direction: column; gap: 5px; }
+.seat-body { display: flex; align-items: center; gap: var(--play-gap); }
+.seat--north .seat-body { flex-direction: column; gap: calc(var(--play-gap) * 0.8); }
 .seat--west .seat-body { flex-direction: row; }
 .seat--east .seat-body { flex-direction: row-reverse; }
 .seat--north { grid-area: north; }
@@ -196,7 +208,7 @@ html, body {
 }
 
 .back-row { display: flex; }
-.back-row .card + .card { margin-left: -30px; }
+.back-row .card + .card { margin-left: calc(var(--card-w) * -0.65); }
 
 /* 侧家（西 / 东）：竖向堆叠，牌背 rotate 90° 朝向牌桌中心。
    transform 不改变布局盒 ⇒ 竖直步长必须按「视觉高度 = 卡宽」算（见 render.ts fitSideStack）。 */
@@ -216,13 +228,13 @@ html, body {
 
 /* 侧家出牌区：牌背与桌心之间，竖向堆叠，卡牌旋转 90° 面向桌心。
    旋转后视觉高度 = 卡宽，步长按「视觉高度的一半」算（与 .back-row--side 同一套思路）。 */
-.plays--side { flex-direction: column; align-items: center; gap: 4px; }
+.plays--side { flex-direction: column; align-items: center; gap: var(--play-gap); }
 .plays--side .plays__now { flex-direction: column; align-items: center; }
 .plays--side .plays__now .card + .card { margin-top: calc(var(--played-w) * -1.05); }
-/* 侧家历史小牌同样要竖向压叠：每张牌各自带 --card-w(=TINY_W)，所以直接用 var(--card-w) 即可。
+/* 侧家历史小牌同样要竖向压叠：每张牌各自带 --card-w(=卡宽×0.16)，所以直接用 var(--card-w) 即可。
    不压叠的话，一墩出 4 张就是 4 倍高度，历史区会顶出牌桌被裁掉。 */
 .plays--side .plays__past .card + .card { margin-top: calc(var(--card-w) * -1.05); }
-.plays--side .plays__past { flex-direction: column; align-items: center; gap: 4px; }
+.plays--side .plays__past { flex-direction: column; align-items: center; gap: var(--play-gap); }
 .plays--side .past__trick { flex-direction: column; }
 .plays--side .past__trick + .past__trick { border-left: none; padding-left: 0; }
 .seat--west .plays--side .plays__now .card,
@@ -231,12 +243,12 @@ html, body {
 .seat--east .plays--side .plays__past .card { transform: rotate(90deg); }
 /* ---------- 各家出牌区：本墩的牌 + 最近几墩的历史小牌 ---------- */
 /* 现实里打完的牌摆在自己面前 ⇒ 每家一个出牌区，统一朝向桌心。 */
-.plays { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.plays { display: flex; align-items: center; justify-content: center; gap: var(--play-gap); }
 .plays__now { display: flex; gap: 0; }
-.plays__past { display: flex; align-items: center; gap: 6px; }
+.plays__past { display: flex; align-items: center; gap: var(--play-gap); }
 .plays__past:empty { display: none; }
 .past__trick { display: flex; gap: 0; }
-.past__trick + .past__trick { border-left: 1px solid rgba(255, 255, 255, 0.12); padding-left: 6px; }
+.past__trick + .past__trick { border-left: 1px solid rgba(255, 255, 255, 0.12); padding-left: var(--play-gap); }
 
 .cards { display: flex; gap: 0; }
 
@@ -246,11 +258,12 @@ html, body {
   grid-area: south;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  /* 出牌区 / 手牌 / 操作条之间的竖向间隔，同样按牌宽派生 */
+  gap: var(--play-gap);
   min-height: 0;
 }
 
-.card--tiny { cursor: default; border-radius: 3px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+.card--tiny { cursor: default; border-radius: calc(var(--card-w) * 0.12); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
 
 /* ---------- 积分栏（顶部） ---------- */
 
@@ -273,13 +286,13 @@ html, body {
 .hand {
   display: flex;
   justify-content: center;
-  /* 上方留白要同时容下：提示角标（.card--hint::after 会探出牌顶 ~8px）
-     与选中抬起（translateY(-12px)）。留 12px 刚好等于抬起量，
-     选中牌顶边正好落在内边距上沿，不会压到出牌区。 */
-  min-height: calc(var(--card-w) * 1.4 + 12px);
-  padding: 12px 0 2px;
+  /* 上方留白 = 选中抬起量（卡高的 10%），选中牌顶边正好落在内边距上沿，
+     既不会压到出牌区，也不会随牌面尺寸档位失衡。 */
+  min-height: calc(var(--card-h) + var(--sel-raise));
+  padding: var(--sel-raise) 0 2px;
   --hand-step: 0.58;
-  --hand-gap: 14px;
+  /* 花色分组间隔 = 卡宽的 20% */
+  --hand-gap: var(--suit-gap);
 }
 .hand .card + .card { margin-left: calc(var(--card-w) * (var(--hand-step) - 1)); }
 /* 分组间隔：在同花色 / 主牌段与主花色段交界处多留一段空隙 */
@@ -294,7 +307,7 @@ html, body {
    选择器写成 .card.card--selected（0,3,0）与 :hover 同权重、且声明在后
    ⇒ 鼠标移到已选中的牌上不会被 :hover 压回原位。 */
 .hand .card.card--selected {
-  transform: translateY(-12px);
+  transform: translateY(calc(var(--sel-raise) * -1));
   filter: drop-shadow(0 2px 9px rgba(24, 95, 165, 0.6));
 }
 .hand-empty { color: rgba(255, 255, 255, 0.4); font-size: 13px; align-self: center; }
@@ -524,8 +537,7 @@ html, body {
   :root[data-card-size='M'] { --card-w: 120px; }
   :root[data-card-size='L'] { --card-w: 150px; }
   .meta { display: none; }
-  .back-row .card + .card { margin-left: -34px; }
-  .plays { gap: 4px; }
+  .back-row .card + .card { margin-left: calc(var(--card-w) * -0.74); }
 }
 
 /* ---------- 纵向空间不足：历史小牌让位 ---------- */
