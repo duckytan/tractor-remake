@@ -52,6 +52,17 @@ export interface GameState {
   readonly forcedNT: boolean
   /** 当前定主人（首次亮主或最后一次反主的人）；null = 还没人亮主 */
   readonly trumpDeclarer: Seat | null
+  /**
+   * 当前定主已投入的级牌张数：0 = 还没人亮主，1 = 单张亮主，2 = 反主 / 加固。
+   *
+   * 2 副牌每门级牌只有 2 张 ⇒ 门槛 `counterNeed(2) = 3` **永远不可达**，
+   * 所以实际只有两级（1 → 2 → 锁死），UI 不许出现「第三级」这种表述。
+   */
+  readonly trumpCount: number
+  /** 加固者（把 trumpCount 从 1 抬到 2 的队友）；null = 没加固 */
+  readonly guardBy: Seat | null
+  /** 已经问过人类的亮主花色（同一门不重复打断） */
+  readonly askedTrumps: readonly Trump[]
   /** 本局已用过的定主（含首次亮主）。反主不得重复用同一门，保证流程终止 */
   readonly usedTrumps: readonly Trump[]
   /** 是否正等人类反主（此时人类还持有别门花色的级牌） */
@@ -60,6 +71,12 @@ export interface GameState {
   readonly counterOptions: readonly Trump[]
   /** 人类首次亮主可选的主（空 = 不可选）。UI 只按这份清单置灰按钮 */
   readonly declareOptions: readonly Trump[]
+  /**
+   * 人类当前能否「加固」（把定主张数从 1 抬到 2）。
+   *
+   * 规则判定在 app 层（`canGuard`），UI 只看这个布尔量，不许自己推。
+   */
+  readonly guardOption: boolean
   /**
    * 已「发到手上」的牌数（0..25）。**纯展示进度**：
    * `hands` 里始终是完整的 25 张，UI 只渲染前 `revealed` 张。
@@ -90,13 +107,25 @@ export interface GameState {
   readonly lastReject: { readonly reason: PlayRejectReason; readonly detail: string } | null
   readonly notice: string | null
   readonly lastSettle: SettleResult | null
-  readonly aiLevel: AiLevel
+  /** 对家（座位 2 = 队友）的 AI 强度 */
+  readonly aiLevelPartner: AiLevel
+  /** 敌家（座位 1/3 = 对手）的 AI 强度 */
+  readonly aiLevelOpponent: AiLevel
   readonly aiSpeedMs: number
   readonly fourColor: boolean
   /** 牌面尺寸档位 */
   readonly cardSize: CardSize
   /** 动画开关（关闭后 CSS 过渡全部禁用） */
   readonly animation: boolean
+  /** 手牌前方「最近几墩」历史牌条开关（体验项，立即生效） */
+  readonly showHistory: boolean
+  /**
+   * 提示即选中：开启后点「提示」会直接把提示的牌写进 `selected`。
+   *
+   * **默认 false**。开启时有两个已知副作用（属于预期行为，设置面板里已写明）：
+   * ① 覆盖用户已选好的牌；② `selected` 会随存档一起持久化。
+   */
+  readonly hintSelects: boolean
   /** 设置弹层是否打开 */
   readonly settingsOpen: boolean
   /** 对局记录弹层是否打开 */
@@ -120,6 +149,7 @@ export interface GameState {
 export type Action =
   | { readonly type: 'newGame'; readonly seed?: number }
   | { readonly type: 'declareTrump'; readonly trump: Trump }
+  | { readonly type: 'guard' }
   | { readonly type: 'revealTick' }
   | { readonly type: 'passDeal' }
   | { readonly type: 'passCounter' }
@@ -132,6 +162,7 @@ export type Action =
   | { readonly type: 'nextRound' }
   | { readonly type: 'updateConfig'; readonly patch: Partial<RuleConfig> }
   | { readonly type: 'setAiLevel'; readonly level: AiLevel }
+  | { readonly type: 'setAiLevelSide'; readonly side: 'partner' | 'opponent'; readonly level: AiLevel }
   | { readonly type: 'setAiSpeed'; readonly ms: number }
   | { readonly type: 'toggleFourColor' }
   | { readonly type: 'dismissNotice' }
@@ -139,8 +170,11 @@ export type Action =
   | { readonly type: 'closeSettings' }
   | { readonly type: 'setCardSize'; readonly size: CardSize }
   | { readonly type: 'toggleAnimation' }
+  | { readonly type: 'toggleShowHistory' }
+  | { readonly type: 'toggleHintSelects' }
   | { readonly type: 'toggleLog' }
   | { readonly type: 'showHint'; readonly ids: readonly number[] }
+  | { readonly type: 'hintSelect'; readonly ids: readonly number[] }
   | { readonly type: 'clearHint' }
 
 /** 由状态推导规则上下文（牌力表现算） */
@@ -184,10 +218,14 @@ export const emptyState = (): GameState => ({
   trump: 'NT',
   forcedNT: false,
   trumpDeclarer: null,
+  trumpCount: 0,
+  guardBy: null,
+  askedTrumps: [],
   usedTrumps: [],
   counterPending: false,
   counterOptions: [],
   declareOptions: [],
+  guardOption: false,
   revealed: 25,
   declarePrompted: true,
   dealPrompt: false,
@@ -203,11 +241,14 @@ export const emptyState = (): GameState => ({
   lastReject: null,
   notice: null,
   lastSettle: null,
-  aiLevel: 1,
+  aiLevelPartner: 1,
+  aiLevelOpponent: 1,
   aiSpeedMs: 420,
   fourColor: false,
   cardSize: 'M',
   animation: true,
+  showHistory: true,
+  hintSelects: false,
   settingsOpen: false,
   logOpen: false,
   hintIds: [],

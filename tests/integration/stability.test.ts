@@ -114,7 +114,13 @@ describe('M6 · 规则开关下一局生效（FR-18 ③）', () => {
   it('体验项立即生效（AI 难度/速度/牌面尺寸）', () => {
     let s = newGame(DEFAULT_RULE_CONFIG, 1, 0, 101)
     s = reduce(s, { type: 'setAiLevel', level: 2 })
-    expect(s.aiLevel).toBe(2)
+    // 单档设置 ⇒ 两侧同置
+    expect(s.aiLevelPartner).toBe(2)
+    expect(s.aiLevelOpponent).toBe(2)
+    // 分侧设置只改一侧
+    s = reduce(s, { type: 'setAiLevelSide', side: 'partner', level: 3 })
+    expect(s.aiLevelPartner).toBe(3)
+    expect(s.aiLevelOpponent).toBe(2)
     s = reduce(s, { type: 'setAiSpeed', ms: 800 })
     expect(s.aiSpeedMs).toBe(800)
     s = reduce(s, { type: 'setCardSize', size: 'L' })

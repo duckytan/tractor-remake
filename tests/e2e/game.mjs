@@ -77,17 +77,34 @@ try {
   // 逐张发牌：先确认手牌开始出现（此时不该已经满 25 张）
   await page.waitForSelector('#app .hand .card', { timeout: 20000 })
   const earlyHand = await page.locator('#app .hand .card').count()
-  // 等到定主面板出现（要么摸到级牌暂停，要么发完）
-  await page.waitForSelector('[data-trump]', { timeout: 20000 })
-  const trumpCount = await page.locator('[data-trump]').count()
-  const trumpEnabled = await page.locator('[data-trump]:not([disabled])').count()
+  // 等到定主面板出现（要么摸到级牌暂停，要么发完）。
+  // v1.2 起：人类 25 张里完全没有级牌时（概率 ≈4.8%），AI 会在发牌中直接抢主，
+  // 这一局不会出面板 —— 此时断言「已经离开定主阶段」，不算失败。
+  const panelUp = await page
+    .waitForSelector('[data-trump]', { timeout: 20000 })
+    .then(() => true)
+    .catch(() => false)
+  const trumpCount = panelUp ? await page.locator('[data-trump]').count() : 0
+  const trumpEnabled = panelUp ? await page.locator('[data-trump]:not([disabled])').count() : 0
   const panelCount = await page.locator('[data-slot="overlay"] .panel').count()
+  const leftContract = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
   rec(
     'S0 逐张发牌后弹出定主面板（5 个亮主按钮，至少 1 个可点）',
-    earlyHand > 0 && earlyHand < 25 && trumpCount === 5 && trumpEnabled >= 1 && panelCount === 1,
-    `earlyHand=${earlyHand} trumpBtns=${trumpCount} enabled=${trumpEnabled} panel=${panelCount}`,
+    earlyHand > 0 &&
+      earlyHand < 25 &&
+      (panelUp
+        ? trumpCount === 5 && trumpEnabled >= 1 && panelCount === 1
+        : leftContract.includes('扣底') || leftContract.includes('轮到你了')),
+    `earlyHand=${earlyHand} panel=${panelUp} trumpBtns=${trumpCount} enabled=${trumpEnabled} overlayPanel=${panelCount} handbar="${leftContract}"`,
   )
   await page.screenshot({ path: `${SHOTS}/01-contract.png` })
+
+  /** 等定主面板；AI 抢主成功时返回 false（这一局没有面板可点） */
+  const waitPanel = async (timeout = 5000) =>
+    page
+      .waitForSelector('[data-trump]', { timeout })
+      .then(() => true)
+      .catch(() => false)
 
   /* ---------- S1c 扣底分支（庄家随机，多重试几次直到人类坐庄） ---------- */
   // 注意：定主阶段 overlay 会遮住顶栏，所以首屏直接亮主算第 1 次尝试，
@@ -137,7 +154,11 @@ try {
   for (let attempt = 1; attempt <= 20 && !buryCovered; attempt++) {
     if (attempt > 1) {
       await page.click('[data-act="newGame"]')
-      await page.waitForSelector('[data-trump]', { timeout: 5000 })
+      // AI 抢主成功时没有面板 —— 这一局直接跳过，下一轮再试
+      if (!(await waitPanel())) {
+        buryEvidence = `attempt=${attempt} AI 发牌中抢主（无面板），重试`
+        continue
+      }
     }
     const r = await declareAndMaybeBury()
     if (r.burying) {
@@ -154,9 +175,11 @@ try {
     buryEvidence,
   )
 
-  // 重置回定主阶段，跑主链路
-  await page.click('[data-act="newGame"]')
-  await page.waitForSelector('[data-trump]', { timeout: 5000 })
+  // 重置回定主阶段，跑主链路（AI 抢主时重开，最多 5 次）
+  for (let i = 0; i < 5; i++) {
+    await page.click('[data-act="newGame"]')
+    if (await waitPanel()) break
+  }
 
   /* ---------- S1 亮主 ---------- */
   await declareAndPass('1') // ♥ 红心（若弹反主则点「过」）

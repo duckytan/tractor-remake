@@ -1,20 +1,21 @@
 /**
- * AI 策略：三档难度
+ * AI 策略：四档难度
  *
  * L0 随机合法出牌
  * L1 启发式（省大牌、保分、跟牌优先出最小）
  * L2 L1 + 一层「这手能不能吃到分」的评估
+ * L3 L2 + 精确压牌判定（看结构 / 看出牌顺序）+ 手牌控制力 + 首出续庄溢价
  *
  * 全部确定性：同 state + 同 rng 序列 → 同出牌（ADR-012）
  */
 
-import { analyze, cardsScore, checkPlay, suitSlotOf } from '@core'
-import type { Card, PlayAnalysis, RuleContext, Seat } from '@core'
+import { analyze, cardsScore, checkPlay, suitSlotOf, teamOf } from '@core'
+import type { Card, PlayAnalysis, RuleContext, Seat, SuitSlot } from '@core'
 import { enumeratePlays } from './enumerate'
 import type { PlayContext } from './enumerate'
 import type { Rng } from '@core'
 
-export type AiLevel = 0 | 1 | 2
+export type AiLevel = 0 | 1 | 2 | 3
 
 /**
  * L2 附加项的权重。
@@ -33,6 +34,31 @@ export const L2_WEIGHTS = {
   tractor: 0.4,
 }
 
+/**
+ * L3 附加项的权重（见 docs/14 §2.4）。
+ *
+ * L3 = L2 分（结构、续庄、省牌项保留）+ 下面三项，
+ * 其中 `exactOver` **替换** L2 的 `over` / `overLead` —— 同一件事（会不会被压）
+ * 只能有一个权重，否则等于把「被压」重复扣两次。
+ *
+ * 标定方法同 L2（座位互换配对测量，消座位偏差），改动必须重跑标定。
+ */
+export const L3_WEIGHTS = {
+  /** 精确压牌判定为「会被压」时的扣分（比 L2 的 0.9 更重） */
+  exactOver: 1.15,
+  /** 本墩分值的期望溢价（比 L2 的 0.06 更敏感） */
+  trickEv: 0.09,
+  /**
+   * 出牌后手牌控制力下降的惩罚系数。
+   *
+   * **只在「这手白花」时生效**（跟牌压不过 / 首出会被压）：赢了的一手不算损失，
+   * 否则会与「赢墩吃分」互相抵消，实测掉 8 个百分点。
+   */
+  control: 0.55,
+  /** 首出后「下一墩主动权」的溢价 */
+  followUp: 0.35,
+}
+
 export interface AiDecisionInput {
   readonly seat: Seat
   readonly hand: readonly Card[]
@@ -47,8 +73,20 @@ export interface AiDecisionInput {
    *
    * L2 用它做「这一手能不能守住」的前瞻判断：
    * 对手手里有没有更大的牌能压过我。L1 不用这个信息。
+   *
+   * **顺序约定**：按座位升序、排除自己（与 `game.ts` 的构造一致：
+   * `[0,1,2,3].filter(x => x !== seat).map(x => hands[x])`）。
+   * L3 的续庄模拟依赖这个顺序来还原「第几家是谁」。
    */
   readonly opponents: readonly (readonly Card[])[]
+  /**
+   * 本墩还没出牌的座位（可选）。
+   *
+   * L3 用它排除「已经出过牌的人」—— 他们不可能再压我。
+   * 缺省 `undefined` ⇒ 退化为「全部视为威胁」，与 L2 的信息假设一致，
+   * 因此所有既有调用点无需改动。
+   */
+  readonly remainingSeats?: readonly Seat[]
 }
 
 export interface AiDecision {
@@ -151,6 +189,200 @@ function hasTractor(hand: readonly Card[], slot: number, ctx: RuleContext): bool
   return analyze(cards, ctx).groups.some((g) => g.kind === 'tractor')
 }
 
+/* ================================================================
+ * L3：「精确」评估
+ * ================================================================ */
+
+/**
+ * 出牌的结构需要「连续几对」。
+ *
+ *   单张 → 0；对子 → 1；拖拉机 → 连对长度；多组混出（甩牌）→ -1。
+ *
+ * 这是 L3 与 L2 的分水岭：压牌必须**结构相同**，L2 只比牌力，
+ * 所以会把「对手有一张更大的单牌」误判成「我的对子守不住」。
+ */
+function pairsNeededOf(a: PlayAnalysis): number {
+  if (a.groups.length !== 1) return -1
+  const g = a.groups[0]!
+  if (g.kind === 'single') return 0
+  return g.length // pair → 1，tractor → 连对个数
+}
+
+/** `opponents[i]` 对应的座位：按座位升序、排除自己 */
+function seatsOpponentOf(seat: Seat): Seat[] {
+  return ([0, 1, 2, 3] as Seat[]).filter((x) => x !== seat)
+}
+
+/**
+ * 一手牌里能打出的、指定结构的最大牌力（`-1` = 打不出这种结构）。
+ *
+ * @param cards  同一花色槽的牌（调用方已按槽过滤，避免跨花色拼出假连对）
+ * @param pairs  0 = 单张；1 = 对子；n≥2 = n 连对
+ */
+function unitPowerOf(cards: readonly Card[], ctx: RuleContext, pairs: number): number {
+  if (cards.length === 0) return -1
+  // 单张：任意一张都能打，直接取最大牌力（对子里的牌也能拆开打）
+  if (pairs === 0) {
+    let best = -1
+    for (const c of cards) best = Math.max(best, ctx.power.get(c.value))
+    return best
+  }
+  // 对子 / 连对：交给 analyze 分组，只认「长度够」的 pair / tractor 组。
+  // 注意 tractor 组天然覆盖它内部的对子（顶部 n 对仍是合法 n 连对），
+  // 所以判 `g.length >= pairs` 而不是相等。
+  const a = analyze(cards, ctx)
+  let best = -1
+  for (const g of a.groups) {
+    if (g.kind === 'single') continue
+    const len = g.kind === 'tractor' ? g.length : 1
+    if (len < pairs) continue
+    best = Math.max(best, ctx.power.get(g.keyCard.value))
+  }
+  return best
+}
+
+/**
+ * 某家手里「能压过指定结构」的最大牌力。
+ *
+ * 副牌首出可以被主牌毙（对子也能被主牌对子毙），所以主牌槽要单独算一遍；
+ * **必须分槽计算** —— 牌力表给四门副牌的同一点数编了相同牌力，
+ * 混槽分析会把不同花色的牌拼成假连对。
+ */
+function bestUnitPower(
+  hand: readonly Card[],
+  ctx: RuleContext,
+  slot: SuitSlot,
+  pairs: number,
+): number {
+  const same = hand.filter((c) => suitSlotOf(c.value, ctx.power) === slot)
+  let best = unitPowerOf(same, ctx, pairs)
+  if (slot !== 4) {
+    const trumps = hand.filter((c) => suitSlotOf(c.value, ctx.power) === 4)
+    best = Math.max(best, unitPowerOf(trumps, ctx, pairs))
+  }
+  return best
+}
+
+/**
+ * 精确版「这手会不会被压」。
+ *
+ * 相比 L2 的 `canBeOverturned` 补三个盲点：
+ *   ① **看结构**：我出对子，对手一张更大的单牌压不了；我出 2 连对，散对也压不了
+ *   ② **看出牌顺序**：`remaining` 之外（本墩已出过牌）的座位不再是威胁
+ *   ③ 队友已经赢着时不需要防守
+ *
+ * 多组混出（甩牌）直接判「压不了」：合法的甩牌前提就是每组都是全场最大，
+ * 这一条由 `legality.checkLead` 保证。
+ *
+ * @param memo 单次决策内的缓存（键 `对手下标|槽|连对数`）——
+ *             60 个候选里 (槽, 结构) 只有十几种组合，缓存后 analyze 调用量降一个数量级。
+ */
+function exactBeatable(
+  cards: readonly Card[],
+  ctx: RuleContext,
+  opponents: readonly (readonly Card[])[],
+  remaining: readonly Seat[] | undefined,
+  partnerLeading: boolean,
+  seat: Seat,
+  memo?: Map<string, number>,
+): boolean {
+  if (partnerLeading) return false // 队友已经赢着，不需要防守
+  if (cards.length === 0) return false
+  const mine = analyze(cards, ctx)
+  if (mine.suitSlot === -1) return true // 混花色，不可能守住
+  if (!mine.keyCard) return false
+  if (mine.groups.length > 1) return false // 合法甩牌：压不了
+  const pairs = pairsNeededOf(mine)
+  if (pairs < 0) return false
+
+  const myPower = ctx.power.get(mine.keyCard.value)
+  const oppSeats = seatsOpponentOf(seat)
+
+  for (let i = 0; i < opponents.length; i++) {
+    const s = oppSeats[i]
+    if (s === undefined) continue
+    if (remaining !== undefined && !remaining.includes(s)) continue
+    const key = `${i}|${mine.suitSlot}|${pairs}`
+    let p = memo?.get(key)
+    if (p === undefined) {
+      p = bestUnitPower(opponents[i]!, ctx, mine.suitSlot, pairs)
+      memo?.set(key, p)
+    }
+    if (p > myPower) return true
+  }
+  return false
+}
+
+/**
+ * 手牌控制力：**主牌张数**（一张 0.30）。
+ *
+ * 只看自己的手牌与牌力表（不偷看对手），与 L2 的信息假设一致。
+ *
+ * **为什么只算主牌**（重标定结论，见 tests/ai/difficulty.test.ts 的标定说明）：
+ * 把「副牌 A」「分牌」也计进来会与 L1 的 `powerCost`（省大牌）重复计分，
+ * 实测把 L3 vs L2 从 58.0% 压到 50.0% —— 同一件事扣两次，AI 变得过度保守。
+ * 主牌张数相对独立（能不能毙牌 / 有没有将权），留下它才有增量信息。
+ */
+function handControl(hand: readonly Card[], ctx: RuleContext): number {
+  let trumps = 0
+  for (const c of hand) if (suitSlotOf(c.value, ctx.power) === 4) trumps += 1
+  return trumps * 0.3
+}
+
+/** 出这手牌会让控制力掉多少（≥ 0） */
+function controlLoss(cards: readonly Card[], hand: readonly Card[], ctx: RuleContext): number {
+  const ids = new Set(cards.map((c) => c.id))
+  const rest = hand.filter((c) => !ids.has(c.id))
+  return Math.max(0, handControl(hand, ctx) - handControl(rest, ctx))
+}
+
+/**
+ * 首出专用：模拟三家回应，返回「我方（我或对家）能否续庄」（1 / 0）。
+ *
+ * 只模拟到「谁最大」这一层，不复现完整出牌（每家的具体出牌由 L1 决定不影响结论）：
+ * 按座位顺序比较各家能打出的最大同结构单位，最大者赢墩。
+ * 与 `exactBeatable` 的区别：这里把**队友赢墩**也算我方续庄。
+ */
+function leadFollowUp(
+  cards: readonly Card[],
+  ctx: RuleContext,
+  opponents: readonly (readonly Card[])[],
+  seat: Seat,
+  remaining: readonly Seat[] | undefined,
+  memo?: Map<string, number>,
+): number {
+  const mine = analyze(cards, ctx)
+  if (mine.suitSlot === -1 || !mine.keyCard) return 0
+  const pairs = pairsNeededOf(mine)
+  if (pairs < 0) return 1 // 合法甩牌：默认续庄
+  const mySlot = mine.suitSlot
+
+  const oppSeats = seatsOpponentOf(seat)
+  let bestPower = ctx.power.get(mine.keyCard.value)
+  let bestTeam = teamOf(seat)
+
+  for (let i = 0; i < opponents.length; i++) {
+    const s = oppSeats[i]
+    if (s === undefined) continue
+    if (remaining !== undefined && !remaining.includes(s)) continue
+    const key = `${i}|${mySlot}|${pairs}`
+    let p = memo?.get(key)
+    if (p === undefined) {
+      p = bestUnitPower(opponents[i]!, ctx, mySlot, pairs)
+      memo?.set(key, p)
+    }
+    if (p > bestPower) {
+      bestPower = p
+      bestTeam = teamOf(s)
+    }
+  }
+  return bestTeam === teamOf(seat) ? 1 : 0
+}
+
+
+/** 各档的决策理由（也用于测试断言与日志可读性） */
+const DECISION_REASONS: readonly string[] = ['随机', '启发式', '评估', '精确']
+
 export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDecision {
   const { hand, ctx, play, opponents } = input
   const candidates = legalOnly(hand, ctx, play, 60, opponents)
@@ -172,14 +404,19 @@ export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDeci
     return { cards: pick, reason: '随机' }
   }
 
-  const scored = candidates.map((cards) => ({ cards, score: scoreCandidate(cards, input, level) }))
+  // L3 的压牌判定按 (对手, 槽, 结构) 缓存 —— 60 个候选里组合只有十几种，必须跨候选复用
+  const memo = new Map<string, number>()
+  const scored = candidates.map((cards) => ({
+    cards,
+    score: scoreCandidate(cards, input, level, memo),
+  }))
   scored.sort((a, b) => b.score - a.score)
 
-  // L1 在并列最优里随机挑一个，避免每局一模一样
+  // 并列最优里随机挑一个，避免每局一模一样
   const top = scored[0]!.score
   const best = scored.filter((s) => s.score >= top - 0.001)
   const chosen = best[rng.int(best.length)]!
-  return { cards: chosen.cards, reason: level === 2 ? '评估' : '启发式' }
+  return { cards: chosen.cards, reason: DECISION_REASONS[level] ?? '启发式' }
 }
 
 /**
@@ -195,12 +432,24 @@ export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDeci
  *   出一手之后，剩下手牌的位置价值掉多少。
  *   位置价值考虑了冗余（成对的牌丢一张不心疼）、主牌控制权、
  *   对子/连对结构、以及分数牌资源 —— 比单纯的牌力总和更贴近真实牌力。
+ *
+ * L3（精确）在 L2 之上换掉「会不会被压」的判定，并补两项：
+ *   ① `exactBeatable`：看结构（对子压不了单张）、看出牌顺序（已出过的人不算威胁）
+ *   ② `handControl`：出牌后的主牌控制力损失（只在「这手白花」时计入）
+ *   ③ `leadFollowUp`：首出后我方能否续庄
  */
-function scoreCandidate(cards: readonly Card[], input: AiDecisionInput, level: AiLevel): number {
+function scoreCandidate(
+  cards: readonly Card[],
+  input: AiDecisionInput,
+  level: AiLevel,
+  memo?: Map<string, number>,
+): number {
   const { ctx, play, currentWinner, partnerLeading, hand, opponents } = input
   const a = analyze(cards, ctx)
   const powerCost = cards.reduce((s, c) => s + ctx.power.get(c.value), 0)
   const points = cardsScore(cards)
+  const isL3 = level === 3
+  const isL2Plus = level >= 2
 
   let score = 0
   // ---- 基础：省牌（牌力越低越好）----
@@ -223,15 +472,30 @@ function scoreCandidate(cards: readonly Card[], input: AiDecisionInput, level: A
       score -= points * 0.15
     }
 
-    if (level === 2) {
+    if (isL2Plus) {
       // ① 前瞻：这一手能不能守住？
-      //    对手手里有更大的牌 → 我赢不住，大牌就白花了。
-      if (canBeOverturned(cards, ctx, opponents)) score -= L2_WEIGHTS.over
+      //    L2 只比牌力；L3 换精确判定（看结构、看出牌顺序、队友领先时免防守）
+      const beaten = isL3
+        ? exactBeatable(
+            cards,
+            ctx,
+            opponents,
+            input.remainingSeats,
+            partnerLeading,
+            input.seat,
+            memo,
+          )
+        : canBeOverturned(cards, ctx, opponents)
+      if (beaten) score -= isL3 ? L3_WEIGHTS.exactOver : L2_WEIGHTS.over
       // ② 赢墩价值：这一墩已有的分越多，越值得花代价去赢
       if (iAmWinning && !partnerLeading) {
-        score += trickPointsSoFar(currentWinner, play) * L2_WEIGHTS.trick
+        score +=
+          trickPointsSoFar(currentWinner, play) * (isL3 ? L3_WEIGHTS.trickEv : L2_WEIGHTS.trick)
       }
     }
+
+    // ③ L3：压不过还花主牌，才是真的丢控制力（赢了就不算亏）
+    if (isL3 && !iAmWinning) score -= L3_WEIGHTS.control * controlLoss(cards, hand, ctx)
   } else {
     // 首出：长套优先（同一槽牌多），大牌留手
     const slot = a.suitSlot
@@ -243,11 +507,32 @@ function scoreCandidate(cards: readonly Card[], input: AiDecisionInput, level: A
     }
     score -= points * 0.02 // 首出别急着甩分
 
-    if (level === 2) {
-      // ③ 前瞻：首出这手，对手能不能压？
-      if (canBeOverturned(cards, ctx, opponents)) score -= L2_WEIGHTS.overLead
-      // ④ 有连对的长套优先 —— 把拖拉机先兑现
+    // ④ 前瞻：首出这手，对手能不能压？（L2 只比牌力，L3 精确判结构）
+    let beaten = false
+    if (isL2Plus) {
+      beaten = isL3
+        ? exactBeatable(
+            cards,
+            ctx,
+            opponents,
+            input.remainingSeats,
+            partnerLeading,
+            input.seat,
+            memo,
+          )
+        : canBeOverturned(cards, ctx, opponents)
+      if (beaten) score -= isL3 ? L3_WEIGHTS.exactOver : L2_WEIGHTS.overLead
+      // ⑤ 有连对的长套优先 —— 把拖拉机先兑现
       if (slot !== -1 && hasTractor(hand, slot, ctx)) score += L2_WEIGHTS.tractor
+    }
+
+    if (isL3) {
+      // ⑥ 续庄溢价：这一手出完，我方还能不能接着首出
+      score +=
+        L3_WEIGHTS.followUp *
+        leadFollowUp(cards, ctx, opponents, input.seat, input.remainingSeats, memo)
+      // ⑦ 控制力损耗：只在「这手会被压」时才算白花
+      if (beaten) score -= L3_WEIGHTS.control * controlLoss(cards, hand, ctx)
     }
   }
 

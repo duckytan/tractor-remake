@@ -55,7 +55,7 @@ export interface RuleConfig {
   readonly allowSelfCounter: boolean
   /** 2 为常主 */
   readonly twoAsPermanent: boolean
-  /** 允许对家保（原版未实现，本项目保留字段） */
+  /** 允许队友用同花色加固（抬高反主门槛：张数 1 → 2 ⇒ 门槛 2 → 3） */
   readonly allowPartnerGuard: boolean
   /** 允许反无将 */
   readonly allowCounterNT: boolean
@@ -78,7 +78,7 @@ export interface RuleConfig {
 export const DEFAULT_RULE_CONFIG: RuleConfig = {
   allowSelfCounter: true,
   twoAsPermanent: false,
-  allowPartnerGuard: false,
+  allowPartnerGuard: true,
   allowCounterNT: false,
   guardScoreLevels: true,
   guardJack: false,

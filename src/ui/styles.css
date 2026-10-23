@@ -68,9 +68,11 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 纵向骨架：顶栏 / 积分栏 / 牌桌（含手牌前方区 + 手牌 + 操作条）
+   积分栏移出 .south 后，手牌前方才有空间放历史牌条 */
 #app {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100%;
   min-height: 620px;
 }
@@ -128,16 +130,16 @@ html, body {
 
 .felt {
   position: relative;
-  flex: 1 1 auto;
   display: grid;
+  min-height: 0;
   grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
     '. north .'
     'west center east'
     'south south south';
   gap: 8px;
-  padding: 14px 18px 10px;
+  padding: 12px 18px 10px;
   background: radial-gradient(ellipse at 50% 42%, var(--felt-1) 0%, var(--felt-2) 55%, var(--felt-3) 100%);
   overflow: hidden;
 }
@@ -175,42 +177,92 @@ html, body {
 .back-row { display: flex; }
 .back-row .card + .card { margin-left: -30px; }
 
+/* 侧家（西 / 东）：竖向堆叠，牌背 rotate 90° 朝向牌桌中心。
+   transform 不改变布局盒 ⇒ 竖直步长必须按「视觉高度 = 卡宽」算（见 render.ts fitSideStack）。 */
+.back-row--side {
+  flex-direction: column;
+  align-items: center;
+  flex: 1 1 auto;
+  min-height: 0;
+  --side-step: 0.34;
+}
+.back-row--side .card + .card {
+  margin-left: 0;
+  margin-top: calc(var(--card-w) * 1.4 * (var(--side-step) - 1));
+}
+.seat--west .back-row--side .card { transform: rotate(-90deg); }
+.seat--east .back-row--side .card { transform: rotate(90deg); }
+.played--side { justify-content: center; }
+
 .played { display: flex; gap: 2px; min-height: 8px; }
 .cards { display: flex; gap: 2px; }
 
-/* ---------- 底部：状态 + 手牌 ---------- */
+/* ---------- 底部：历史牌条 + 手牌 + 操作条 ---------- */
 
 .south {
   grid-area: south;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 4px;
+  gap: 6px;
+  min-height: 0;
 }
 
-.status {
+/* 手牌前方：最近几墩（小牌，放在 .hand 之外，避免污染 .hand .card 计数） */
+.recent {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 10px;
+  min-height: 0;
+}
+.recent__trick {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.recent__no { font-size: 10px; color: rgba(255, 255, 255, 0.45); letter-spacing: 0.3px; }
+.recent__cards { display: flex; align-items: center; gap: 7px; }
+.recent__play { display: flex; gap: 1px; }
+.recent__play + .recent__play { border-left: 1px solid rgba(255, 255, 255, 0.1); padding-left: 7px; }
+
+.card--tiny { cursor: default; border-radius: 3px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+
+/* ---------- 积分栏（顶部） ---------- */
+
+.scorebar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
   justify-content: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 5px 18px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.78);
-  background: rgba(0, 0, 0, 0.26);
-  border-radius: 9px;
-  padding: 7px 14px;
+  background: #0f231b;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
-.status b { color: #fff; font-weight: 600; }
-.status i { width: 1px; height: 12px; background: rgba(255, 255, 255, 0.18); }
+.scorebar b { color: #fff; font-weight: 600; }
+.scorebar i { width: 1px; height: 12px; background: rgba(255, 255, 255, 0.18); }
 
 .hand {
   display: flex;
   justify-content: center;
-  min-height: calc(var(--card-w) * 1.4);
-  padding-bottom: 2px;
+  min-height: calc(var(--card-w) * 1.4 + 8px);
+  /* 上方留 8px 给提示角标（.card--hint::after 会探出牌顶） */
+  padding: 8px 0 2px;
   --hand-step: 0.58;
+  --hand-gap: 14px;
 }
 .hand .card + .card { margin-left: calc(var(--card-w) * (var(--hand-step) - 1)); }
+/* 分组间隔：在同花色 / 主牌段与主花色段交界处多留一段空隙 */
+.hand .card + .card--gap {
+  margin-left: calc(var(--card-w) * (var(--hand-step) - 1) + var(--hand-gap));
+}
 .hand .card:hover { transform: translateY(-10px); z-index: 5; }
 .hand .card--selected { transform: translateY(-16px); z-index: 6; }
 .hand-empty { color: rgba(255, 255, 255, 0.4); font-size: 13px; align-self: center; }
@@ -258,11 +310,34 @@ html, body {
 
 .card--disabled { filter: grayscale(0.35) brightness(0.92); }
 
+/* 提示高亮：描边 + 更醒目的呼吸光环 + 左上角「提示」角标。
+   角标放左上是因为手牌是「向右压」的重叠布局，右侧会被后一张牌盖住。 */
 @keyframes hintPulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(var(--hint-rgb), 0); }
-  50% { box-shadow: 0 0 0 6px rgba(var(--hint-rgb), 0.34); }
+  50% { box-shadow: 0 0 0 9px rgba(var(--hint-rgb), 0.5); }
 }
-.card--hint { animation: hintPulse 1.3s ease-in-out infinite; }
+.card--hint {
+  z-index: 2;
+  outline: 2px solid var(--hint);
+  outline-offset: -1px;
+  animation: hintPulse 1s ease-in-out infinite;
+}
+.card--hint::after {
+  content: '提示';
+  position: absolute;
+  top: -9px;
+  left: 2px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--hint);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
 
 /* 发牌入场：按 --i 逐张错开，模拟「发牌过程」。
    只在开局那一帧由 render 加上，选牌等普通重绘不会重放（见 render.ts 的 lastDealKey）。 */
@@ -338,15 +413,27 @@ html, body {
 .trump-actions { margin-top: 10px; display: flex; justify-content: center; }
 .trump-actions .btn { min-width: 120px; }
 
+/* 反主门槛说明（1 张 → 2 张 → 锁死） */
+.trump-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+  text-align: center;
+}
+.trump-note b { color: var(--trump); }
+/* 加固按钮：单独一行铺满，和「过」区分开 */
+.guard-btn { width: 100%; }
+
 /* ---------- 提示条 ---------- */
 
 .toast {
   position: fixed;
   left: 50%;
-  /* 必须抬到手牌区之上：south 网格行 = 手牌(--card-w×1.4) + 操作条(34px) + 间距。
+  /* 必须抬到手牌区之上：south = 历史牌条 + 手牌(--card-w×1.4) + 操作条(34px) + 间距。
+     历史牌条高度随墩数变化，由 render.ts 实测后写入 --recent-h。
      原先 bottom:26px 正好压在操作条上，而 .is-show 带 pointer-events:auto，
      会把「扣底」等按钮的点击吃掉 —— 用户得先点掉 toast 才能点按钮。 */
-  bottom: calc(var(--card-w) * 1.4 + 60px);
+  bottom: calc(var(--card-w) * 1.4 + 52px + var(--recent-h, 0px));
   transform: translateX(-50%) translateY(12px);
   padding: 9px 18px;
   border-radius: 9px;
@@ -366,6 +453,8 @@ html, body {
   cursor: pointer;
 }
 .toast.is-error { background: rgba(120, 32, 32, 0.95); }
+/* 弹层打开时只做提示、不吃点击（面板底部按钮常常正好落在 toast 上） */
+.toast.is-modal { pointer-events: none; cursor: default; }
 
 /* ---------- 窄屏 ---------- */
 
@@ -376,6 +465,16 @@ html, body {
   :root[data-card-size='L'] { --card-w: 150px; }
   .meta { display: none; }
   .back-row .card + .card { margin-left: -34px; }
+  .recent { gap: 6px; }
+}
+
+/* ---------- 纵向空间不足：历史牌条让位 ---------- */
+
+@media (max-height: 820px) {
+  .recent__trick:nth-child(n + 3) { display: none; }
+}
+@media (max-height: 760px) {
+  .recent__trick:nth-child(n + 2) { display: none; }
 }
 
 /* ---------- 设置 / 记录弹层 ---------- */
@@ -385,6 +484,12 @@ html, body {
   max-width: 520px;
   max-height: 86vh;
   overflow-y: auto;
+}
+/* 面板内容变长后「完成 / 关闭」会被推到滚动区外，钉在底部保证随时可点 */
+.panel--wide > .btn:last-child {
+  position: sticky;
+  bottom: 0;
+  box-shadow: 0 -8px 12px rgba(255, 255, 255, 0.92);
 }
 
 .set-group { margin-bottom: 18px; }
@@ -479,28 +584,50 @@ html, body {
   line-height: 1.6;
 }
 
-/* 对局记录 */
+/* 对局记录：按墩分组的卡片，左色条标赢家队伍，得分高亮，牌面按花色着色 */
 .log-list { display: flex; flex-direction: column; gap: 8px; }
 .log-trick {
   border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
   border-radius: 9px;
   padding: 8px 10px;
   font-size: 12px;
+  background: #fff;
 }
-.log-trick.is-win { border-color: #f0c674; background: #fdfaf1; }
-.log-trick-head {
+.log-trick[data-win-team='0'] { border-left-color: var(--sel); background: #f7fbff; }
+.log-trick[data-win-team='1'] { border-left-color: var(--suit-red); background: #fdf8f8; }
+.log-trick__head {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
   color: var(--ink-faint);
-  margin-bottom: 5px;
 }
-.log-trick-head b { color: var(--ink-dim); font-weight: 600; }
-.log-plays { display: flex; flex-direction: column; gap: 3px; }
-.log-play { display: flex; align-items: baseline; gap: 8px; }
-.log-play.is-winner { font-weight: 600; }
-.log-play em { font-style: normal; color: var(--ink-faint); flex: 0 0 42px; }
-.log-play span { font-family: var(--font-num); letter-spacing: 0.3px; }
-.log-play.is-winner span { color: #b8860b; }
+.log-trick__no { font-variant-numeric: tabular-nums; }
+.log-trick__win { font-weight: 600; color: var(--ink); }
+.log-trick[data-win-team='0'] .log-trick__win { color: var(--sel); }
+.log-trick[data-win-team='1'] .log-trick__win { color: var(--suit-red); }
+.log-trick__pts { margin-left: auto; color: var(--ink-faint); }
+.log-trick__pts.is-score { color: var(--trump); font-weight: 700; }
+.log-trick__plays { display: flex; flex-direction: column; gap: 3px; }
+.log-play { display: flex; align-items: center; gap: 8px; }
+.log-play__seat { flex: 0 0 20px; color: var(--ink-faint); }
+.log-play[data-win='true'] .log-play__seat { color: var(--ink); font-weight: 600; }
+.log-play__cards { display: flex; flex-wrap: wrap; gap: 4px; }
+.log-card {
+  font-family: var(--font-num);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f2efe8;
+  color: var(--ink-dim);
+  letter-spacing: 0.3px;
+}
+.log-card[data-suit='0'] { color: var(--suit-black); }
+.log-card[data-suit='1'] { color: var(--suit-red); }
+.log-card[data-suit='2'] { color: var(--suit-club); }
+.log-card[data-suit='3'] { color: var(--suit-diamond); }
+.log-card[data-is-trump='true'] { box-shadow: inset 0 0 0 1px var(--trump); }
+.log-play[data-win='true'] .log-card { background: #fff; font-weight: 600; }
 .log-empty { color: var(--ink-faint); font-size: 13px; text-align: center; padding: 20px 0; }
 
 /* 实时合法性提示条 */

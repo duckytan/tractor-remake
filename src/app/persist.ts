@@ -10,12 +10,16 @@ import { STATE_VERSION } from './state'
 import type { CardSize } from './state'
 import { DEFAULT_RULE_CONFIG, HAND_SIZE } from '@core'
 import type { RuleConfig } from '@core'
+import type { AiLevel } from '@ai/policy'
 
 const KEY_STATE = 'tractor.state.v1'
 const KEY_PREFS = 'tractor.prefs.v1'
 
 export interface Prefs {
-  readonly aiLevel: 0 | 1 | 2
+  /** 对家（座位 2，队友）强度 */
+  readonly aiLevelPartner: AiLevel
+  /** 敌家（座位 1/3）强度 */
+  readonly aiLevelOpponent: AiLevel
   readonly aiSpeedMs: number
   readonly fourColor: boolean
   /** 规则开关（FR-18 ④：设置持久化） */
@@ -24,15 +28,22 @@ export interface Prefs {
   readonly cardSize: CardSize
   /** 动画开关 */
   readonly animation: boolean
+  /** 手牌前方历史牌条开关 */
+  readonly showHistory: boolean
+  /** 提示即选中 */
+  readonly hintSelects: boolean
 }
 
 const DEFAULT_PREFS: Prefs = {
-  aiLevel: 1,
+  aiLevelPartner: 1,
+  aiLevelOpponent: 1,
   aiSpeedMs: 420,
   fourColor: false,
   ruleConfig: DEFAULT_RULE_CONFIG,
   cardSize: 'M',
   animation: true,
+  showHistory: true,
+  hintSelects: false,
 }
 
 /** 逐字段校验，任何非法值都退回默认 —— 存档损坏不能让游戏起不来 */
@@ -57,10 +68,15 @@ export function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(KEY_PREFS)
     if (!raw) return DEFAULT_PREFS
-    const o = JSON.parse(raw) as Partial<Prefs>
+    const o = JSON.parse(raw) as Partial<Prefs> & { readonly aiLevel?: unknown }
     const cardSize: CardSize = o.cardSize === 'S' || o.cardSize === 'L' ? o.cardSize : 'M'
+    // 四档：0 弱 / 1 中 / 2 强 / 3 超强；非法值回落 1（别把「超强」降级成「普通」）
+    const level = (v: unknown): AiLevel => (v === 0 || v === 2 || v === 3 ? v : 1)
+    // 旧存档只有单档 aiLevel ⇒ 两侧都继承它
+    const legacy = o.aiLevel
     return {
-      aiLevel: o.aiLevel === 0 || o.aiLevel === 2 ? o.aiLevel : 1,
+      aiLevelPartner: o.aiLevelPartner === undefined ? level(legacy) : level(o.aiLevelPartner),
+      aiLevelOpponent: o.aiLevelOpponent === undefined ? level(legacy) : level(o.aiLevelOpponent),
       aiSpeedMs:
         typeof o.aiSpeedMs === 'number' && Number.isFinite(o.aiSpeedMs)
           ? Math.max(0, Math.min(5000, o.aiSpeedMs))
@@ -69,6 +85,9 @@ export function loadPrefs(): Prefs {
       ruleConfig: sanitizeConfig(o.ruleConfig),
       cardSize,
       animation: o.animation !== false,
+      // 缺字段按默认：历史牌条默认开、提示即选中默认关
+      showHistory: o.showHistory !== false,
+      hintSelects: o.hintSelects === true,
     }
   } catch {
     return DEFAULT_PREFS
@@ -109,6 +128,9 @@ export function loadState(): GameState | null {
       revealed: HAND_SIZE,
       declarePrompted: true,
       dealPrompt: false,
+      // 体验项由 Prefs 覆盖（见 main.ts），这里只做形状兜底
+      showHistory: o.showHistory !== false,
+      hintSelects: o.hintSelects === true,
     }
   } catch {
     return null
