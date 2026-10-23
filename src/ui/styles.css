@@ -274,7 +274,7 @@ html, body {
   display: flex;
   justify-content: center;
   /* 上方留白要同时容下：提示角标（.card--hint::after 会探出牌顶 ~8px）
-     与选中抬起（translateY(-10px)）。留 12px 才不会被出牌区压住。 */
+     与选中抬起（translateY(-6px)）。留 12px 两者叠加也不会压到出牌区。 */
   min-height: calc(var(--card-w) * 1.4 + 12px);
   padding: 12px 0 2px;
   --hand-step: 0.58;
@@ -288,13 +288,12 @@ html, body {
 /* 悬停不抬起：抬起 + z-index 会把右边那张牌盖掉一大半（每张只露出 ~87px），
    右边那张既看不见、也点不中 —— 这是 v1.2.1 修掉的坑，别再改回来。 */
 .hand .card:hover { transform: none; }
-/* 但「已选中」必须抬起，否则只有一圈描边，选中状态不够直观（v1.2.3）。
-   幅度取 10px：只盖住右邻牌顶部一条窄带，不影响点选右邻牌。
+/* 但「已选中」要抬起几个像素，否则只有一圈描边，选中状态不够直观。
+   **不加 z-index**：抬起来就够了，置顶会把右邻牌压住（v1.2.1 的坑就在置顶）。
    选择器写成 .card.card--selected（0,3,0）与 :hover 同权重、且声明在后
    ⇒ 鼠标移到已选中的牌上不会被 :hover 压回原位。 */
 .hand .card.card--selected {
-  transform: translateY(-10px);
-  z-index: 2;
+  transform: translateY(-6px);
   filter: drop-shadow(0 2px 9px rgba(24, 95, 165, 0.6));
 }
 .hand-empty { color: rgba(255, 255, 255, 0.4); font-size: 13px; align-self: center; }
