@@ -274,7 +274,8 @@ html, body {
   display: flex;
   justify-content: center;
   /* 上方留白要同时容下：提示角标（.card--hint::after 会探出牌顶 ~8px）
-     与选中抬起（translateY(-6px)）。留 12px 两者叠加也不会压到出牌区。 */
+     与选中抬起（translateY(-12px)）。留 12px 刚好等于抬起量，
+     选中牌顶边正好落在内边距上沿，不会压到出牌区。 */
   min-height: calc(var(--card-w) * 1.4 + 12px);
   padding: 12px 0 2px;
   --hand-step: 0.58;
@@ -293,7 +294,7 @@ html, body {
    选择器写成 .card.card--selected（0,3,0）与 :hover 同权重、且声明在后
    ⇒ 鼠标移到已选中的牌上不会被 :hover 压回原位。 */
 .hand .card.card--selected {
-  transform: translateY(-6px);
+  transform: translateY(-12px);
   filter: drop-shadow(0 2px 9px rgba(24, 95, 165, 0.6));
 }
 .hand-empty { color: rgba(255, 255, 255, 0.4); font-size: 13px; align-self: center; }
