@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_RULE_CONFIG } from '@core'
-import type { Card } from '@core'
+import type { Rank } from '@core'
 import { newGame } from '@app/game'
 import type { GameState, TrickRecord } from '@app/state'
 import { displayPlays, replaySummary } from '@app/view'
@@ -18,7 +18,7 @@ function withHistory(n: number): GameState {
   const base = newGame(DEFAULT_RULE_CONFIG, 2, 0, 7)
   const history: TrickRecord[] = Array.from({ length: n }, (_, i) => ({
     leader: 0,
-    plays: [{ seat: (i % 4) as 0 | 1 | 2 | 3, cards: [C(0, 12 - i)] }],
+    plays: [{ seat: (i % 4) as 0 | 1 | 2 | 3, cards: [C(0, (12 - i) as Rank)] }],
     winner: (i % 4) as 0 | 1 | 2 | 3,
     score: i === 2 ? 20 : 0,
   }))
