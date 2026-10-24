@@ -38,6 +38,7 @@ state = {
   animSpeed: prefs.animSpeed,
   showHistory: prefs.showHistory,
   hintSelects: prefs.hintSelects,
+  showCounter: prefs.showCounter,
   pendingConfig: prefs.ruleConfig,
 }
 
@@ -136,6 +137,7 @@ function afterChange(): void {
     animSpeed: state.animSpeed,
     showHistory: state.showHistory,
     hintSelects: state.hintSelects,
+    showCounter: state.showCounter,
   })
   paint()
   // 必须在 paint 之后：飞行牌要量「这张牌刚画到哪儿」，以及牌堆的位置

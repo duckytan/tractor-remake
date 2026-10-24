@@ -6,7 +6,16 @@
  */
 
 import type { Card, Seat, Team } from '@core'
-import { teamOf } from '@core'
+import {
+  BIG_JOKER,
+  SMALL_JOKER,
+  cardScore,
+  levelRankToRankIndex,
+  makeDeck,
+  rankOfValue,
+  suitOfValue,
+  teamOf,
+} from '@core'
 import type { GameState, TrickRecord } from './state'
 import { ctxOf } from './state'
 
@@ -110,4 +119,78 @@ export function pastPlaysView(s: GameState, seat: Seat, depth: number): PastPlay
     tricks.push(p ? p.cards : [])
   }
   return { nos, tricks }
+}
+
+/* ---------- 记牌器（v1.3.14） ----------
+ *
+ * 只统计**已经打出来的牌**：底牌 8 张谁也不知道，所以这里的「未出」=
+ * 总数 − 已出（含仍在手里 + 还在底里的）。界面上要按这个口径措辞。
+ *
+ * 全部在 app 层算成纯数据（ui 不许碰 power / 规则概念，分层铁律）。
+ */
+
+export interface CounterSlot {
+  /** 未出的张数（总数 − 已出） */
+  readonly left: number
+  readonly total: number
+}
+
+export interface CounterView {
+  readonly bigJoker: CounterSlot
+  readonly smallJoker: CounterSlot
+  /** 主花色级牌 */
+  readonly levelTrump: CounterSlot
+  /** 其他三门的级牌（无将时 = 全部级牌） */
+  readonly levelOff: CounterSlot
+  /** 主牌总数（含王、级牌、以及「2 为常主」时的 2） */
+  readonly trumps: CounterSlot
+  /** 已打出的分数 / 全场总分 */
+  readonly pointsPlayed: number
+  readonly pointsTotal: number
+}
+
+/** 完整牌堆只建一次（108 张，记牌器的「总数」全靠它） */
+let fullDeckCache: readonly Card[] | null = null
+function fullDeck(): readonly Card[] {
+  fullDeckCache ??= makeDeck()
+  return fullDeckCache
+}
+
+/** 本局已经打出来的牌：历史每一墩 + 当前墩 */
+function playedCards(s: GameState): Card[] {
+  const out: Card[] = []
+  for (const t of s.history) for (const p of t.plays) out.push(...p.cards)
+  for (const p of s.trick.plays) out.push(...p.cards)
+  return out
+}
+
+export function counterView(s: GameState): CounterView {
+  const ctx = ctxOf(s)
+  const deck = fullDeck()
+  const played = playedCards(s)
+  const countIn = (pool: readonly Card[], pred: (c: Card) => boolean): number => {
+    let n = 0
+    for (const c of pool) if (pred(c)) n += 1
+    return n
+  }
+  const slot = (pred: (c: Card) => boolean): CounterSlot => {
+    const total = countIn(deck, pred)
+    return { total, left: total - countIn(played, pred) }
+  }
+
+  const levelIdx = levelRankToRankIndex(s.levelRank)
+  const isLevel = (c: Card): boolean => levelIdx !== null && rankOfValue(c.value) === levelIdx
+  const trumpSuit = s.forcedNT || s.trump === 'NT' ? null : s.trump
+  const isLevelTrump = (c: Card): boolean =>
+    isLevel(c) && trumpSuit !== null && suitOfValue(c.value) === trumpSuit
+
+  return {
+    bigJoker: slot((c) => c.value === BIG_JOKER),
+    smallJoker: slot((c) => c.value === SMALL_JOKER),
+    levelTrump: slot(isLevelTrump),
+    levelOff: slot((c) => isLevel(c) && !isLevelTrump(c)),
+    trumps: slot((c) => ctx.power.isTrump(c.value)),
+    pointsPlayed: played.reduce((n, c) => n + cardScore(c.value), 0),
+    pointsTotal: deck.reduce((n, c) => n + cardScore(c.value), 0),
+  }
 }

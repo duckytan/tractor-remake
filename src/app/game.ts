@@ -515,6 +515,7 @@ function emptyBase(): GameState {
     animation: true,
     animSpeed: 'normal',
     confirmNew: false,
+    showCounter: false,
     showHistory: true,
     hintSelects: false,
     settingsOpen: false,
@@ -1129,6 +1130,11 @@ export function reduce(s: GameState, action: Action): GameState {
             cardSize: s.cardSize,
             animation: s.animation,
             animSpeed: s.animSpeed,
+            // 体验项也要带过去：之前漏了这三项，「游戏结束 → 再来一局」会把
+            // 玩家关掉的历史牌条/提示即选中/记牌器悄悄重置成默认值
+            showHistory: s.showHistory,
+            hintSelects: s.hintSelects,
+            showCounter: s.showCounter,
           },
           s.seed + 1,
         )
@@ -1199,6 +1205,9 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'toggleHintSelects':
       return { ...s, hintSelects: !s.hintSelects }
+
+    case 'toggleShowCounter':
+      return { ...s, showCounter: !s.showCounter }
 
     case 'openSettings':
       return { ...s, settingsOpen: true, logOpen: false }

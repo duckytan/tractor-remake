@@ -151,6 +151,13 @@ export interface GameState {
    * 定主阶段（还没开打）不拦，直接重开。
    */
   readonly confirmNew: boolean
+  /**
+   * 记牌器开关（v1.3.14）：牌桌上方显示「未出的王 / 级牌 / 主牌 / 已出分」。
+   *
+   * **默认关**：记牌器是辅助工具，有人视为作弊（记牌本来是牌技的一部分），
+   * 所以做成显式开关而不是默认开。
+   */
+  readonly showCounter: boolean
   /** 手牌前方「最近几墩」历史牌条开关（体验项，立即生效） */
   readonly showHistory: boolean
   /**
@@ -209,6 +216,7 @@ export type Action =
   | { readonly type: 'toggleAnimation' }
   | { readonly type: 'toggleShowHistory' }
   | { readonly type: 'toggleHintSelects' }
+  | { readonly type: 'toggleShowCounter' }
   | { readonly type: 'toggleLog' }
   | { readonly type: 'showHint'; readonly ids: readonly number[] }
   | { readonly type: 'hintSelect'; readonly ids: readonly number[] }
@@ -287,6 +295,7 @@ export const emptyState = (): GameState => ({
   animation: true,
   animSpeed: 'normal',
   confirmNew: false,
+  showCounter: false,
   showHistory: true,
   hintSelects: false,
   settingsOpen: false,

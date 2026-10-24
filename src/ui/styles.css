@@ -85,7 +85,8 @@ html, body {
    积分栏移出 .south 后，手牌前方才有空间放历史牌条 */
 #app {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  /* 行：顶栏 / 积分栏 / 记牌器（关闭时为空，高度 0）/ 牌桌 */
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   height: 100%;
   min-height: 620px;
 }
@@ -593,6 +594,24 @@ html, body {
   pointer-events: auto;
   cursor: pointer;
 }
+/* ---------- 记牌器（v1.3.14） ---------- */
+.counter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 12px;
+  padding: 3px 12px;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(0, 0, 0, 0.16);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.counter__item { white-space: nowrap; }
+.counter__item b { color: #e8e6df; font-weight: 600; }
+/* 这一门已经出完 ⇒ 淡出，一眼看出「没了」 */
+.counter__item.is-done { opacity: 0.35; }
+
 .toast.is-error { background: rgba(120, 32, 32, 0.95); }
 /* 弹层打开时只做提示、不吃点击（面板底部按钮常常正好落在 toast 上） */
 .toast.is-modal { pointer-events: none; cursor: default; }
@@ -645,6 +664,7 @@ html, body {
   .hand-bar .btn { padding: 5px 10px; font-size: 12px; }
   .hint-text { font-size: 11px; }
   .seat-tag { font-size: 10px; gap: 4px; }
+  .counter { font-size: 10.5px; gap: 2px 8px; padding: 2px 6px; }
 
 }
 
@@ -670,6 +690,7 @@ html, body {
   .hand-bar .btn { padding: 2px 8px; font-size: 11px; }
   .hint-text { font-size: 10.5px; }
   .seat-tag { font-size: 9.5px; }
+  .counter { font-size: 10px; gap: 2px 7px; padding: 1px 8px; }
   .toast { padding: 5px 12px; font-size: 11.5px; }
 }
 

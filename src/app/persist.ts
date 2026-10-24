@@ -57,6 +57,8 @@ export interface Prefs {
   readonly showHistory: boolean
   /** 提示即选中 */
   readonly hintSelects: boolean
+  /** 记牌器 */
+  readonly showCounter: boolean
 }
 
 const DEFAULT_PREFS: Prefs = {
@@ -70,6 +72,7 @@ const DEFAULT_PREFS: Prefs = {
   animSpeed: 'normal',
   showHistory: true,
   hintSelects: false,
+  showCounter: false,
 }
 
 /**
@@ -138,6 +141,7 @@ export function loadPrefs(): Prefs {
       // 缺字段按默认：历史牌条默认开、提示即选中默认关
       showHistory: o.showHistory !== false,
       hintSelects: o.hintSelects === true,
+      showCounter: o.showCounter === true,
     }
   } catch {
     return DEFAULT_PREFS

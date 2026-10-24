@@ -14,7 +14,8 @@ import type { AiLevel } from '@ai/policy'
 import type { Action, CardSize, GameState } from '@app/state'
 import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
-import { pastPlaysView, trickLogView } from '@app/view'
+import { counterView, pastPlaysView, trickLogView } from '@app/view'
+import type { CounterSlot } from '@app/view'
 import { backEl, cardEl, ensureDefs } from './card'
 import { isInFlight } from './dealFly'
 
@@ -211,6 +212,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     </header>
 
     <div class="scorebar status" data-slot="status"></div>
+    ${counterStrip(s)}
 
     <main class="felt">
       <div class="seat seat--north" data-slot="north"></div>
@@ -547,6 +549,27 @@ export function confirmNewPanel(s: GameState): string {
   </div>`
 }
 
+export /**
+ * 记牌器（v1.3.14）：一行显示「未出 / 总数」。
+ *
+ * 口径：只统计**已经打出来的牌**，底牌 8 张谁也不知道，所以算在「未出」里。
+ * 关掉时返回空串 —— `#app` 的网格行是 auto，空 div 高度为 0，不占地方。
+ */
+function counterStrip(s: GameState): string {
+  if (!s.showCounter) return ''
+  const c = counterView(s)
+  const item = (label: string, slot: CounterSlot): string =>
+    `<span class="counter__item${slot.left === 0 ? ' is-done' : ''}">${label} <b>${slot.left}</b>/${slot.total}</span>`
+  return `<div class="counter" data-slot="counter" title="记牌器：未出 / 总数（底牌 8 张谁也不知道，算在「未出」里）">
+      ${item('大王', c.bigJoker)}
+      ${item('小王', c.smallJoker)}
+      ${item('主级', c.levelTrump)}
+      ${item('副级', c.levelOff)}
+      ${item('主', c.trumps)}
+      <span class="counter__item${c.pointsPlayed >= c.pointsTotal ? ' is-done' : ''}">分 <b>${c.pointsPlayed}</b>/${c.pointsTotal}</span>
+    </div>`
+}
+
 export function settlePanel(s: GameState): string {
   const r = s.lastSettle
   if (!r) return ''
@@ -725,6 +748,7 @@ function settingsPanel(s: GameState): string {
       </div>
       ${swAct('toggleShowHistory', '各家出牌留痕', `各家面前显示最近 ${PAST_DEPTH} 墩的历史小牌`, s.showHistory)}
       ${swAct('toggleHintSelects', '提示即选中', '点「提示」直接选中提示的牌（会覆盖已选牌，并写入存档）', s.hintSelects)}
+      ${swAct('toggleShowCounter', '记牌器', '牌桌上方显示未出的王 / 级牌 / 主牌 / 已出分（辅助工具，默认关）', s.showCounter)}
     </div>
 
     <div class="set-foot">
@@ -980,6 +1004,9 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
         break
       case 'toggleHintSelects':
         act.dispatch({ type: 'toggleHintSelects' })
+        break
+      case 'toggleShowCounter':
+        act.dispatch({ type: 'toggleShowCounter' })
         break
       case 'setAiLevel':
         if (val !== undefined) act.dispatch({ type: 'setAiLevel', level: Number(val) as AiLevel })
