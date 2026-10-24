@@ -28,7 +28,14 @@ export default defineConfig({
     // 在受限环境（沙箱 / 无写权限的 TEMP）会 EPERM，且**静默丢文件**
     // （表现为「只跑了 1 个测试文件」）。关掉隔离后稳定跑全部文件。
     // 前提：core 是纯函数、无模块级可变状态 —— 这正是 ADR-004 要求的。
+    //
+    // **必须 singleThread**（v1.3.11）：`pool: 'threads'` 默认按 CPU 核数开线程，
+    // 而 isolate:false 的语义是「所有文件共用一个 worker」。多线程下每个线程一份
+    // 模块注册表，覆盖率与「测试是否共享模块级状态」都会随核数变化 ——
+    // 同一份代码实测：8 核全局 70.83%，2 核 68.40%（CI 就是 2 核，直接卡在门槛下）。
+    // 强制单线程后任何机器结果一致。
     pool: 'threads',
+    poolOptions: { threads: { singleThread: true } },
     isolate: false,
 
     coverage: {
