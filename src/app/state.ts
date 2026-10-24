@@ -143,6 +143,14 @@ export interface GameState {
   readonly animation: boolean
   /** 动画速度档位：慢 / 中 / 快（影响发牌、出牌、收墩、手牌重排的全部时长） */
   readonly animSpeed: AnimSpeed
+  /**
+   * 「重新开局」二次确认弹层是否打开。
+   *
+   * 出牌 / 埋底阶段点顶栏「新游戏」会先问一次 —— 那个按钮紧挨着「设置 / 记录」，
+   * 误点一次就把整局进度清掉（含存档），代价太大。
+   * 定主阶段（还没开打）不拦，直接重开。
+   */
+  readonly confirmNew: boolean
   /** 手牌前方「最近几墩」历史牌条开关（体验项，立即生效） */
   readonly showHistory: boolean
   /**
@@ -196,6 +204,8 @@ export type Action =
   | { readonly type: 'closeSettings' }
   | { readonly type: 'setCardSize'; readonly size: CardSize }
   | { readonly type: 'setAnimSpeed'; readonly speed: AnimSpeed }
+  | { readonly type: 'askNewGame' }
+  | { readonly type: 'cancelNewGame' }
   | { readonly type: 'toggleAnimation' }
   | { readonly type: 'toggleShowHistory' }
   | { readonly type: 'toggleHintSelects' }
@@ -276,6 +286,7 @@ export const emptyState = (): GameState => ({
   cardSize: 'M',
   animation: true,
   animSpeed: 'normal',
+  confirmNew: false,
   showHistory: true,
   hintSelects: false,
   settingsOpen: false,

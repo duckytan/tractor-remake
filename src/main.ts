@@ -148,8 +148,11 @@ function afterChange(): void {
 let lastPainted: GameState | null = null
 
 function paint(): void {
+  // 出牌动画只在「出牌阶段 + 动画开」时需要前后帧快照。
+  // 发牌阶段每 55ms 一次 paint，每次都量 30+ 个矩形（强制同步布局）纯属浪费。
+  const wantFx = state.animation && state.phase === 'play'
   // 顺序不能换：render 会重建整棵 DOM，旧元素的矩形只能在它之前量
-  const before = captureFx(root as HTMLElement, lastPainted ?? state)
+  const before = wantFx ? captureFx(root as HTMLElement, lastPainted ?? state) : null
   lastPainted = state
   setAnimScale(state.animSpeed)
   render(root as HTMLElement, state, {
@@ -159,7 +162,7 @@ function paint(): void {
     canUndo: canUndo(state, undoStore),
   })
   trackDealAnimation(root as HTMLElement, state)
-  trackPlayFx(root as HTMLElement, state, before)
+  if (before !== null) trackPlayFx(root as HTMLElement, state, before)
 }
 
 function dispatch(a: Action): void {
@@ -270,8 +273,9 @@ window.addEventListener('keydown', (ev) => {
     ev.preventDefault()
     dispatch({ type: 'playSelected' })
   } else if (ev.code === 'Escape') {
-    // 弹层优先关闭
-    if (state.settingsOpen) dispatch({ type: 'closeSettings' })
+    // 弹层优先关闭（确认框 > 设置 > 记录 > 取消选牌）
+    if (state.confirmNew) dispatch({ type: 'cancelNewGame' })
+    else if (state.settingsOpen) dispatch({ type: 'closeSettings' })
     else if (state.logOpen) dispatch({ type: 'toggleLog' })
     else dispatch({ type: 'clearSelect' })
   } else if (ev.key === 'h' || ev.key === 'H') {

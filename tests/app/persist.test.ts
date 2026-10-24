@@ -16,8 +16,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PREFS_VERSION, loadPrefs, savePrefs } from '@app/persist'
-import type { RuleConfig } from '@core'
+import { PREFS_VERSION, clearState, loadPrefs, loadState, savePrefs, saveState } from '@app/persist'
+import { STATE_VERSION } from '@app/state'
+import type { GameState } from '@app/state'
+import { DEFAULT_RULE_CONFIG } from '@core'
+import type { Card, RuleConfig } from '@core'
+import { newGame, reduce } from '@app/game'
+import { declareAndPass } from '../helpers/declare'
 
 /** 存档 key，与 persist.ts 里的 `KEY_PREFS` 保持一致 */
 const KEY_PREFS = 'tractor.prefs.v1'
@@ -127,5 +132,94 @@ describe('偏好设置：动画速度档位（v1.3.8）', () => {
     expect(loadPrefs().animSpeed).toBe('fast')
     store.setItem(KEY_PREFS, JSON.stringify({ prefsVersion: PREFS_VERSION, animSpeed: 'turbo' }))
     expect(loadPrefs().animSpeed).toBe('normal')
+  })
+})
+
+describe('对局存档：loadState / saveState / clearState', () => {
+  /** 造一个可恢复的对局（contract 阶段故意不恢复，所以必须打到 play） */
+  const playState = (seed: number) => {
+    let s = newGame(DEFAULT_RULE_CONFIG, 1, 420, seed)
+    s = declareAndPass(s, 0)
+    if (s.phase === 'bury') {
+      const hand = s.hands[s.dealer] as readonly Card[]
+      s = reduce(s, { type: 'bury', ids: hand.slice(0, 8).map((c) => c.id) })
+    }
+    return s
+  }
+
+  it('存 → 读：手牌 / 阶段 / 墩数原样回来', () => {
+    const s = playState(31)
+    saveState(s)
+    const back = loadState()
+    expect(back).not.toBeNull()
+    expect(back?.phase).toBe(s.phase)
+    expect(back?.hands.map((h) => h.length)).toEqual(s.hands.map((h) => h.length))
+    expect(back?.seed).toBe(s.seed)
+  })
+
+  it('定主阶段不恢复（否则亮主按钮全灰、把玩家锁死在定主界面）', () => {
+    const s = newGame(DEFAULT_RULE_CONFIG, 1, 420, 32)
+    expect(s.phase).toBe('contract')
+    saveState(s)
+    expect(loadState()).toBeNull()
+  })
+
+  it('版本号不匹配 ⇒ null', () => {
+    const s = playState(33)
+    saveState({ ...s, version: STATE_VERSION - 1 })
+    expect(loadState()).toBeNull()
+  })
+
+  it('hands 形状不对 ⇒ null', () => {
+    const s = playState(34)
+    saveState({ ...s, hands: [] })
+    expect(loadState()).toBeNull()
+    saveState({ ...s, hands: 'nope' as unknown as GameState['hands'] })
+    expect(loadState()).toBeNull()
+  })
+
+  it('JSON 损坏 ⇒ null（不能让游戏起不来）', () => {
+    store.setItem('tractor.state.v1', '{oops')
+    expect(loadState()).toBeNull()
+  })
+
+  it('瞬时字段不跨会话恢复：hintIds 清空、revealed 补满、发牌提示复位', () => {
+    const s = playState(35)
+    saveState({
+      ...s,
+      hintIds: [1, 2],
+      revealed: 3,
+      declarePrompted: false,
+      dealPrompt: true,
+    })
+    const back = loadState()
+    expect(back?.hintIds).toEqual([])
+    expect(back?.revealed).toBe((s.hands[0] as readonly Card[]).length)
+    expect(back?.declarePrompted).toBe(true)
+    expect(back?.dealPrompt).toBe(false)
+  })
+
+  it('clearState 清掉存档', () => {
+    saveState(playState(36))
+    clearState()
+    expect(loadState()).toBeNull()
+  })
+
+  it('存储抛异常时读写都不崩（隐私模式）', () => {
+    const boom = {
+      getItem() {
+        throw new Error('denied')
+      },
+      setItem() {
+        throw new Error('denied')
+      },
+      removeItem() {
+        throw new Error('denied')
+      },
+    }
+    vi.stubGlobal('localStorage', boom)
+    expect(() => saveState(playState(37))).not.toThrow()
+    expect(loadState()).toBeNull()
+    expect(() => clearState()).not.toThrow()
   })
 })

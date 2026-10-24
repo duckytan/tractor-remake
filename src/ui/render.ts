@@ -415,7 +415,9 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const ov = q('overlay')
     // 发牌暂停提示时把手牌露出来（否则遮罩+模糊让人看不清自己有什么牌）
     ov.dataset.mode = s.phase === 'contract' && s.dealPrompt ? 'deal' : ''
-    if (s.settingsOpen) {
+    if (s.confirmNew) {
+      ov.innerHTML = confirmNewPanel(s)
+    } else if (s.settingsOpen) {
       ov.innerHTML = settingsPanel(s)
     } else if (s.logOpen) {
       ov.innerHTML = logPanel(s)
@@ -526,7 +528,26 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   bind(root, s, act)
 }
 
-function settlePanel(s: GameState): string {
+/**
+ * 「重新开局」二次确认。
+ *
+ * 顶栏的「新游戏」紧挨着「设置 / 记录」，出牌途中误点一次就会清掉整局进度
+ * （`dispatch` 里还会 `clearState()` 清存档）。这里先问一次。
+ * 定主阶段（还没开打）不弹，直接重开。
+ */
+export function confirmNewPanel(s: GameState): string {
+  const progress = s.phase === 'bury' ? '还没扣底' : `第 ${Math.min(s.tricksDone + 1, 25)} 墩`
+  return `<div class="panel" role="dialog" aria-label="重新开局确认">
+    <h2>重新开局？</h2>
+    <p class="muted">第 ${s.round} 局 · ${progress} · 当前进度会丢失（存档一并清掉）。</p>
+    <div class="panel-actions">
+      <button class="btn" data-act="cancelNew">取消</button>
+      <button class="btn btn--primary" data-act="confirmNew">重新开局</button>
+    </div>
+  </div>`
+}
+
+export function settlePanel(s: GameState): string {
   const r = s.lastSettle
   if (!r) return ''
   const over = s.phase === 'over'
@@ -544,7 +565,12 @@ function settlePanel(s: GameState): string {
   return `<div class="panel">
     <h2>${over ? `游戏结束 · ${r.winnerTeam === 0 ? '队A' : '队B'} 获胜` : '本局结算'}</h2>
     ${rows.join('')}
-    <button class="btn btn--primary" data-act="nextRound">${over ? '再来一局' : '下一局'}</button>
+    <div class="panel-actions">
+      <!-- 结算弹层会盖住顶栏，「记录」按钮点不到 ⇒ 这里补一个入口，
+           打完一局立刻能复盘（logOpen 优先级高于 settle，关闭后回到本面板） -->
+      <button class="btn" data-act="toggleLog">查看记录</button>
+      <button class="btn btn--primary" data-act="nextRound">${over ? '再来一局' : '下一局'}</button>
+    </div>
   </div>`
 }
 
@@ -921,8 +947,18 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
       case 'nextRound':
         act.dispatch({ type: 'nextRound' })
         break
-      case 'newGame':
+      case 'askNewGame':
+      case 'newGame': {
+        // 出牌 / 埋底阶段先确认；定主阶段没什么可丢的，直接重开
+        if (s.phase === 'play' || s.phase === 'bury') act.dispatch({ type: 'askNewGame' })
+        else act.dispatch({ type: 'newGame' })
+        break
+      }
+      case 'confirmNew':
         act.dispatch({ type: 'newGame' })
+        break
+      case 'cancelNew':
+        act.dispatch({ type: 'cancelNewGame' })
         break
       case 'toggleFourColor':
         act.dispatch({ type: 'toggleFourColor' })

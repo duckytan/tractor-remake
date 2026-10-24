@@ -187,6 +187,9 @@ export function loadState(): GameState | null {
       // 体验项由 Prefs 覆盖（见 main.ts），这里只做形状兜底
       showHistory: o.showHistory !== false,
       hintSelects: o.hintSelects === true,
+      // 「重新开局」确认弹层是瞬时 UI 状态：读档一律关掉，
+      // 否则「确认框开着时关掉页面」会让下次启动直接弹确认框
+      confirmNew: false,
     }
   } catch {
     return null

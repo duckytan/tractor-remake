@@ -503,6 +503,9 @@ html, body {
 .panel .row span { color: var(--ink-dim); }
 .panel .row b { font-weight: 600; }
 .panel > .btn { margin-top: 18px; width: 100%; background: #1d9e75; border-color: #1d9e75; color: #fff; }
+/* 结算面板的两个按钮并排（查看记录 / 下一局） */
+.panel-actions { display: flex; gap: 10px; margin-top: 18px; }
+.panel-actions .btn { flex: 1; }
 .panel > .btn:hover { background: #23b586; }
 
 .trump-grid {

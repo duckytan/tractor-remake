@@ -27,6 +27,8 @@ import { HUMAN_SEAT } from '@app/state'
 import type { AnimSpeed, GameState } from '@app/state'
 import { ANIM_SPEED_SCALE } from '@app/state'
 import { cardEl } from './card'
+import { justResolved, newPlaysSince } from './fxDiff'
+import type { PlayLike } from './fxDiff'
 
 /**
  * 动画速度倍率（慢 1.6 / 中 1 / 快 0.6）。
@@ -325,22 +327,24 @@ function flipHand(root: HTMLElement, prev: FxSnapshot): void {
 export function trackPlayFx(root: HTMLElement, s: GameState, prev: FxSnapshot): void {
   if (!s.animation || s.phase !== 'play') return
 
+  const prevPlays: PlayLike[] = [...prev.plays.entries()].map(([seat, p]) => ({
+    seat: seat as 0 | 1 | 2 | 3,
+    cards: p.cards,
+  }))
+
   // ① 出牌飞行：本墩新出现的牌，从「人类手牌 / AI 牌背」飞到出牌区
-  for (const play of s.trick.plays) {
-    const known = new Set(prev.plays.get(play.seat)?.cards.map((c) => c.id) ?? [])
-    const slot = play.seat === HUMAN_SEAT ? 'plays-mine' : `plays-${play.seat}`
-    const els = root.querySelectorAll<HTMLElement>(`[data-slot="${slot}"] .plays__now .card[data-id]`)
-    for (const el of els) {
-      const id = Number(el.dataset.id)
-      if (known.has(id)) continue
-      const card = play.cards.find((c) => c.id === id)
-      if (card === undefined) continue
+  for (const np of newPlaysSince(prevPlays, s.trick.plays)) {
+    const slot = np.seat === HUMAN_SEAT ? 'plays-mine' : `plays-${np.seat}`
+    for (const card of np.cards) {
+      const id = card.id
+      const el = root.querySelector<HTMLElement>(
+        `[data-slot="${slot}"] .plays__now .card[data-id="${id}"]`,
+      )
+      if (el === null) continue
       const to = el.getBoundingClientRect()
       if (to.width <= 0) continue
       const from =
-        play.seat === HUMAN_SEAT
-          ? (prev.hand.get(id) ?? prev.southHand)
-          : (prev.seats.get(play.seat) ?? null)
+        np.seat === HUMAN_SEAT ? (prev.hand.get(id) ?? prev.southHand) : (prev.seats.get(np.seat) ?? null)
       if (from === null) continue
 
       // 真牌先藏：当前元素加 class，后续 paint 由 cardWrap 按 inFlight 继续藏
@@ -359,7 +363,7 @@ export function trackPlayFx(root: HTMLElement, s: GameState, prev: FxSnapshot): 
   }
 
   // ② 收墩归位：上一帧本墩有牌、这一帧刚结算 ⇒ 四家的牌飞向赢家并淡出
-  if (s.history.length > prev.histLen && prev.plays.size > 0) {
+  if (justResolved(prev.histLen, prevPlays, s.history.length)) {
     const rec = s.history[s.history.length - 1]
     const target = rec
       ? rec.winner === HUMAN_SEAT

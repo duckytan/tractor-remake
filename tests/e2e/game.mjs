@@ -42,6 +42,26 @@ const clickHandCards = async (page, ids) => {
   }
 }
 
+/**
+ * 点顶栏「新游戏」。
+ *
+ * v1.3.9 起：出牌 / 埋底阶段点它会先弹「重新开局？」确认框（防止误点丢局），
+ * 确认框是 overlay，会挡住顶栏 —— 不处理的话后续点击全部超时。
+ * 这里按 state.confirmNew 判断要不要补点一次「重新开局」。
+ */
+const startNewGame = async (page) => {
+  await page.click('[data-act="newGame"]')
+  await page.waitForTimeout(100)
+  const needConfirm = await page.evaluate(() => {
+    try {
+      return JSON.parse(localStorage.getItem('tractor.state.v1') || '{}').confirmNew === true
+    } catch {
+      return false
+    }
+  })
+  if (needConfirm) await page.click('[data-act="confirmNew"]')
+}
+
 const consoleErrors = []
 const pageErrors = []
 const failedUrls = []
@@ -165,7 +185,7 @@ try {
   let buryEvidence = ''
   for (let attempt = 1; attempt <= 20 && !buryCovered; attempt++) {
     if (attempt > 1) {
-      await page.click('[data-act="newGame"]')
+      await startNewGame(page)
       // AI 抢主成功时没有面板 —— 这一局直接跳过，下一轮再试
       if (!(await waitPanel())) {
         buryEvidence = `attempt=${attempt} AI 发牌中抢主（无面板），重试`
@@ -189,7 +209,7 @@ try {
 
   // 重置回定主阶段，跑主链路（AI 抢主时重开，最多 5 次）
   for (let i = 0; i < 5; i++) {
-    await page.click('[data-act="newGame"]')
+    await startNewGame(page)
     if (await waitPanel()) break
   }
 
