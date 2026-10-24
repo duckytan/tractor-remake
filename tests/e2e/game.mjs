@@ -66,12 +66,23 @@ const consoleErrors = []
 const pageErrors = []
 const failedUrls = []
 
-const browser = await chromium.launch({
-  channel: 'chrome',
+/**
+ * 浏览器：优先用系统 Chrome（本机 / GitHub Actions 的 ubuntu 镜像都自带），
+ * 没有就退回 Playwright 自带的 chromium（CI 里 `npx playwright install chromium` 之后可用）。
+ * 以前写死 `channel: 'chrome'`，在没装 Chrome 的环境会直接启动失败。
+ */
+const launchOpts = {
   headless: true,
   args: ['--no-sandbox'],
   ...(PROXY ? { proxy: { server: PROXY } } : {}),
-})
+}
+let browser
+try {
+  browser = await chromium.launch({ ...launchOpts, channel: 'chrome' })
+} catch (e) {
+  console.log(`（系统 Chrome 不可用，改用自带 chromium：${e.message.split('\n')[0]}）`)
+  browser = await chromium.launch(launchOpts)
+}
 
 try {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })

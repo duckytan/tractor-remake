@@ -1,5 +1,7 @@
 # 拖拉机大赛 · 网页重制版
 
+[![CI](https://github.com/duckytan/tractor-remake/actions/workflows/ci.yml/badge.svg)](https://github.com/duckytan/tractor-remake/actions/workflows/ci.yml)
+
 把 1999 年的 Windows 游戏《拖拉机大赛 Ver 1.1》重制为可在现代浏览器运行的版本。
 
 **重制的唯一动机**：原版是 632×450 定死的低分辨率窗口，在 2K 显示器上牌面看不清、

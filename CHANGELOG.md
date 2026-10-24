@@ -8,6 +8,26 @@
 
 ---
 
+## [1.3.10] - 2026-10-24
+
+> 接上 CI（GitHub Actions）。无功能改动。
+
+### 新增
+
+- **GitHub Actions CI**（`.github/workflows/ci.yml`），每次 push / PR 到 main 自动跑两个 job：
+  - `quality`：`typecheck` → `test:cov`（带覆盖率门槛）→ `build`
+  - `e2e`：构建 + 起 preview + 12 个浏览器端到端场景，失败时上传各阶段截图
+- 起因：v1.3.0 曾把失败的「L2 强于 L1」测试直接推到 main，v1.3.8 又把覆盖率门槛压红 ——
+  都是本地没跑测试、没有 CI 兜底导致的
+- README 顶部加 CI 徽章
+
+### 修复
+
+- e2e 的浏览器启动不再写死 `channel: 'chrome'`：优先系统 Chrome，不可用时自动退回
+  Playwright 自带 chromium（否则在没装 Chrome 的环境会直接启动失败）
+
+---
+
 ## [1.3.9] - 2026-10-24
 
 > 用户要求「全面检查一遍整个游戏，继续优化」。本轮是一次体检，**无规则改动**。

@@ -1,0 +1,82 @@
+# CI：类型检查 / 单测 + 覆盖率门槛 / 构建 / 浏览器端到端
+#
+# 为什么要有这个：v1.3.0 曾把「L2 强于 L1」的失败测试直接推到 main（本地没跑测试），
+# 之后 v1.3.8 又把覆盖率门槛压红。没有 CI 时这些问题只能靠人工发现。
+#
+# 两个 job：
+#   quality —— 快（约 1~2 分钟），每次 push / PR 都跑
+#   e2e     —— 慢（要构建 + 起 preview + 12 个浏览器场景），同样每次跑
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一分支连续推送时取消上一次，省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: 类型 / 单测 / 覆盖率 / 构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖（严格按 package-lock）
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      # 带覆盖率门槛：低于 vitest.config.ts 里的 thresholds 会直接失败
+      - name: 单测 + 覆盖率门槛
+        run: npm run test:cov
+
+      - name: 构建
+        run: npm run build
+
+  e2e:
+    name: 浏览器端到端（12 个场景）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # 兜底：runner 自带的 Chrome 用不了时，e2e 会退回 Playwright 自带的 chromium
+      - name: 安装 Playwright chromium（兜底用）
+        run: npx playwright install --with-deps chromium
+
+      - name: 构建 → 起 preview → 跑端到端
+        run: |
+          npm run build
+          npx vite preview --port 4173 --host 127.0.0.1 &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:4173/ >/dev/null && break
+            sleep 0.5
+          done
+          npm run test:e2e
+
+      # 失败时把各阶段截图带出来，方便看是哪一步挂了
+      - name: 上传端到端截图
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-shots
+          path: .tmp/e2e-shots
+          if-no-files-found: ignore
+          retention-days: 7
