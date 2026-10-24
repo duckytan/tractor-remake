@@ -79,9 +79,9 @@
   <header>
     <h1>拖拉机 · 声音系统试听 <span>方案 v1</span></h1>
     <div class="sub">
-      <b>一条 10 个音的断奏旋律</b>，48 小节一轮循环，靠配器变化而不是改旋律来保持新鲜<br>
-      主旋律 v4：从参考曲谱学到三件事 —— 断奏留空隙、48 小节一轮、中段转调<br>
-      伴奏：马林巴，4 小节 × 8 个八分位置的网格音型（可点格子自己改）<br>
+      <b>C 大调 · 断奏 · 108 BPM</b> —— 三个场景全用大调，先保证"明亮"再谈别的<br>
+      主旋律 v5：大三音反复出现、上行多于下行、八分音符断奏，第 1 小节是「5 5 3 5 1」<br>
+      48 小节一轮循环，靠配器变化而不是改旋律来保持新鲜<br>
       全部实时合成，没有音频文件。先点「启动」，然后放着别管它
     </div>
   </header>
@@ -111,7 +111,7 @@
       <div class="grp" id="secBox"></div>
     </div>
     <div class="info" style="font-size:11.5px;margin-top:4px">
-      48 小节一轮（约 137 秒）。<b>旋律从头到尾只有一条，不变</b>；变的是配器 ——
+      48 小节一轮（108 BPM 下约 107 秒）。<b>旋律从头到尾只有一条，不变</b>；变的是配器 ——
       起 → 全奏 → 全奏 → 高八度 → 回落 → <b>呼吸（抽掉旋律）</b> → 全奏 →
       <b>转调 +2 半音</b> → 转调高八度 → 回落 → 极简 → 收尾。
     </div>
@@ -178,28 +178,27 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const SCALE = { minor: [0, 3, 5, 7, 10, 12], major: [0, 2, 4, 7, 9, 12] };
 
 /**
- * 核心动机：4 小节，**只有 10 个音**。格式 [拍位(0..15), 音级, 时值(拍)]。
- * 音级 0=主音 1=三音 2=四音 3=五音 4=小七 5=高八主音 —— 换调/换大小调只改 root+scale。
+ * 核心动机 v5：**大调五声 + 欢快型**。格式 [拍位(0..15), 音级, 时值(拍)]。
+ * 大调五声：0=主音 1=二音 2=大三音 3=五音 4=六音 5=高八主音（C D E G A C'）
  *
- * 为什么故意写得这么"少"：能哼得出来的东西才可能听一下午不腻。
- * 塞满音符的旋律听三遍就累了，留白的旋律反而耐听。
+ * v4 为什么"阴沉"：整个 `play` 场景是 **A 小调**，小三度天生就是暗的，
+ * 旋律再怎么改都救不回来。v5 把三个场景全换成 **C 大调**，这是最大的一刀。
  *
- * 四个"上头"的机关：
- *  ① **每句都从第 1 拍的后半拍进（x.5）** —— 这个切分是全曲的节奏指纹，
- *     而且刚好避开马林巴在第 1 / 3 拍上的低音，两者咬合成"你一句我一句"；
- *  ② 第 1 小节 A-C-E 就是主和弦分解，一听就知道"到家了"；
- *  ③ 第 2 小节只有 2 个音（问长答短），第 3 小节冲到主音高八度当全曲最高点；
- *  ④ 第 4 小节落回主音后**留一整拍半的空**，循环点自然呼吸，不会"卡"在一起。
+ * 欢快靠这四条：
+ *  ① **大三音（E）反复出现** —— 大三度是"明/暗"的唯一开关；
+ *  ② **上行多于下行** —— 上行=上扬，下行=叹息；
+ *  ③ **八分音符 + 断奏**，密度上来才有"跳"的感觉（v4 是长音，听起来像慢歌）；
+ *  ④ 第 1 小节的 **G G E G C'** 是"5 5 3 5 1"，最经典的欢快动机型。
  */
 const HOOK = [
-  // 第 1 小节（Am / C）  A  C  E —— 主和弦分解
-  [0.5, 0, 0.5], [1.0, 1, 0.5], [1.5, 3, 1.5],
-  // 第 2 小节（F / G）  A  C —— 只有两个音，问长答短
-  [4.5, 0, 0.5], [5.0, 1, 2.0],
-  // 第 3 小节（C / Am）  G  A' —— 全曲最高点
-  [8.5, 4, 0.5], [9.0, 5, 2.0],
-  // 第 4 小节（G / F）  G  C  A —— 落回主音，后半小节全空
-  [12.5, 4, 0.5], [13.0, 1, 0.5], [13.5, 0, 2.5]
+  // 第 1 小节（C）   E  G  A  G  E  —— 从大三音起，拱一下再回来
+  [0.5, 2, 0.5], [1.0, 3, 0.5], [1.5, 4, 0.5], [2.0, 3, 0.5], [2.5, 2, 1.0],
+  // 第 2 小节（G）   D  E  G  D  —— 落在五音
+  [4.5, 1, 0.5], [5.0, 2, 0.5], [5.5, 3, 0.5], [6.0, 1, 1.5],
+  // 第 3 小节（Am）  E  A  C'  —— 冲高
+  [8.5, 2, 0.5], [9.0, 4, 0.5], [9.5, 5, 1.0],
+  // 第 4 小节（F）   A  G  C  —— 落回主音，下一轮再从大三音起
+  [12.5, 4, 0.5], [13.0, 3, 0.5], [13.5, 0, 1.5]
 ];
 
 /**
@@ -263,7 +262,11 @@ const CHORD_NAME = { minor: ['Am', 'F', 'C', 'G'], major: ['C', 'G', 'Am', 'F'] 
  */
 function chordVoices(triad, root) {
   const r = triad[0], th = triad[1], f = triad[2];
-  const base = root + r;          // 低音
+  let base = root + r;            // 低音
+  // 把低音收进 root-7 .. root+4 这一带：和弦表里靠后的和弦（G/Am/F）本来是往上排的，
+  // 不收进来就会整体飘高，低音跑到 A3 去、高三冲到 C6，听着又薄又尖。
+  while (base > root + 4) base -= 12;
+  while (base < root - 7) base += 12;
   const t3 = th - r, t5 = f - r;  // 三音 / 五音相对根音的音程（3 或 4 / 7）
   return [base, base + 12, base + 12 + t3, base + 12 + t5, base + 24, base + 24 + t3];
 }
@@ -297,23 +300,23 @@ const ACC_GRID = Array.from({ length: 32 }, (_, i) => ACC_BAR[i % 8]);
 const ROW_VEL = [1.0, 0.92, 0.85, 0.80, 0.78, 0.62];
 
 /** 音色（试听时可换，正式版做成设置项） */
-const INST_LABEL = { marimba: '马林巴', pluck: '拨弦', piano: '钢琴' };
+const INST_LABEL = { bell: '钟琴', marimba: '马林巴', pluck: '拨弦', piano: '钢琴' };
 let accInst = 'marimba';   // 伴奏
-let melInst = 'piano';     // 主旋律
+let melInst = 'bell';      // 主旋律：钟琴最"欢快"，钢琴偏叙事、马林巴偏暖
 
 /**
  * 场景 = 参数集（不是曲目）。
  * root 用 MIDI：45=A2、48=C3。
  */
 const SCENES = {
-  // BPM 比上一版各 +6~8：76 → 84。同一段旋律，稍快一点"推着走"的感觉明显不一样，
-  // 这是"上头"最省力的一个旋钮（嫌快就把这三个数改回去，其它都不用动）
-  calm:   { name: '定主 · 埋底 · 回放', bpm: 68, root: 45, key: 'minor',
-            bright: 0.34, pad: 0.30, shaker: 0,    verb: 0.42 },
-  play:   { name: '出牌（平稳）',        bpm: 84, root: 45, key: 'minor',
-            bright: 0.56, pad: 0.18, shaker: 0.12, verb: 0.34 },
-  settle: { name: '结算 · 终局',         bpm: 96, root: 48, key: 'major',
-            bright: 0.82, pad: 0.22, shaker: 0.18, verb: 0.30 }
+  // 全部 C 大调。v4 的 play 是 A 小调，小三度天生就暗，旋律怎么写都救不回来。
+  // BPM 也整体提上去了：欢快的第一要素是"走得动"，慢速大调一样会显得闷。
+  calm:   { name: '定主 · 埋底 · 回放', bpm: 92,  root: 48, key: 'major',
+            bright: 0.62, pad: 0.10, shaker: 0.10, verb: 0.34 },
+  play:   { name: '出牌（平稳）',        bpm: 108, root: 48, key: 'major',
+            bright: 0.78, pad: 0.06, shaker: 0.18, verb: 0.30 },
+  settle: { name: '结算 · 终局',         bpm: 122, root: 48, key: 'major',
+            bright: 0.92, pad: 0.06, shaker: 0.24, verb: 0.28 }
 };
 
 let sceneKey = 'play';
@@ -476,6 +479,45 @@ function vPiano(when, midi, vel, dur, bright) {
 }
 
 /**
+ * 钟琴 / 八音盒：泛音比 1 : 2.76 : 5.4（金属棒的振动模态，非整数）——
+ * 这是"欢快"最直接的音色，游戏里那些"可爱"的 BGM 基本都是这个路子。
+ * 代价是容易刺耳，所以：① 电平只有钢琴的 6 成；② 超过 9kHz 的泛音直接不生成；
+ * ③ 越往高走余音越短。
+ */
+function vBell(when, midi, vel, dur, bright) {
+  const f = mtof(midi);
+  const out = ctx.createGain();
+  out.gain.value = vel * 0.16;
+  out.connect(musicBus);
+
+  const hold = Math.max(0.16, dur * 0.58);
+  // 高次泛音的占比跟着 bright 走：紧张时更"脆"，松时更"圆"
+  const PARTS = [[1, 1, 1.0], [2.76, 0.26 + 0.16 * bright, 0.52], [5.4, 0.04 + 0.08 * bright, 0.30]];
+  for (let i = 0; i < PARTS.length; i++) {
+    const h = PARTS[i][0], amp = PARTS[i][1], dm = PARTS[i][2];
+    if (f * h > 9000) continue;          // 泛音封顶，防止高把位刺耳
+    const end = when + hold * dm;
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * h;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(amp, when + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, end);
+    o.connect(g); g.connect(out);
+    o.start(when); o.stop(end + 0.05);
+  }
+  // 敲击瞬间的一点金属"叮"
+  const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
+  const nf = ctx.createBiquadFilter(); nf.type = 'bandpass';
+  nf.frequency.value = Math.min(7000, f * 3.2); nf.Q.value = 2.4;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0, when);
+  ng.gain.linearRampToValueAtTime(0.05 * vel, when + 0.002);
+  ng.gain.exponentialRampToValueAtTime(0.0001, when + 0.045);
+  ns.connect(nf); nf.connect(ng); ng.connect(out);
+  ns.start(when); ns.stop(when + 0.06);
+}
+
+/**
  * 马林巴：泛音比例 1 : 4 : 9（木琴类乐器的物理特征），起音带一点木槌闷响。
  * 三根正弦就够 —— 木琴的「木味」全在这个非整数泛音比上，堆多了反而糊。
  */
@@ -548,7 +590,8 @@ function shaker(when, vel) {
 }
 
 function voice(kind, when, midi, vel, dur, bright) {
-  if (kind === 'marimba') vMarimba(when, midi, vel, dur, bright);
+  if (kind === 'bell') vBell(when, midi, vel, dur, bright);
+  else if (kind === 'marimba') vMarimba(when, midi, vel, dur, bright);
   else if (kind === 'pluck') vPluck(when, midi, vel, dur, bright);
   else vPiano(when, midi, vel, dur, bright);
 }
@@ -611,9 +654,13 @@ function scheduleBar(bi, when) {
     }
   }
 
-  // ④ 沙锤（反拍）
+  // ④ 沙锤：八分音符连续，正拍轻、反拍重
+  //    v4 只在反拍打，听感是"顿"的；连续八分的"沙沙"才有往前推的劲 —— 欢快的一半在这里
   if (sc.shaker > 0) {
-    for (let i = 1; i < 8; i += 2) shaker(when + i * beat * 0.5, sc.shaker * sec.shk * (1 + 0.5 * t));
+    for (let i = 0; i < 8; i++) {
+      const amp = sc.shaker * sec.shk * (i % 2 ? 1 : 0.5) * (1 + 0.5 * t);
+      shaker(when + i * beat * 0.5, amp);
+    }
   }
 }
 
