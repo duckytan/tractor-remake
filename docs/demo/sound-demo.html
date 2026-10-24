@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>拖拉机 · 声音系统试听（方案 v1）</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei","Hiragino Sans GB",system-ui,sans-serif;
+    background:radial-gradient(ellipse at 50% 0%,#14322a 0%,#0c1a15 45%,#070f0c 100%);
+    color:#e8e6df;min-height:100vh;padding:26px 14px 60px;
+  }
+  .wrap{max-width:920px;margin:0 auto}
+  header{text-align:center;margin-bottom:22px}
+  h1{font-size:22px;font-weight:600;letter-spacing:.5px;color:#f0eee6}
+  h1 span{font-size:12px;font-weight:400;color:#7f9c8e;margin-left:8px;
+          padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.07)}
+  .sub{font-size:12.5px;color:#7f9c8e;margin-top:8px;line-height:1.8}
+  .card{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);
+        border-radius:14px;padding:15px 17px;margin-bottom:13px}
+  .card h2{font-size:12.5px;color:#8fb3a3;margin-bottom:11px;font-weight:600;
+           letter-spacing:.6px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+  .card h2 .hint{font-size:11px;color:#68887a;font-weight:400;letter-spacing:0}
+  button{
+    font-family:inherit;font-size:13px;cursor:pointer;color:#dfe6e1;
+    border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.06);
+    border-radius:9px;padding:9px 14px;transition:.14s;
+  }
+  button:hover:not(:disabled){background:rgba(255,255,255,.12);transform:translateY(-1px)}
+  button:disabled{opacity:.38;cursor:not-allowed}
+  button.primary{background:#1d9e75;border-color:#1d9e75;color:#fff;font-weight:600;padding:11px 22px}
+  button.primary:hover:not(:disabled){background:#23b586}
+  button.on{background:rgba(29,158,117,.22);border-color:#1d9e75;color:#7fe0bb;font-weight:600}
+  .row{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin-bottom:9px}
+  .row:last-child{margin-bottom:0}
+  .row label{font-size:12px;color:#8fb3a3;min-width:64px}
+  input[type=range]{flex:1;min-width:120px;accent-color:#1d9e75}
+  .val{font-size:11.5px;color:#8fb3a3;min-width:38px;text-align:right;font-variant-numeric:tabular-nums}
+  .sfxgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px}
+  .sfxgrid button{font-size:12px;padding:9px 6px}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .tag{font-size:11px;padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.05);
+       border:1px solid rgba(255,255,255,.09);color:#7f9c8e}
+  .tag.act{background:rgba(29,158,117,.18);border-color:rgba(29,158,117,.55);color:#7fe0bb;font-weight:600}
+  .info{font-size:12px;color:#8fb3a3;line-height:2}
+  .info b{color:#e8e6df;font-weight:600}
+  .kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px 14px}
+  .kv div{font-size:12px;color:#7f9c8e}
+  .kv b{color:#e8e6df;font-weight:600;font-variant-numeric:tabular-nums}
+  footer{text-align:center;font-size:11.5px;color:#5d7a6d;margin-top:18px;line-height:1.9}
+  .step{font-size:12px;color:#f0c674;min-height:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>拖拉机 · 声音系统试听 <span>方案 v1</span></h1>
+    <div class="sub">
+      一条核心动机（A 小调五声）+ 3 个基底 + 连续紧张度 · 12 个电子音效（音高跟调、轮转不重复）<br>
+      全部实时合成，没有音频文件。先点「启动」，再随便点。
+    </div>
+  </header>
+
+  <!-- 启动 / 音量 -->
+  <div class="card">
+    <h2>开关与音量</h2>
+    <div class="row">
+      <button class="primary" id="btnStart">▶ 启动</button>
+      <span class="step" id="step"></span>
+    </div>
+    <div class="row"><label>总音量</label><input type="range" id="vol" min="0" max="100" value="72"><span class="val" id="volV">72</span></div>
+    <div class="row"><label>BGM</label><input type="range" id="bgm" min="0" max="100" value="52"><span class="val" id="bgmV">52</span></div>
+    <div class="row"><label>音效</label><input type="range" id="sfx" min="0" max="100" value="72"><span class="val" id="sfxV">72</span></div>
+  </div>
+
+  <!-- 场景 -->
+  <div class="card">
+    <h2>场景 <span class="hint">换场景在下一小节生效，不硬切</span></h2>
+    <div class="row" id="sceneBox"></div>
+    <div class="row"><label>紧张度</label><input type="range" id="tens" min="0" max="100" value="0"><span class="val" id="tensV">0</span></div>
+    <div class="row">
+      <button id="btnRamp">⤴ 紧张度自动爬升（20 秒，听它怎么变紧）</button>
+    </div>
+    <div class="tags" id="layerBox"></div>
+  </div>
+
+  <!-- 音效 -->
+  <div class="card">
+    <h2>音效 <span class="hint">音高跟当前场景的调性走；同一事件会轮转音级</span></h2>
+    <div class="sfxgrid" id="sfxBox"></div>
+    <div class="row" style="margin-top:11px">
+      <button id="btnRr">🔁 连打 8 次「出牌」听轮转</button>
+      <button id="btnDemo">🎬 演示一局（发牌→亮主→出牌→赢墩→结算）</button>
+    </div>
+  </div>
+
+  <!-- 状态 -->
+  <div class="card">
+    <h2>引擎状态</h2>
+    <div class="kv" id="stat"></div>
+    <div class="info" id="stat2" style="margin-top:8px"></div>
+  </div>
+
+  <footer>
+    纯前端 · 零依赖 · Web Audio 实时合成<br>
+    这条动机是「A 小调五声」，五声在大调/小调两套和声下都成立 —— 所以只换和弦就能改变明暗，不用改旋律
+  </footer>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ============================================================
+   0. 基础
+   ============================================================ */
+const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+
+/** 音阶（相对主音的半音） */
+const SCALE = { minor: [0, 3, 5, 7, 10], major: [0, 2, 4, 7, 9] };
+
+/**
+ * 核心动机：4 小节，用「音级」写（0=A 1=C 2=D 3=E 4=G）
+ * 这样换调性 / 换大小调只改 root+scale，旋律不用重写。
+ * 结构：起句上行（停 E）→ 落句回 C → 抬高到 G → 收束回 A
+ */
+const MOTIF = [
+  [0, 0, 1], [1, 1, .5], [1.5, 2, .5], [2, 3, 1.5],          // 第1小节
+  [4, 4, 1], [5, 3, .5], [5.5, 2, .5], [6, 1, 2],            // 第2小节
+  [8, 0, 1], [9, 1, .5], [9.5, 2, .5], [10, 3, 1], [11, 4, 1], // 第3小节（最高点）
+  [12, 3, 2], [14, 2, 1], [15, 0, 1]                          // 第4小节（收束）
+];
+
+/** 和弦：相对主音的半音偏移（4 小节一轮） */
+const CHORDS = {
+  // i – VI – III – VII  （Am – F – C – G）
+  minor: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5]],
+  // I – V – vi – IV    （C – G – Am – F）
+  major: [[0, 4, 7], [7, 11, 14], [9, 12, 16], [5, 9, 12]]
+};
+
+/** 伴奏型：一小节 8 个八分位置，每格 {t:和弦音序号, o:八度} 或 null */
+const PAT = {
+  calm:   [null, null, { t: 0, o: 0 }, null, null, null, { t: 2, o: 0 }, null],
+  play:   [{ t: 0, o: 0 }, { t: 2, o: 0 }, { t: 1, o: 0 }, { t: 2, o: 0 },
+           { t: 0, o: 0 }, { t: 2, o: 0 }, { t: 1, o: 1 }, { t: 2, o: 0 }],
+  settle: [{ t: 0, o: 0 }, { t: 1, o: 0 }, { t: 2, o: 0 }, { t: 0, o: 1 },
+           { t: 0, o: 0 }, { t: 1, o: 0 }, { t: 2, o: 0 }, { t: 0, o: 1 }]
+};
+
+/**
+ * 场景 = 参数集（不是曲目）。
+ * root 用 MIDI：45=A2、48=C3。
+ */
+const SCENES = {
+  calm:   { name: '定主 · 埋底 · 回放', bpm: 62, root: 45, key: 'minor', acc: 'pluck', mel: 'piano',
+            dens: 0.25, bright: 0.34, pad: 0.30, shaker: 0,    verb: 0.42 },
+  play:   { name: '出牌（平稳）',        bpm: 76, root: 45, key: 'minor', acc: 'pluck', mel: 'piano',
+            dens: 0.55, bright: 0.56, pad: 0.18, shaker: 0.12, verb: 0.34 },
+  settle: { name: '结算 · 终局',         bpm: 92, root: 48, key: 'major', acc: 'piano', mel: 'piano',
+            dens: 0.72, bright: 0.82, pad: 0.22, shaker: 0.18, verb: 0.30 }
+};
+
+let sceneKey = 'play';
+let tensionTarget = 0;      // 0..1
+let tensionCur = 0;         // 平滑后的值
+let playing = false;
+let barIndex = 0, nextBarTime = 0, timerId = null;
+let volBgm = 0.52, volSfx = 0.72;
+let lastStatAt = 0;
+
+const scene = () => SCENES[sceneKey];
+
+/* ============================================================
+   1. 音频引擎
+   ============================================================ */
+let ctx = null, master, comp, dry, wet, wetGain, conv, musicBus, sfxBus;
+let noiseBuf = null;
+const pluckCache = new Map();
+
+/** 合成混响 IR：指数衰减噪声 + 一阶低通（逐采样递推，避免大量 Math.pow） */
+function makeIR(c, sec, decay, lp) {
+  const len = Math.floor(c.sampleRate * sec);
+  const buf = c.createBuffer(2, len, c.sampleRate);
+  const step = Math.exp(-decay / len);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    let z = 0, env = 1;
+    for (let i = 0; i < len; i++) {
+      const w = Math.random() * 2 - 1;
+      z += lp * (w - z);
+      d[i] = z * env;
+      env *= step;
+    }
+    for (let i = 0; i < c.sampleRate * 0.02; i++) d[i] *= 0.4;
+  }
+  return buf;
+}
+
+function makeNoise(c, sec) {
+  const len = Math.floor(c.sampleRate * sec);
+  const b = c.createBuffer(1, len, c.sampleRate);
+  const d = b.getChannelData(0);
+  let z = 0;
+  for (let i = 0; i < len; i++) { z += 0.4 * ((Math.random() * 2 - 1) - z); d[i] = z; }
+  return b;
+}
+
+function initAudio() {
+  if (ctx) return;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+  master = ctx.createGain(); master.gain.value = 0.72;
+  comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.knee.value = 20; comp.ratio.value = 2.8;
+  comp.attack.value = 0.008; comp.release.value = 0.24;
+  master.connect(comp); comp.connect(ctx.destination);
+
+  dry = ctx.createGain(); dry.gain.value = 1; dry.connect(master);
+  conv = ctx.createConvolver(); conv.buffer = makeIR(ctx, 1.8, 4.6, 0.24);
+  wetGain = ctx.createGain(); wetGain.gain.value = 0.34;
+  wet = ctx.createGain(); wet.gain.value = 1;
+  wet.connect(conv); conv.connect(wetGain); wetGain.connect(master);
+
+  musicBus = ctx.createGain(); musicBus.gain.value = volBgm;
+  musicBus.connect(dry); musicBus.connect(wet);
+
+  sfxBus = ctx.createGain(); sfxBus.gain.value = volSfx;
+  sfxBus.connect(dry); sfxBus.connect(wet);
+
+  noiseBuf = makeNoise(ctx, 1.5);
+}
+
+/* ---- 拨弦（Karplus-Strong，按音高缓存） ---- */
+const PLUCK_SEC = 2.2;
+function renderPluck(buf, freq) {
+  const sr = ctx.sampleRate, out = buf.getChannelData(0);
+  const D = sr / freq - 1.35;
+  const L = Math.ceil(D) + 4;
+  const line = new Float32Array(L);
+  let z = 0;
+  for (let i = 0; i < L; i++) { const w = Math.random() * 2 - 1; z += 0.55 * (w - z); line[i] = z; }
+  const P = Math.max(1, Math.round(D * 0.16));
+  for (let i = L - 1; i >= P; i--) line[i] -= line[i - P] * 0.72;
+  let w = 0, lp = 0;
+  const R = 0.9962;
+  const tap = d => {
+    const p = w - d, ri0 = Math.floor(p), rf = p - ri0;
+    const ri = ((ri0 % L) + L) % L, rj = (ri + 1) % L;
+    return line[ri] * (1 - rf) + line[rj] * rf;
+  };
+  for (let n = 0; n < out.length; n++) {
+    const a = tap(D), b = tap(D + 1);
+    out[n] = a;
+    const avg = 0.5 * (a + b);
+    lp += 0.42 * (avg - lp);
+    line[w] = R * (0.35 * avg + 0.65 * lp);
+    w = (w + 1) % L;
+  }
+}
+function pluckBuf(midi) {
+  if (pluckCache.has(midi)) return pluckCache.get(midi);
+  const buf = ctx.createBuffer(1, Math.ceil(PLUCK_SEC * ctx.sampleRate), ctx.sampleRate);
+  renderPluck(buf, mtof(midi));
+  if (pluckCache.size > 200) pluckCache.clear();
+  pluckCache.set(midi, buf);
+  return buf;
+}
+
+/* ---- 音色 ---- */
+function vPluck(when, midi, vel, dur, bright) {
+  const src = ctx.createBufferSource();
+  src.buffer = pluckBuf(midi);
+  src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.002;
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.value = 1400 + bright * 4200; lp.Q.value = 0.6;
+  const body = ctx.createBiquadFilter(); body.type = 'peaking';
+  body.frequency.value = 150; body.Q.value = 1.1; body.gain.value = 3.6;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(vel * 0.30, when + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + Math.min(2.2, dur + 1.2));
+  src.connect(lp); lp.connect(body); body.connect(g); g.connect(musicBus);
+  src.start(when); src.stop(when + PLUCK_SEC);
+}
+
+function vPiano(when, midi, vel, dur, bright) {
+  const f = mtof(midi);
+  const out = ctx.createGain();
+  out.gain.value = vel * 0.17; out.connect(musicBus);
+  const base = 1.3 + Math.max(0, (72 - midi)) * 0.08;
+  const PARTS = [[1, 1], [2, 0.42], [3, 0.2], [4, 0.1]];
+  for (let i = 0; i < PARTS.length; i++) {
+    const h = PARTS[i][0], amp = PARTS[i][1] * (h > 2 ? 0.55 + bright * 0.6 : 1);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.value = f * h * (1 + 0.0004 * h * h);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(amp, when + 0.006);
+    g.gain.exponentialRampToValueAtTime(amp * 0.3, when + 0.2);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + base * (1 - i * 0.16) + dur * 0.3);
+    o.connect(g); g.connect(out);
+    o.start(when); o.stop(when + base * (1 - i * 0.16) + dur * 0.3 + 0.1);
+  }
+  // 击槌噪声
+  const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
+  const nf = ctx.createBiquadFilter(); nf.type = 'bandpass';
+  nf.frequency.value = 2400; nf.Q.value = 0.8;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0, when);
+  ng.gain.linearRampToValueAtTime(0.06 * vel, when + 0.003);
+  ng.gain.exponentialRampToValueAtTime(0.0001, when + 0.07);
+  ns.connect(nf); nf.connect(ng); ng.connect(out);
+  ns.start(when); ns.stop(when + 0.1);
+}
+
+function vPad(when, midi, dur, vel) {
+  const f = mtof(midi);
+  const out = ctx.createGain();
+  out.gain.setValueAtTime(0, when);
+  out.gain.linearRampToValueAtTime(vel, when + 0.5);
+  out.gain.setValueAtTime(vel, when + Math.max(0.6, dur - 0.5));
+  out.gain.linearRampToValueAtTime(0, when + dur + 0.6);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.value = 900; lp.Q.value = 0.5;
+  lp.connect(out); out.connect(musicBus);
+  [[1, 'sine', 1], [1.003, 'triangle', 0.5]].forEach(cfg => {
+    const o = ctx.createOscillator(); o.type = cfg[1];
+    o.frequency.value = f * cfg[0];
+    const g = ctx.createGain(); g.gain.value = cfg[2];
+    o.connect(g); g.connect(lp);
+    o.start(when); o.stop(when + dur + 0.8);
+  });
+}
+
+function shaker(when, vel) {
+  const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5200;
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 8200; bp.Q.value = 1.2;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(vel * 0.05, when + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 0.09);
+  s.connect(hp); hp.connect(bp); bp.connect(g); g.connect(musicBus);
+  s.start(when); s.stop(when + 0.12);
+}
+
+function voice(kind, when, midi, vel, dur, bright) {
+  if (kind === 'pluck') vPluck(when, midi, vel, dur, bright);
+  else vPiano(when, midi, vel, dur, bright);
+}
+
+/* ============================================================
+   2. 调度器（40ms 轮询 + 0.45s 前瞻 + 卡顿保护）
+   ============================================================ */
+function scheduleBar(bi, when) {
+  const sc = scene();
+  const t = tensionCur;
+  const bpm = sc.bpm * (1 + 0.08 * t);
+  const beat = 60 / bpm;
+  // 紧张时整体降 0..2 个半音
+  const tr = Math.round(-2 * t);
+  const root = sc.root + tr;
+  const chord = CHORDS[sc.key][bi % 4].map(x => x + root);
+  const bright = clamp(sc.bright + 0.3 * t, 0, 1);
+
+  // ① 伴奏
+  const pat = PAT[sc.key === 'major' ? 'settle' : sceneKey === 'calm' ? 'calm' : 'play'];
+  for (let i = 0; i < 8; i++) {
+    const slot = pat[i];
+    // dens：高紧张时把休止格补上（加密）
+    const fill = slot === null && t > 0.45 && i % 2 === 1;
+    if (!slot && !fill) continue;
+    const s = slot || { t: i % 3 === 1 ? 2 : 0, o: 0 };
+    const pitch = chord[s.t] + 12 * s.o;
+    const vel = (i % 2 === 0 ? 0.9 : 0.68) * (slot ? 1 : 0.55) * (1 + 0.1 * t);
+    voice(sc.acc, when + i * beat * 0.5, pitch, vel, beat * 0.85, bright);
+  }
+
+  // ② 低音（每小节一个长音）
+  voice('pluck', when, chord[0] - 12, 0.42, beat * 3, bright * 0.7);
+
+  // ③ 和声床
+  vPad(when, chord[0] + 12, beat * 4, (sc.pad + 0.1 * t) * 0.55);
+
+  // ④ 主旋律（动机按小节切片）
+  const loopBar = bi % 4;
+  for (const [b, deg, dur] of MOTIF) {
+    if (Math.floor(b / 4) !== loopBar) continue;
+    const local = b % 4;
+    const pitch = root + SCALE[sc.key][deg];
+    const vel = (0.88 + Math.random() * 0.1) * (1 + 0.08 * t);
+    voice(sc.mel, when + local * beat, pitch, vel, dur * beat, bright);
+  }
+
+  // ⑤ 沙锤（反拍）
+  if (sc.shaker > 0) {
+    for (let i = 1; i < 8; i += 2) shaker(when + i * beat * 0.5, sc.shaker * (1 + 0.5 * t));
+  }
+
+  // ⑥ 高紧张：八分低音脉冲（"心跳"）
+  if (t > 0.6) {
+    for (let i = 0; i < 8; i++) {
+      voice('pluck', when + i * beat * 0.5, chord[0] - 12, 0.16 * t, beat * 0.35, 0.3);
+    }
+  }
+}
+
+function scheduler() {
+  if (!playing) return;
+  const now = ctx.currentTime;
+  // 紧张度平滑（约 0.7 秒收敛）
+  tensionCur += (tensionTarget - tensionCur) * 0.06;
+
+  const sc = scene();
+  const barDur = (60 / (sc.bpm * (1 + 0.08 * tensionCur))) * 4;
+
+  // 卡顿保护：主线程被卡过就把欠的小节跳过，绝不补播
+  if (nextBarTime < now) {
+    const skip = Math.ceil((now - nextBarTime) / barDur);
+    barIndex += skip;
+    nextBarTime += skip * barDur;
+  }
+  let guard = 0;
+  while (nextBarTime < now + 0.45 && guard++ < 6) {
+    scheduleBar(barIndex, nextBarTime);
+    nextBarTime += barDur;
+    barIndex++;
+  }
+  // 状态面板节流到 200ms 一次：scheduler 每 40ms 跑一次，每次都重建 DOM 会拖慢主线程
+  if (performance.now() - lastStatAt > 200) { lastStatAt = performance.now(); updateStat(); }
+}
+
+function start() {
+  initAudio();
+  if (ctx.state === 'suspended') ctx.resume();
+  playing = true;
+  barIndex = 0;
+  nextBarTime = ctx.currentTime + 0.25;
+  timerId = setInterval(scheduler, 40);
+  scheduler();
+  document.getElementById('btnStart').textContent = '⏸ 停止';
+  document.getElementById('btnStart').classList.add('on');
+}
+
+function stop() {
+  playing = false;
+  if (timerId !== null) { clearInterval(timerId); timerId = null; }
+  // 停止 = 关掉整个 context：已排出去的音符不会自己停（照抄参考实现的教训）
+  if (ctx) { try { ctx.close(); } catch (e) {} ctx = null; }
+  pluckCache.clear();
+  document.getElementById('btnStart').textContent = '▶ 启动';
+  document.getElementById('btnStart').classList.remove('on');
+  updateStat();
+}
+
+/* ============================================================
+   3. 音效（音高跟调 + 轮转 + 密度抑制）
+   ============================================================ */
+const rr = {};        // 每个事件的轮转计数
+const lastAt = {};    // 上次触发时间（密度抑制）
+
+/** 音效的音高：场景 root 高两个八度 + 音阶音级（轮转） */
+function sfxPitch(name, degreeOverride) {
+  const sc = scene();
+  const deg = degreeOverride !== undefined ? degreeOverride : (rr[name] = ((rr[name] || 0) + 1) % 5);
+  return sc.root + 24 + SCALE[sc.key][deg] + Math.round(-2 * tensionCur);
+}
+
+function now() { return ctx.currentTime + 0.004; }
+
+function noiseHit(when, freq, q, dur, vel, type) {
+  const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  const f = ctx.createBiquadFilter(); f.type = type || 'bandpass';
+  f.frequency.value = freq; f.Q.value = q;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(vel, when + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  s.connect(f); f.connect(g); g.connect(sfxBus);
+  s.start(when); s.stop(when + dur + 0.02);
+}
+
+function ping(when, midi, dur, vel, bright, type) {
+  const o = ctx.createOscillator(); o.type = type || 'triangle';
+  o.frequency.value = mtof(midi);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.value = 1200 + bright * 7000;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(vel, when + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  o.connect(lp); lp.connect(g); g.connect(sfxBus);
+  o.start(when); o.stop(when + dur + 0.05);
+}
+
+const SFX = {
+  /* 发牌：噪声短 tick（演示里每 4 张一次；实际游戏 55ms/张 ⇒ 必须降频） */
+  deal: { label: '发牌 tick', play: (w) => noiseHit(w, 3000, 1.2, 0.02, 0.14) },
+
+  /* 选牌 / 取消：极短方波 */
+  select: { label: '选牌', play: (w) => ping(w, sfxPitch('select'), 0.03, 0.10, 0.5, 'square') },
+  deselect: { label: '取消选牌', play: (w) => ping(w, sfxPitch('deselect', 1), 0.03, 0.09, 0.4, 'square') },
+
+  /* 出牌：噪声扫频（与 280ms 飞行动画同步） */
+  play: {
+    label: '出牌',
+    play: (w) => {
+      const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
+      bp.frequency.setValueAtTime(700, w);
+      bp.frequency.exponentialRampToValueAtTime(3200, w + 0.18);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, w);
+      g.gain.linearRampToValueAtTime(0.20, w + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, w + 0.26);
+      s.connect(bp); bp.connect(g); g.connect(sfxBus);
+      s.start(w); s.stop(w + 0.3);
+      // 叠一个根音，让它"在调上"
+      ping(w + 0.01, sfxPitch('play', 0), 0.12, 0.07, 0.4);
+    }
+  },
+
+  /* 赢墩：上行两音 */
+  win: {
+    label: '赢墩',
+    play: (w) => {
+      ping(w, sfxPitch('win', 0), 0.16, 0.13, 0.75);
+      ping(w + 0.085, sfxPitch('win', 4), 0.22, 0.11, 0.85);
+    }
+  },
+
+  /* 输墩：单音闷一点 */
+  lose: { label: '输墩', play: (w) => ping(w, sfxPitch('lose', 3), 0.16, 0.10, 0.12, 'sine') },
+
+  /* 亮主：三音琶音 */
+  declare: {
+    label: '亮主',
+    play: (w) => {
+      [0, 2, 4].forEach((d, i) => ping(w + i * 0.06, sfxPitch('declare', d), 0.24, 0.11, 0.9));
+    }
+  },
+
+  /* 反主：四音上行 + 升半音（戏剧性） */
+  counter: {
+    label: '反主',
+    play: (w) => {
+      [0, 1, 2, 4].forEach((d, i) => ping(w + i * 0.055, sfxPitch('counter', d) + 1, 0.28, 0.12, 1));
+      noiseHit(w + 0.2, 6000, 2, 0.12, 0.06);
+    }
+  },
+
+  /* 加固：金属 click + 低频 thud */
+  guard: {
+    label: '加固',
+    play: (w) => {
+      noiseHit(w, 5200, 3, 0.06, 0.16);
+      ping(w, scene().root + 12, 0.18, 0.12, 0.2, 'sine');
+      noiseHit(w + 0.01, 900, 1, 0.1, 0.08);
+    }
+  },
+
+  /* 埋底：低频"放置" */
+  bury: {
+    label: '埋底',
+    play: (w) => {
+      ping(w, scene().root - 12, 0.18, 0.16, 0.15, 'sine');
+      noiseHit(w, 500, 0.8, 0.12, 0.08, 'lowpass');
+    }
+  },
+
+  /* 升级：五音上行 */
+  levelup: {
+    label: '升级 / 上台',
+    play: (w) => {
+      [0, 1, 2, 3, 4].forEach((d, i) => ping(w + i * 0.07, sfxPitch('levelup', d), 0.3, 0.11, 0.85));
+    }
+  },
+
+  /* 按钮 / 弹层：极轻（注意 ping 收的是 MIDI 音高，不是频率） */
+  ui: { label: '按钮', play: (w) => ping(w, scene().root + 36, 0.012, 0.05, 0.5, 'square') }
+};
+
+/** 触发一个音效（带密度抑制：同事件 70ms 内不重复） */
+function sfx(name, opts) {
+  if (!ctx || !playing) return;
+  const t = performance.now();
+  if (!opts || !opts.force) {
+    if (lastAt[name] && t - lastAt[name] < 70) return;
+  }
+  lastAt[name] = t;
+  const cfg = SFX[name];
+  if (cfg) cfg.play(now());
+}
+
+/* ============================================================
+   4. UI
+   ============================================================ */
+const $ = id => document.getElementById(id);
+
+/* 场景按钮 */
+Object.keys(SCENES).forEach(k => {
+  const b = document.createElement('button');
+  b.textContent = SCENES[k].name;
+  b.dataset.scene = k;
+  if (k === sceneKey) b.classList.add('on');
+  b.onclick = () => {
+    sceneKey = k;
+    Array.prototype.forEach.call($('sceneBox').children, c => c.classList.toggle('on', c.dataset.scene === k));
+    // 换场景给一个短提示音（真正的变化在下一小节生效）
+    sfx(k === 'settle' ? 'levelup' : 'ui', { force: true });
+    if (k !== 'play') { tensionTarget = 0; $('tens').value = 0; $('tensV').textContent = '0'; }
+    updateStat();
+  };
+  $('sceneBox').appendChild(b);
+});
+
+/* 音效按钮 */
+Object.keys(SFX).forEach(k => {
+  const b = document.createElement('button');
+  b.textContent = SFX[k].label;
+  b.onclick = () => { if (!playing) return; sfx(k, { force: true }); };
+  $('sfxBox').appendChild(b);
+});
+
+/* 音量 */
+const bindVol = (id, vid, fn) => {
+  const el = $(id), v = $(vid);
+  el.oninput = () => { v.textContent = el.value; fn(+el.value / 100); };
+};
+bindVol('vol', 'volV', x => { if (master) master.gain.setTargetAtTime(x, ctx.currentTime, 0.05); });
+bindVol('bgm', 'bgmV', x => { volBgm = x; if (musicBus) musicBus.gain.setTargetAtTime(x, ctx.currentTime, 0.05); });
+bindVol('sfx', 'sfxV', x => { volSfx = x; if (sfxBus) sfxBus.gain.setTargetAtTime(x, ctx.currentTime, 0.05); });
+
+/* 紧张度 */
+$('tens').oninput = () => {
+  tensionTarget = +$('tens').value / 100;
+  $('tensV').textContent = $('tens').value;
+};
+
+/* 紧张度自动爬升 */
+$('btnRamp').onclick = () => {
+  if (!playing) return;
+  if (sceneKey !== 'play') {
+    $('sceneBox').querySelector('[data-scene="play"]').click();
+  }
+  let x = 0;
+  $('step').textContent = '紧张度爬升中…（0 → 100，20 秒）';
+  const id = setInterval(() => {
+    x = Math.min(100, x + 5);
+    $('tens').value = x; $('tensV').textContent = x;
+    tensionTarget = x / 100;
+    if (x >= 100) {
+      clearInterval(id);
+      $('step').textContent = '紧张度已到 100 —— 听：加密 / 降调 / 变亮 / 低音脉冲';
+    }
+  }, 1000);
+};
+
+/* 连打 8 次出牌音：听轮转 */
+$('btnRr').onclick = () => {
+  if (!playing) return;
+  $('step').textContent = '连打 8 次「出牌」—— 音高在 I / III / V / VII / X 之间轮转';
+  for (let i = 0; i < 8; i++) {
+    setTimeout(() => sfx('play', { force: true }), i * 240);
+  }
+  setTimeout(() => { $('step').textContent = ''; }, 2400);
+};
+
+/* 演示一局 */
+$('btnDemo').onclick = () => {
+  if (!playing) return;
+  const steps = [
+    [0,    '发牌：每 4 张一次 tick', () => { for (let i = 0; i < 4; i++) setTimeout(() => sfx('deal', { force: true }), i * 280); }],
+    [1200, '亮主', () => sfx('declare', { force: true })],
+    [2100, '四家出牌（whoosh ×4）', () => { for (let i = 0; i < 4; i++) setTimeout(() => sfx('play', { force: true }), i * 420); }],
+    [4000, '本墩：我方赢', () => sfx('win', { force: true })],
+    [4800, '下一墩：四家出牌', () => { for (let i = 0; i < 4; i++) setTimeout(() => sfx('play', { force: true }), i * 420); }],
+    [6800, '本墩：对方赢', () => sfx('lose', { force: true })],
+    [7600, '本局结算（切到结算基底 + 升级音）', () => {
+      $('sceneBox').querySelector('[data-scene="settle"]').click();
+      sfx('levelup', { force: true });
+    }],
+    [9000, '演示结束（想再听一次就再点）', () => { $('step').textContent = ''; }]
+  ];
+  steps.forEach(([ms, label, fn]) => setTimeout(() => { $('step').textContent = '演示：' + label; fn(); }, ms));
+};
+
+/* 启动按钮 */
+$('btnStart').onclick = () => {
+  if (playing) { stop(); } else { start(); }
+};
+
+/* ============================================================
+   5. 状态显示
+   ============================================================ */
+function updateStat() {
+  const sc = scene();
+  const bpm = Math.round(sc.bpm * (1 + 0.08 * tensionCur));
+  const keyName = sc.key === 'minor' ? 'A 小调' : 'C 大调';
+  const tr = Math.round(-2 * tensionCur);
+  $('stat').innerHTML = [
+    ['场景', sc.name],
+    ['BPM', bpm],
+    ['调性', keyName + (tr ? `（${tr} 半音）` : '')],
+    ['紧张度', Math.round(tensionCur * 100)],
+    ['小节', barIndex]
+  ].map(([k, v]) => `<div>${k}　<b>${v}</b></div>`).join('');
+
+  const layers = [
+    ['伴奏', true], ['低音', true], ['和声床', sc.pad > 0.01],
+    ['主旋律', true], ['沙锤', sc.shaker > 0], ['低音脉冲', tensionCur > 0.6]
+  ];
+  $('layerBox').innerHTML = layers
+    .map(([n, on]) => `<span class="tag${on ? ' act' : ''}">${n}</span>`).join('');
+
+  $('stat2').innerHTML = playing
+    ? `运行中 · 音效音高 = 场景主音 + 音阶音级（当前根音 <b>${sc.root + 24 + tr}</b>）· 采样率 ${ctx.sampleRate} Hz`
+    : '未启动 —— 点上面的「启动」（浏览器要求先有用户手势才能出声）';
+}
+
+updateStat();
+})();
+</script>
+</body>
+</html>
