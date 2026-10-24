@@ -80,10 +80,10 @@
   <header>
     <h1>拖拉机 · 声音系统试听 <span id="verBadge">v6</span></h1>
     <div class="sub">
-      <b>五套曲风任选</b>：跳跃八音盒 / 卡通木琴 / 温柔钢琴 / 电子轻快 / 和风拨弹<br>
-      每套是<b>不同的旋律 + 音色 + 音区 + 速度</b>，不是换件衣服 —— 挨个听，挑一个再往下调<br>
-      如果角标不是 <b>v7</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开<br>
-      全部实时合成，没有音频文件。先点「启动」，再切曲风
+      <b>默认「慵懒午后」</b> —— 按「慵懒的下午，一群人在一起打牌」写的：<br>
+      74 BPM · 全部落在正拍 · 长音 · 大量留白 · 音域只跨一个五度 · 每句以下行二度叹气收尾<br>
+      另外五套备选（挨个听，挑一个再往下调）：温柔钢琴 / 和风拨弹 / 跳跃八音盒 / 卡通木琴 / 电子轻快<br>
+      如果角标不是 <b>v8</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开
     </div>
   </header>
 
@@ -223,6 +223,21 @@ const HOOKS = {
     [8.5, 2, .5], [9.0, 2, .5], [9.5, 3, .5], [10.0, 3, .5],
     [12.5, 4, .5], [13.0, 3, .5], [13.5, 0, .5], [14.0, 5, 1.0]
   ],
+  // ★ 慵懒午后：8 小节，19 个音，几乎全是长音。
+  //   画面是「慵懒的下午，一群人在一起打牌」—— 要的是慢、松、暖、留白，
+  //   不是欢快。所以：全部落在正拍（off-beat 会造成紧迫感）、音域只有 D4-A4、
+  //   级进为主、每句以下行二度"叹气"收尾、句与句之间大量休止。
+  //   结构是「问 - 答」：1-4 小节起，5-8 小节同一形状低一度收束。
+  lazy: [
+    [0.0, 2, 2.5], [2.5, 1, 1.5],              // 1 (C)   E —— D，下行叹气
+    [4.0, 2, 2.0], [6.0, 1, 1.0], [7.0, 3, 1.0], // 2 (G)   E D G，停在五音
+    [8.0, 4, 2.5], [10.5, 3, 1.5],             // 3 (Am)  A —— G，落根音
+    [12.0, 4, 2.0], [14.0, 3, 1.0], [15.0, 4, 1.0], // 4 (F) A G A
+    [16.0, 3, 2.5], [18.5, 2, 1.5],            // 5 (C)   G —— E，比第 1 小节低一度
+    [20.0, 1, 2.0], [22.0, 2, 1.0], [23.0, 3, 1.0], // 6 (G) D E G
+    [24.0, 2, 2.5], [26.5, 3, 1.5],            // 7 (Am)  E —— G
+    [28.0, 4, 3.0], [31.0, 3, 1.0]             // 8 (F)   A(长) —— G，回到循环点
+  ],
   // E 和风：只有 9 个音、大量留白，最"雅"
   koto: [
     [0.5, 3, .5], [1.0, 4, 1.5],
@@ -234,19 +249,24 @@ const HOOKS = {
 
 /** 五套编曲：曲风决定旋律 + 音色 + 音区 + 速度 + 混音 */
 const STYLES = [
+  { id: 'lazy', name: '慵懒午后', hook: 'lazy', mel: 'piano', acc: 'marimba', oct: 24,
+    bpm: 74, bright: 0.58, pad: 0.05, shaker: 0.26, verb: 0.18, bassMul: 0.62,
+    note: '默认 · 长音留白 · 像午后牌桌' },
+  { id: 'soft', name: '温柔钢琴',   hook: 'soft', mel: 'piano', acc: 'pluck', oct: 24,
+    bpm: 96,  bright: 0.58, pad: 0.06, shaker: 0.20, verb: 0.14, note: '最静 · 长音大跳' },
+  { id: 'koto', name: '和风拨弹',   hook: 'koto', mel: 'pluck', acc: 'pluck', oct: 24,
+    bpm: 92,  bright: 0.48, pad: 0.10, shaker: 0.10, verb: 0.20, note: '最雅 · 9 个音大量留白' },
   { id: 'jump', name: '跳跃八音盒', hook: 'jump', mel: 'bell', acc: 'marimba', oct: 36,
     bpm: 112, bright: 0.78, pad: 0.04, shaker: 0.32, verb: 0.10, note: '通用欢快 · 钟琴高音' },
   { id: 'toon', name: '卡通木琴',   hook: 'toon', mel: 'marimba', acc: 'marimba', oct: 36,
     bpm: 128, bright: 0.86, pad: 0.03, shaker: 0.42, verb: 0.07, note: '最闹 · 反复音跳进' },
-  { id: 'soft', name: '温柔钢琴',   hook: 'soft', mel: 'piano', acc: 'pluck', oct: 24,
-    bpm: 96,  bright: 0.58, pad: 0.06, shaker: 0.20, verb: 0.14, note: '最静 · 长音大跳' },
   { id: 'chip', name: '电子轻快',   hook: 'chip', mel: 'pluck', acc: 'bell', oct: 36,
     bpm: 124, bright: 0.92, pad: 0.02, shaker: 0.34, verb: 0.08, note: '最有推进感 · 连续琶音' },
-  { id: 'koto', name: '和风拨弹',   hook: 'koto', mel: 'pluck', acc: 'pluck', oct: 24,
-    bpm: 92,  bright: 0.48, pad: 0.10, shaker: 0.10, verb: 0.20, note: '最雅 · 9 个音大量留白' }
 ];
 let styleIdx = 0;
 const style = () => STYLES[styleIdx];
+/** 旋律跨几小节（4 或 8）—— 慵懒是 8 小节的，其余是 4 小节 */
+const hookBars = (m) => Math.max.apply(null, m.map(n => Math.floor(n[0] / 4))) + 1;
 
 /**
  * 循环编排：4 小节一段，**12 段一轮 = 48 小节 ≈ 137 秒**（84 BPM）。
@@ -699,7 +719,9 @@ function scheduleBar(bi, when) {
       // 它的 4×/9× 次泛音就落进 3.5–5kHz —— 这正是之前完全缺失的「空气」频段
       // （实测 4kHz 以上原本只占 1%，声音再干净也发闷）。
       const pitch = voices[k] + (k === 5 ? 12 : 0);
-      voice(accInst, when + i * beat * 0.5, pitch, vel * ROW_VEL[k], beat * 0.9, bright);
+      // 低音行再按曲风缩放：慵懒要慢要松，低频太厚就会变「沉」
+      const rowMul = (k === 0 ? (style().bassMul || 1) : 1);
+      voice(accInst, when + i * beat * 0.5, pitch, vel * ROW_VEL[k] * rowMul, beat * 0.9, bright);
     }
   }
 
@@ -712,8 +734,12 @@ function scheduleBar(bi, when) {
   //    （+36 = C6-C7 已实测落在欢快区间；+24 = C5-C6 偏静，给温柔/和风用）
   if (sec.mel) {
     const st = style();
-    for (const [b, deg, dur] of HOOKS[st.hook]) {
-      if (Math.floor(b / 4) !== loopBar) continue;
+    const motif = HOOKS[st.hook];
+    // 旋律可能是 4 或 8 小节：按它自己的长度取「乐句内第几小节」，
+    // 否则 8 小节旋律会被 4 小节的 loopBar 切成两半
+    const phraseBar = Math.floor(bi / 4) % hookBars(motif);
+    for (const [b, deg, dur] of motif) {
+      if (Math.floor(b / 4) !== phraseBar) continue;
       const local = b % 4;
       const pitch = root + st.oct + sec.oct + SCALE[sc.key][deg];
       // 轻微人性化：力度 ±6%，起音错开几毫秒，避免听起来像打字机
@@ -968,6 +994,9 @@ function buildStyleBox() {
   $('styleNote').textContent = st.name + '：' + st.note + ' · ' + st.bpm + ' BPM · 旋律音区 '
     + (st.oct === 36 ? 'C6–C7（亮）' : 'C5–C6（柔）');
 }
+// 初始化时也按当前曲风同步一次音色，否则默认曲风（慵懒 = 钢琴）和
+// 音色选择器的高亮（模块默认 bell）会不一致
+accInst = style().acc; melInst = style().mel;
 buildStyleBox();
 
 /* 音色选择器（伴奏 / 主旋律共用一套逻辑） */
@@ -1124,7 +1153,7 @@ function updateStat() {
   const keyName = sc.key === 'minor' ? 'A 小调' : 'C 大调';
   // 版本角标实时反映当前状态 —— 用户三次反馈「阴沉」但实测频谱已完全不同，
   // 怀疑是浏览器标签页缓存了旧版。角标一换就能立刻确认自己在听哪一版。
-  $('verBadge').textContent = 'v7 · ' + style().name + ' · ' + bpm + ' BPM';
+  $('verBadge').textContent = 'v8 · ' + style().name + ' · ' + bpm + ' BPM';
   const tr = Math.round(-2 * tensionCur);
   const secIdx = Math.floor(barIndex / 4) % SECTIONS.length;
   const sec = SECTIONS[secIdx];
