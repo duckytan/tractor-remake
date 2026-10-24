@@ -516,6 +516,7 @@ function emptyBase(): GameState {
     animSpeed: 'normal',
     confirmNew: false,
     showCounter: false,
+    replayAt: null,
     showHistory: true,
     hintSelects: false,
     settingsOpen: false,
@@ -1150,6 +1151,7 @@ export function reduce(s: GameState, action: Action): GameState {
           dealer,
           lastSettle: null,
           history: [],
+          replayAt: null,
         },
         s.seed + 1,
       )
@@ -1209,6 +1211,23 @@ export function reduce(s: GameState, action: Action): GameState {
     case 'toggleShowCounter':
       return { ...s, showCounter: !s.showCounter }
 
+    case 'replayStart': {
+      if (s.history.length === 0) return s
+      const idx = Math.max(0, Math.min(s.history.length - 1, Math.trunc(action.index)))
+      // 进回放要顺手收起记录面板，否则面板盖着牌桌看不到回放
+      return { ...s, replayAt: idx, logOpen: false, selected: [], hintIds: [] }
+    }
+
+    case 'replayStep': {
+      if (s.replayAt === null) return s
+      const next = s.replayAt + Math.trunc(action.delta)
+      if (next < 0 || next >= s.history.length) return s
+      return { ...s, replayAt: next }
+    }
+
+    case 'replayExit':
+      return { ...s, replayAt: null }
+
     case 'openSettings':
       return { ...s, settingsOpen: true, logOpen: false }
 
@@ -1229,6 +1248,8 @@ export function reduce(s: GameState, action: Action): GameState {
 /** 供 UI 判断「AI 是否可以继续动」 */
 export function aiCanAct(s: GameState): boolean {
   if (s.phase !== 'play') return false
+  // 回放期间 AI 必须停手：否则看着历史墩的同时局面还在往前走
+  if (s.replayAt !== null) return false
   const seat = seatToPlay(s)
   return seat !== null && seat !== HUMAN_SEAT
 }

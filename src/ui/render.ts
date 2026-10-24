@@ -14,7 +14,14 @@ import type { AiLevel } from '@ai/policy'
 import type { Action, CardSize, GameState } from '@app/state'
 import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
-import { counterView, dealtCardsFor, pastPlaysView, trickLogView } from '@app/view'
+import {
+  counterView,
+  dealtCardsFor,
+  displayPlays,
+  pastPlaysView,
+  replaySummary,
+  trickLogView,
+} from '@app/view'
 import type { CounterSlot } from '@app/view'
 import { backEl, cardEl, ensureDefs } from './card'
 import { isBackInFlight, isInFlight } from './dealFly'
@@ -162,7 +169,8 @@ function fillPlays(
   box.style.setProperty('--played-w', `${playedW}px`)
   const now = box.querySelector('.plays__now') as HTMLElement
   const past = box.querySelector('.plays__past') as HTMLElement
-  const play = s.trick.plays.find((p) => p.seat === seat)
+  // 回放时出牌区显示的是「那一墩」的历史出牌，不是当前墩（见 app/view.ts displayPlays）
+  const play = displayPlays(s).find((p) => p.seat === seat)
   if (play) now.appendChild(cardWrap(play.cards, { width: playedW }))
   if (!s.showHistory) return
   const { nos, tricks } = pastPlaysView(s, seat, PAST_DEPTH)
@@ -358,7 +366,8 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const items = handView(myHand, ctxOf(s))
     const selected = new Set(s.selected)
     const hinted = new Set(s.hintIds)
-    const canAct = s.phase === 'play' && turn === HUMAN_SEAT
+    // 回放期间手牌不可点（看的是历史墩，点牌没有意义）
+    const canAct = s.phase === 'play' && turn === HUMAN_SEAT && s.replayAt === null
     const burying = s.phase === 'bury'
 
     for (let i = 0; i < items.length; i++) {
@@ -406,6 +415,17 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         <button class="btn btn--primary" data-act="bury" ${s.selected.length === 8 ? '' : 'disabled'}>扣底</button>`
     } else if (s.phase === 'play') {
       const myTurn = turn === HUMAN_SEAT
+      const rep = replaySummary(s)
+      if (rep !== null) {
+        bar.innerHTML = `
+          <button class="btn" data-act="replayStep" data-val="-1" ${rep.isFirst ? 'disabled' : ''}>◀ 上一墩</button>
+          <span class="hint-text">回放 第 ${rep.index + 1} / ${rep.total} 墩 · ${rep.winnerLabel} 赢${
+            rep.score > 0 ? ` · ${rep.score} 分` : ''
+          }</span>
+          <button class="btn" data-act="replayStep" data-val="1" ${rep.isLast ? 'disabled' : ''}>下一墩 ▶</button>
+          <button class="btn btn--primary" data-act="replayExit">退出回放</button>`
+        return
+      }
       bar.innerHTML = `
         <span class="hint-text">${myTurn ? '轮到你了' : `${SEAT_LABEL[turn ?? 0]} 出牌中…`}</span>
         ${legalityBadge(s)}
@@ -423,7 +443,10 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const ov = q('overlay')
     // 发牌暂停提示时把手牌露出来（否则遮罩+模糊让人看不清自己有什么牌）
     ov.dataset.mode = s.phase === 'contract' && s.dealPrompt ? 'deal' : ''
-    if (s.confirmNew) {
+    if (s.replayAt !== null) {
+      // 回放时牌桌必须可见 —— 记录/结算面板一律让路
+      ov.innerHTML = ''
+    } else if (s.confirmNew) {
       ov.innerHTML = confirmNewPanel(s)
     } else if (s.settingsOpen) {
       ov.innerHTML = settingsPanel(s)
@@ -770,11 +793,12 @@ function logPanel(s: GameState): string {
   const tricks = trickLogView(s)
   const items = tricks
     .map(
-      (t) => `<div class="log-trick" data-win-team="${t.winnerTeam}">
+      (t, i) => `<div class="log-trick" data-win-team="${t.winnerTeam}">
         <div class="log-trick__head">
           <span class="log-trick__no">第 ${t.no} 墩</span>
           <span class="log-trick__win">${t.winnerLabel} 赢</span>
           ${t.score > 0 ? `<span class="log-trick__pts is-score">${t.score} 分</span>` : ''}
+          <button class="btn btn--mini" data-act="replayStart" data-val="${i}">回放</button>
         </div>
         <div class="log-trick__plays">
           ${t.plays
@@ -1013,6 +1037,15 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
         break
       case 'toggleShowCounter':
         act.dispatch({ type: 'toggleShowCounter' })
+        break
+      case 'replayStart':
+        if (val !== undefined) act.dispatch({ type: 'replayStart', index: Number(val) })
+        break
+      case 'replayStep':
+        if (val !== undefined) act.dispatch({ type: 'replayStep', delta: Number(val) })
+        break
+      case 'replayExit':
+        act.dispatch({ type: 'replayExit' })
         break
       case 'setAiLevel':
         if (val !== undefined) act.dispatch({ type: 'setAiLevel', level: Number(val) as AiLevel })

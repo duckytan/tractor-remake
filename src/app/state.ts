@@ -158,6 +158,14 @@ export interface GameState {
    * 所以做成显式开关而不是默认开。
    */
   readonly showCounter: boolean
+  /**
+   * 逐墩回放：正在回放第几墩（`history` 的下标），null = 正常对局。
+   *
+   * 回放期间 AI 停手（`aiCanAct` 返回 false）、人类手牌不可点、
+   * 出牌区显示的是**那一墩的历史出牌**而不是当前墩。
+   * 瞬时状态，不进存档（`loadState` 一律置 null）。
+   */
+  readonly replayAt: number | null
   /** 手牌前方「最近几墩」历史牌条开关（体验项，立即生效） */
   readonly showHistory: boolean
   /**
@@ -217,6 +225,9 @@ export type Action =
   | { readonly type: 'toggleShowHistory' }
   | { readonly type: 'toggleHintSelects' }
   | { readonly type: 'toggleShowCounter' }
+  | { readonly type: 'replayStart'; readonly index: number }
+  | { readonly type: 'replayStep'; readonly delta: number }
+  | { readonly type: 'replayExit' }
   | { readonly type: 'toggleLog' }
   | { readonly type: 'showHint'; readonly ids: readonly number[] }
   | { readonly type: 'hintSelect'; readonly ids: readonly number[] }
@@ -296,6 +307,7 @@ export const emptyState = (): GameState => ({
   animSpeed: 'normal',
   confirmNew: false,
   showCounter: false,
+  replayAt: null,
   showHistory: true,
   hintSelects: false,
   settingsOpen: false,

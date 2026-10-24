@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PREFS_VERSION, clearState, loadPrefs, loadState, savePrefs, saveState } from '@app/persist'
 import { STATE_VERSION } from '@app/state'
 import type { GameState } from '@app/state'
-import { DEFAULT_RULE_CONFIG } from '@core'
+import { DEFAULT_RULE_CONFIG, HAND_SIZE } from '@core'
 import type { Card, RuleConfig } from '@core'
 import { newGame, reduce } from '@app/game'
 import { declareAndPass } from '../helpers/declare'
@@ -203,6 +203,30 @@ describe('对局存档：loadState / saveState / clearState', () => {
     saveState(playState(36))
     clearState()
     expect(loadState()).toBeNull()
+  })
+
+  it('prefs 存档损坏 ⇒ 回落默认值（不能让游戏起不来）', () => {
+    store.setItem('tractor.prefs.v1', '{broken')
+    const p = loadPrefs()
+    expect(p.showCounter).toBe(false)
+    expect(p.animSpeed).toBe('normal')
+  })
+
+  it('savePrefs 在只读存储下不抛异常（隐私模式）', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem() {
+        throw new Error('quota')
+      },
+      removeItem() {},
+    })
+    expect(() => savePrefs(loadPrefs())).not.toThrow()
+  })
+
+  it('hands[0] 不是数组时 revealed 回落 HAND_SIZE（形状兜底）', () => {
+    const s = playState(38)
+    saveState({ ...s, hands: [null, [], [], []] as unknown as GameState['hands'] })
+    expect(loadState()?.revealed).toBe(HAND_SIZE)
   })
 
   it('存储抛异常时读写都不崩（隐私模式）', () => {

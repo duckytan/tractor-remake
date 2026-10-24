@@ -262,6 +262,20 @@ function hint(): void {
 window.addEventListener('keydown', (ev) => {
   if (ev.repeat) return
 
+  // 回放期间只响应 ←/→/Esc —— 尤其要挡住空格（否则会在看历史墩时把牌打出去）
+  if (state.replayAt !== null) {
+    if (ev.code === 'ArrowLeft') {
+      ev.preventDefault()
+      dispatch({ type: 'replayStep', delta: -1 })
+    } else if (ev.code === 'ArrowRight') {
+      ev.preventDefault()
+      dispatch({ type: 'replayStep', delta: 1 })
+    } else if (ev.code === 'Escape') {
+      dispatch({ type: 'replayExit' })
+    }
+    return
+  }
+
   // 焦点在手牌上时，回车/空格切换选中，不触发出牌
   const onCard = ev.target instanceof HTMLElement && ev.target.closest('.card[data-id]')
   if (onCard && (ev.code === 'Enter' || ev.code === 'Space')) {

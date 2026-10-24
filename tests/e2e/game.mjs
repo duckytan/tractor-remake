@@ -387,6 +387,51 @@ try {
   )
   await page.screenshot({ path: `${SHOTS}/04-trick.png` })
 
+  /* ---------- S7 逐墩回放（v1.3.16） ----------
+     此时已经打完至少一墩（P2b 等到了状态栏变化）。回放期间：出牌区换成历史墩、
+     记录面板收起（牌桌要露出来）、AI 停手。 */
+  {
+    await page.click('[data-act="toggleLog"]')
+    await page.waitForSelector('[data-act="replayStart"]', { timeout: 5000 })
+    const replayBtns = await page.locator('[data-act="replayStart"]').count()
+    await page.click('[data-act="replayStart"][data-val="0"]')
+    await page.waitForTimeout(250)
+    const r = await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('tractor.state.v1') || '{}')
+      const nowCards = ['plays-mine', 'plays-1', 'plays-2', 'plays-3'].map(
+        (k) => document.querySelectorAll(`[data-slot="${k}"] .plays__now .card`).length,
+      )
+      const bar = (document.querySelector('[data-slot="handbar"]')?.innerText ?? '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      return {
+        replayAt: s.replayAt,
+        overlay: (document.querySelector('[data-slot="overlay"]')?.innerHTML ?? '').length,
+        nowCards,
+        bar,
+        disabledHand: document.querySelectorAll('#app .hand .card--disabled').length,
+      }
+    })
+    rec(
+      'S7 逐墩回放：出牌区显示历史墩、记录面板收起、手牌禁用',
+      replayBtns > 0 &&
+        r.replayAt === 0 &&
+        r.overlay === 0 &&
+        r.nowCards.some((n) => n > 0) &&
+        r.bar.includes('回放') &&
+        r.disabledHand > 0,
+      `btns=${replayBtns} replayAt=${r.replayAt} overlay=${r.overlay} now=${r.nowCards.join('/')} disabled=${r.disabledHand} bar="${r.bar}"`,
+    )
+    await page.screenshot({ path: `${SHOTS}/07-replay.png` })
+
+    await page.click('[data-act="replayExit"]')
+    await page.waitForTimeout(200)
+    const back = await page.evaluate(
+      () => JSON.parse(localStorage.getItem('tractor.state.v1') || '{}').replayAt,
+    )
+    rec('S7b 退出回放后回到正常对局', back === null, `replayAt=${back}`)
+  }
+
   /* ---------- S6 手机竖屏布局（v1.3.13） ----------
      独立 context：390×844 + isMobile/hasTouch，验证响应式断点（卡片缩到 52px、
      网格可压缩、弹层宽度跟随视口）真的生效 —— 之前这里是横向溢出 105px、

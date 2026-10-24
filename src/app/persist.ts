@@ -194,6 +194,8 @@ export function loadState(): GameState | null {
       // 「重新开局」确认弹层是瞬时 UI 状态：读档一律关掉，
       // 否则「确认框开着时关掉页面」会让下次启动直接弹确认框
       confirmNew: false,
+      // 回放同理：读档一定回到正常对局
+      replayAt: null,
     }
   } catch {
     return null

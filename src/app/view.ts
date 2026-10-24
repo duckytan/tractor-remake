@@ -122,6 +122,41 @@ export function pastPlaysView(s: GameState, seat: Seat, depth: number): PastPlay
   return { nos, tricks }
 }
 
+/* ---------- 逐墩回放（v1.3.16） ---------- */
+
+/**
+ * 出牌区这一帧该显示哪些牌：回放时是「那一墩的历史出牌」，否则是当前墩。
+ * 抽成纯函数是为了让 `ui/render.ts` 的 `fillPlays` 只剩 DOM 操作，且这条分支可单测。
+ */
+export function displayPlays(s: GameState): readonly { readonly seat: Seat; readonly cards: readonly Card[] }[] {
+  if (s.replayAt === null) return s.trick.plays
+  return s.history[s.replayAt]?.plays ?? []
+}
+
+export interface ReplaySummary {
+  /** 0 基下标 */
+  readonly index: number
+  readonly total: number
+  readonly winnerLabel: string
+  readonly score: number
+  readonly isFirst: boolean
+  readonly isLast: boolean
+}
+
+/** 回放状态栏要显示的东西；不在回放时返回 null */
+export function replaySummary(s: GameState): ReplaySummary | null {
+  if (s.replayAt === null) return null
+  const rec = s.history[s.replayAt]
+  return {
+    index: s.replayAt,
+    total: s.history.length,
+    winnerLabel: rec ? seatShortLabel(rec.winner) : '',
+    score: rec ? rec.score : 0,
+    isFirst: s.replayAt === 0,
+    isLast: s.replayAt >= s.history.length - 1,
+  }
+}
+
 /* ---------- 发牌进度（v1.3.15） ---------- */
 
 /**
