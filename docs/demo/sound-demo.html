@@ -79,8 +79,8 @@
   <header>
     <h1>拖拉机 · 声音系统试听 <span>方案 v1</span></h1>
     <div class="sub">
-      <b>一条 10 个音的旋律</b>，32 小节一轮循环，靠配器变化而不是改旋律来保持新鲜<br>
-      主旋律 v3：简化到能哼，每句从第 1 拍后半拍进（切分是节奏指纹）<br>
+      <b>一条 10 个音的断奏旋律</b>，48 小节一轮循环，靠配器变化而不是改旋律来保持新鲜<br>
+      主旋律 v4：从参考曲谱学到三件事 —— 断奏留空隙、48 小节一轮、中段转调<br>
       伴奏：马林巴，4 小节 × 8 个八分位置的网格音型（可点格子自己改）<br>
       全部实时合成，没有音频文件。先点「启动」，然后放着别管它
     </div>
@@ -111,8 +111,9 @@
       <div class="grp" id="secBox"></div>
     </div>
     <div class="info" style="font-size:11.5px;margin-top:4px">
-      32 小节一轮（约 100 秒）。<b>旋律从头到尾只有一条，不变</b>；
-      变的是配器 —— 起 → 全奏 → 高八度 → 回落 → <b>呼吸（抽掉旋律）</b> → 全奏 → 收尾。
+      48 小节一轮（约 137 秒）。<b>旋律从头到尾只有一条，不变</b>；变的是配器 ——
+      起 → 全奏 → 全奏 → 高八度 → 回落 → <b>呼吸（抽掉旋律）</b> → 全奏 →
+      <b>转调 +2 半音</b> → 转调高八度 → 回落 → 极简 → 收尾。
     </div>
     <div class="tags" id="layerBox"></div>
   </div>
@@ -202,7 +203,7 @@ const HOOK = [
 ];
 
 /**
- * 循环编排：4 小节一段，8 段一轮 = **32 小节 ≈ 100 秒**。
+ * 循环编排：4 小节一段，**12 段一轮 = 48 小节 ≈ 137 秒**（84 BPM）。
  *
  * 这是「听一下午不烦」的真正机制 —— **旋律一段就够，新鲜感全来自配器**。
  * 耳朵记住的是旋律（所以不能变），会觉得"每次都不太一样"的是配器（所以要变）。
@@ -213,25 +214,38 @@ const HOOK = [
  *   rows 伴奏行掩码（bit0 低音 / bit1 根音 / bit2 三音 / bit3 五音 / bit4 高八 / bit5 高三）
  *   pad  和声床开不开
  *   shk  沙锤力度系数
+ *   tr   整段移调半音数（转调段用；**音效也跟着移**，否则会和 BGM 打架）
+ *
+ * 「转调」这一手是从参考曲谱里学的：它在中段整体转到另一个调，同一批材料原样重述，
+ * 听感上却像换了一段新的 —— 这是最省力的"延长循环"手段，不用多写一个音。
  */
 const SECTIONS = [
   // ① 起：旋律照常，但伴奏只留低音 —— 先让人听清骨架
-  { tag: '起',     mel: 1, oct: 0,  rows: 0b000001, pad: 1, shk: 0.6 },
-  // ② 全奏
-  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 },
-  // ③ 全奏（重复 —— 重复本身是记忆点，别怕）
-  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 },
+  { tag: '起',     mel: 1, oct: 0,  rows: 0b000001, pad: 1, shk: 0.6, tr: 0 },
+  // ②③ 全奏（重复本身是记忆点，别怕两段一样）
+  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
+  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
   // ④ 高八度：旋律整体 +12，抽掉和声床（变薄反而更亮）
-  { tag: '高八度', mel: 1, oct: 12, rows: 0b101001, pad: 0, shk: 1.0 },
+  { tag: '高八度', mel: 1, oct: 12, rows: 0b101001, pad: 0, shk: 1.0, tr: 0 },
   // ⑤ 回到原八度
-  { tag: '回落',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 },
-  // ⑥ 呼吸：**抽掉旋律**，只留伴奏 + 沙锤减半 —— 这是最有效的防疲劳手法
-  { tag: '呼吸',   mel: 0, oct: 0,  rows: 0b001001, pad: 1, shk: 0.4 },
-  // ⑦ 旋律回来，比第一次更"满"
-  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 },
-  // ⑧ 收尾，接回 ①
-  { tag: '收尾',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 }
+  { tag: '回落',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
+  // ⑥ 呼吸：**抽掉旋律**，只留伴奏 + 沙锤减半 —— 最有效的防疲劳手法
+  { tag: '呼吸',   mel: 0, oct: 0,  rows: 0b001001, pad: 1, shk: 0.4, tr: 0 },
+  // ⑦ 旋律回来
+  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
+  // ⑧⑨ 转调：整体 +2 半音（大二度上行），旋律原样重述但"换了个地方"
+  { tag: '转调',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 2 },
+  { tag: '转调',   mel: 1, oct: 12, rows: 0b101001, pad: 0, shk: 1.0, tr: 2 },
+  // ⑩ 转回原调（落回来那一下很舒服，这是转调最大的收益）
+  { tag: '回落',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
+  // ⑪ 极简：只剩低音 + 沙锤，比"呼吸"更空
+  { tag: '极简',   mel: 0, oct: 0,  rows: 0b000001, pad: 1, shk: 0.3, tr: 0 },
+  // ⑫ 收尾，接回 ①
+  { tag: '收尾',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 }
 ];
+
+/** 当前段位的移调量 —— 音效要读它，才能和 BGM 待在同一个调上 */
+let keyShift = 0;
 
 /** 和弦：每项是 [根音, 三音, 五音] 相对主音的半音偏移（4 小节一轮） */
 const CHORDS = {
@@ -430,20 +444,24 @@ function vPiano(when, midi, vel, dur, bright) {
   const out = ctx.createGain();
   // 0.26：主旋律必须比伴奏清楚。旧版 0.17 被马林巴盖住，是「旋律听不清」的主因之一
   out.gain.value = vel * 0.26; out.connect(musicBus);
-  const base = 0.9 + Math.max(0, (72 - midi)) * 0.05;
-  // 高次泛音压低、起音放慢到 12ms：不再是「敲」出来的，而是「弹」出来的
+  // **断奏**：实际发声长度只有音符时值的 ~62%，音符之间留出空隙。
+  // 这是从参考曲谱学到的关键一条 —— 它的旋律几乎全是断奏 + 八分休止。
+  // 连起来弹会糊成一片、显不出轻快；留出空隙，伴奏的切分才听得见。
+  const hold = Math.max(0.20, dur * 0.62);
+  // 高次泛音压低、起音 12ms：不再是「敲」出来的，而是「弹」出来的
   const PARTS = [[1, 1], [2, 0.30], [3, 0.12], [4, 0.05]];
   for (let i = 0; i < PARTS.length; i++) {
     const h = PARTS[i][0], amp = PARTS[i][1] * (h > 2 ? 0.55 + bright * 0.6 : 1);
+    const end = when + hold * (1 - i * 0.18);
     const o = ctx.createOscillator(); o.type = 'sine';
     o.frequency.value = f * h * (1 + 0.0004 * h * h);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, when);
     g.gain.linearRampToValueAtTime(amp, when + 0.012);
-    g.gain.exponentialRampToValueAtTime(amp * 0.3, when + 0.2);
-    g.gain.exponentialRampToValueAtTime(0.0001, when + base * (1 - i * 0.16) + dur * 0.3);
+    g.gain.exponentialRampToValueAtTime(amp * 0.35, when + hold * 0.45);
+    g.gain.exponentialRampToValueAtTime(0.0001, end);
     o.connect(g); g.connect(out);
-    o.start(when); o.stop(when + base * (1 - i * 0.16) + dur * 0.3 + 0.1);
+    o.start(when); o.stop(end + 0.05);
   }
   // 击槌噪声（压低到几乎只剩「触键」的空气感）
   const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
@@ -543,14 +561,16 @@ function scheduleBar(bi, when) {
   const t = tensionCur;
   const bpm = sc.bpm * (1 + 0.08 * t);
   const beat = 60 / bpm;
-  // 紧张时整体降 0..2 个半音
+  // 编排：这一小节属于 48 小节循环里的哪一段
+  const sec = SECTIONS[Math.floor(bi / 4) % SECTIONS.length];
+  // 紧张时整体降 0..2 个半音；转调段再叠 sec.tr
   const tr = Math.round(-2 * t);
-  const root = sc.root + tr;
+  const root = sc.root + tr + sec.tr;
+  // 音效要跟着一起移，否则转调段里音效会和 BGM 差两个半音
+  keyShift = sec.tr;
   const loopBar = bi % 4;
   const voices = chordVoices(CHORDS[sc.key][loopBar], root);
   const bright = clamp(sc.bright + 0.3 * t, 0, 1);
-  // 编排：这一小节属于 32 小节循环里的哪一段
-  const sec = SECTIONS[Math.floor(bi / 4) % SECTIONS.length];
 
   // ① 伴奏：网格驱动，4 小节 × 8 个八分位置
   const base = loopBar * 8;
@@ -655,7 +675,7 @@ const lastAt = {};    // 上次触发时间（密度抑制）
 function sfxPitch(name, degreeOverride) {
   const sc = scene();
   const deg = degreeOverride !== undefined ? degreeOverride : (rr[name] = ((rr[name] || 0) + 1) % 5);
-  return sc.root + 24 + SCALE[sc.key][deg] + Math.round(-2 * tensionCur);
+  return sc.root + 24 + SCALE[sc.key][deg] + Math.round(-2 * tensionCur) + keyShift;
 }
 
 function now() { return ctx.currentTime + 0.004; }
@@ -983,7 +1003,7 @@ function updateStat() {
     .map(([n, on]) => `<span class="tag${on ? ' act' : ''}">${n}</span>`).join('');
 
   $('stat2').innerHTML = playing
-    ? `运行中 · 伴奏 ${INST_LABEL[accInst]} / 主旋律 ${INST_LABEL[melInst]} · 音效根音 <b>${sc.root + 24 + tr}</b> · 采样率 ${ctx.sampleRate} Hz`
+    ? `运行中 · 伴奏 ${INST_LABEL[accInst]} / 主旋律 ${INST_LABEL[melInst]} · 音效根音 <b>${sc.root + 24 + tr + keyShift}</b>${keyShift ? '（转调 ' + (keyShift > 0 ? '+' : '') + keyShift + '）' : ''} · 采样率 ${ctx.sampleRate} Hz`
     : '未启动 —— 点上面的「启动」（浏览器要求先有用户手势才能出声）';
 }
 

@@ -17,6 +17,9 @@ coverage/
 # 文档里的 `reference/smallnest-Tractor` 指的就是它
 reference/
 
+# 第三方曲谱（受版权保护，只作结构分析用，绝不随公开仓库分发）
+docs/demo/*.pdf
+
 # 编辑器
 .vscode/*
 !.vscode/extensions.json
