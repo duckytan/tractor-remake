@@ -47,7 +47,7 @@ jobs:
         run: npm run build
 
   e2e:
-    name: 浏览器端到端（12 个场景）
+    name: 浏览器端到端
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
