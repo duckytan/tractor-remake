@@ -387,6 +387,58 @@ try {
   )
   await page.screenshot({ path: `${SHOTS}/04-trick.png` })
 
+  /* ---------- S6 手机竖屏布局（v1.3.13） ----------
+     独立 context：390×844 + isMobile/hasTouch，验证响应式断点（卡片缩到 52px、
+     网格可压缩、弹层宽度跟随视口）真的生效 —— 之前这里是横向溢出 105px、
+     东家被挤出屏幕。 */
+  {
+    const mctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      ...(PROXY ? { proxy: { server: PROXY } } : {}),
+    })
+    await mctx.addInitScript(() => {
+      try {
+        localStorage.clear()
+      } catch {
+        /* ignore */
+      }
+    })
+    const mp = await mctx.newPage()
+    await mp.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 })
+    await mp.waitForSelector('#app .hand .card', { timeout: 20000 })
+    await mp.waitForTimeout(1400)
+    const r = await mp.evaluate(() => {
+      const rect = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const b = el.getBoundingClientRect()
+        return { l: b.left, r: b.right, t: b.top, b: b.bottom }
+      }
+      const hand = rect('.hand')
+      const bar = rect('[data-slot="handbar"]')
+      const east = rect('.seat--east')
+      return {
+        docW: document.documentElement.scrollWidth,
+        vw: innerWidth,
+        vh: innerHeight,
+        handIn: !!hand && hand.l >= -1 && hand.r <= innerWidth + 1,
+        barIn: !!bar && bar.t >= -1 && bar.b <= innerHeight + 1,
+        eastIn: !!east && east.r <= innerWidth + 1,
+        cards: document.querySelectorAll('#app .hand .card').length,
+        cardW: getComputedStyle(document.documentElement).getPropertyValue('--card-w').trim(),
+      }
+    })
+    rec(
+      'S6 手机竖屏 390×844：无横向溢出，手牌/操作条/东家都在视口内',
+      r.docW <= r.vw + 1 && r.handIn && r.barIn && r.eastIn && r.cards > 0,
+      `doc=${r.docW}/${r.vw} handIn=${r.handIn} barIn=${r.barIn} eastIn=${r.eastIn} cards=${r.cards} cardW=${r.cardW}`,
+    )
+    await mp.screenshot({ path: `${SHOTS}/06-mobile.png` })
+    await mctx.close()
+  }
+
   /* ---------- 终局状态转储（诊断用） ---------- */
   const dump = await page.evaluate(() => {
     try {

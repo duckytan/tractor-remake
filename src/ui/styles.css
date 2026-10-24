@@ -621,6 +621,69 @@ html, body {
   .plays__past .past__trick:nth-child(-n + 3) { display: none; }
 }
 
+/* ---------- 手机竖屏（≤ 560px 宽） ----------
+   桌面布局的下限是「左右各 150px + 中央」，在 390px 的手机上会被撑到 ~470px：
+   手牌与操作条横向溢出、东家被挤出屏幕。这里做三件事：
+   ① 网格列改成可压缩的 minmax(0,1fr)；② 卡片再缩一档；③ 顶栏/积分栏/操作条收紧。 */
+@media (max-width: 560px) {
+  :root { --card-w: 52px; }
+  :root[data-card-size='S'] { --card-w: 46px; }
+  :root[data-card-size='M'] { --card-w: 52px; }
+  :root[data-card-size='L'] { --card-w: 60px; }
+
+  .felt {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    padding: 6px 6px 4px;
+    gap: 4px;
+  }
+  .topbar { padding: 6px 10px; gap: 8px; font-size: 12px; }
+  .brand { font-size: 13px; }
+  .brand__ver { margin-left: 5px; padding: 0 5px; font-size: 10px; }
+  .topbar .btn { padding: 4px 8px; font-size: 12px; }
+  .scorebar { min-height: 26px; padding: 3px 8px; gap: 6px; font-size: 11px; }
+  .hand-bar { gap: 6px; min-height: 30px; }
+  .hand-bar .btn { padding: 5px 10px; font-size: 12px; }
+  .hint-text { font-size: 11px; }
+  .seat-tag { font-size: 10px; gap: 4px; }
+
+}
+
+/* ---------- 矮屏（横屏手机，≤ 460px 高） ----------
+   高度 390 时「顶栏 51 + 积分栏 34 + 手牌 187 + 操作条 34」已经超过视口，
+   手牌会整条掉到屏幕外。这里把卡片压到 44px、顶部两条栏收窄。
+   放在手机竖屏断点之后：横屏手机同时满足两个条件时以本段为准。 */
+@media (max-height: 460px) {
+  :root { --card-w: 44px; }
+  :root[data-card-size='S'] { --card-w: 40px; }
+  :root[data-card-size='M'] { --card-w: 44px; }
+  :root[data-card-size='L'] { --card-w: 52px; }
+
+  /* 桌面端给 #app 写了 min-height: 620px（防止窗口被压扁后布局塌掉），
+     但横屏手机只有 390px 高 —— 不放开的话整个应用被撑到 620，手牌掉到屏幕外。 */
+  #app { min-height: 0; }
+  .felt { padding: 4px 8px 2px; gap: 4px; }
+  .topbar { padding: 3px 10px; }
+  .brand { font-size: 12.5px; }
+  .brand__ver { display: none; }
+  .scorebar { min-height: 20px; padding: 1px 10px; font-size: 10.5px; gap: 8px; }
+  .hand-bar { min-height: 24px; gap: 6px; }
+  .hand-bar .btn { padding: 2px 8px; font-size: 11px; }
+  .hint-text { font-size: 10.5px; }
+  .seat-tag { font-size: 9.5px; }
+  .toast { padding: 5px 12px; font-size: 11.5px; }
+}
+
+/* ---------- 触屏（无 hover 的粗指针设备） ----------
+   手指点击需要更大的命中面积；同时禁掉双击缩放与长按选中，避免误触。 */
+@media (pointer: coarse) {
+  .btn { min-height: 38px; padding: 8px 14px; }
+  .hand-bar .btn { min-height: 38px; }
+  .seg button { min-height: 36px; }
+  .hand { touch-action: manipulation; }
+  .card { -webkit-tap-highlight-color: transparent; }
+  body { -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+}
+
 /* ---------- 设置 / 记录弹层 ---------- */
 
 .panel--wide {
@@ -788,3 +851,21 @@ html, body {
 .legality.is-bad { background: rgba(200, 70, 70, 0.24); color: #ffc4c4; }
 /* 甩牌失败被裁剪：合法，但只会出其中一小部分 —— 琥珀色警示，别让玩家误以为全出 */
 .legality.is-warn { background: rgba(210, 160, 60, 0.2); color: #ffd98a; }
+
+/* ---------- 手机：弹层宽度跟随视口 ----------
+   `.panel` 的 min-width 320 / `.panel--wide` 的 min-width 420 在 390 宽的手机上会横向溢出
+   （实测 left=-15）。必须放在 `.panel--wide` 之后才能覆盖它 —— 媒体查询不增加特异性，
+   同级选择器按源码顺序后者胜。 */
+@media (max-width: 560px) {
+  .panel,
+  .panel--wide {
+    min-width: 0;
+    max-width: calc(100vw - 16px);
+    padding: 16px 14px;
+    border-radius: 12px;
+  }
+  .panel h2 { font-size: 16px; }
+  .panel .muted { font-size: 12px; margin-bottom: 12px; }
+  .panel .row { font-size: 12.5px; }
+  .log-trick__plays { gap: 2px; }
+}
