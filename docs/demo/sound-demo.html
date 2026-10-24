@@ -65,6 +65,12 @@
   .accbar .cells i.on{background:#c98a4b}
   .accbar .cells i.on:hover{background:#e0a05e}
   .row .grp{display:flex;gap:7px;flex-wrap:wrap}
+
+  /* 32 小节循环编排的小格子 */
+  .secchip{font-size:11px;padding:5px 9px;border-radius:7px;background:rgba(255,255,255,.05);
+           border:1px solid rgba(255,255,255,.08);color:#7f9c8e;transition:.15s;white-space:nowrap}
+  .secchip.on{background:rgba(29,158,117,.22);border-color:#1d9e75;color:#7fe0bb;font-weight:600}
+  .secchip.dim{opacity:.55}
 </style>
 </head>
 <body>
@@ -73,10 +79,10 @@
   <header>
     <h1>拖拉机 · 声音系统试听 <span>方案 v1</span></h1>
     <div class="sub">
-      一条核心动机（五声音阶，大小调共用）+ 3 个基底 + 连续紧张度 · 12 个电子音效（音高跟调、轮转不重复）<br>
-      <b>主旋律 v2</b>：重写旋律线，8 小节一个乐段（主句落主音 / 变体停属音），并修掉旧版的大七度冲突<br>
-      <b>伴奏</b>：马林巴，走 4 小节 × 8 个八分位置的网格音型（可点格子自己改）<br>
-      全部实时合成，没有音频文件。先点「启动」，再随便点。
+      <b>一条 10 个音的旋律</b>，32 小节一轮循环，靠配器变化而不是改旋律来保持新鲜<br>
+      主旋律 v3：简化到能哼，每句从第 1 拍后半拍进（切分是节奏指纹）<br>
+      伴奏：马林巴，4 小节 × 8 个八分位置的网格音型（可点格子自己改）<br>
+      全部实时合成，没有音频文件。先点「启动」，然后放着别管它
     </div>
   </header>
 
@@ -99,6 +105,14 @@
     <div class="row"><label>紧张度</label><input type="range" id="tens" min="0" max="100" value="0"><span class="val" id="tensV">0</span></div>
     <div class="row">
       <button id="btnRamp">⤴ 紧张度自动爬升（20 秒，听它怎么变紧）</button>
+    </div>
+    <div class="row" style="margin-top:2px">
+      <label>循环</label>
+      <div class="grp" id="secBox"></div>
+    </div>
+    <div class="info" style="font-size:11.5px;margin-top:4px">
+      32 小节一轮（约 100 秒）。<b>旋律从头到尾只有一条，不变</b>；
+      变的是配器 —— 起 → 全奏 → 高八度 → 回落 → <b>呼吸（抽掉旋律）</b> → 全奏 → 收尾。
     </div>
     <div class="tags" id="layerBox"></div>
   </div>
@@ -144,7 +158,8 @@
 
   <footer>
     纯前端 · 零依赖 · Web Audio 实时合成<br>
-    这条动机是「A 小调五声」，五声在大调/小调两套和声下都成立 —— 所以只换和弦就能改变明暗，不用改旋律
+    耐听的秘密不是旋律写得多巧，而是<b>旋律固定 + 配器轮转</b>：<br>
+    耳朵靠"不变的东西"建立记忆，靠"在变的东西"保持新鲜 —— 反过来就变成了每次都记不住
   </footer>
 </div>
 
@@ -162,32 +177,60 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const SCALE = { minor: [0, 3, 5, 7, 10, 12], major: [0, 2, 4, 7, 9, 12] };
 
 /**
- * 核心动机：4 小节，用「音级」写（0=主音 1=三音 2=四音 3=五音 4=小七 5=高八主音）
- * 格式 [拍位(0..15), 音级, 时值(拍)]，这样换调性 / 换大小调只改 root+scale，旋律不用重写。
+ * 核心动机：4 小节，**只有 10 个音**。格式 [拍位(0..15), 音级, 时值(拍)]。
+ * 音级 0=主音 1=三音 2=四音 3=五音 4=小七 5=高八主音 —— 换调/换大小调只改 root+scale。
  *
- * 写法上刻意遵守的四条，这是「好听」而不是「音阶练习」的关键：
- *  ① 强拍落在和弦音上（Am 的 A/C/E、F 的 A/C、G 的 G/D）；
- *  ② 第 2 拍 / 第 4 拍常留空，让马林巴的「嗒」自己说话 —— 旋律和伴奏要错开；
- *  ③ 4 小节一个拱形：起句落主音 → 承接绕一圈 → 第 3 小节冲到主音高八度 → 收束落回主音；
- *  ④ 只用五声音阶，所以不会出现半音打架（旧版第 2 小节 E 压 F 和弦就是败在这）。
+ * 为什么故意写得这么"少"：能哼得出来的东西才可能听一下午不腻。
+ * 塞满音符的旋律听三遍就累了，留白的旋律反而耐听。
+ *
+ * 四个"上头"的机关：
+ *  ① **每句都从第 1 拍的后半拍进（x.5）** —— 这个切分是全曲的节奏指纹，
+ *     而且刚好避开马林巴在第 1 / 3 拍上的低音，两者咬合成"你一句我一句"；
+ *  ② 第 1 小节 A-C-E 就是主和弦分解，一听就知道"到家了"；
+ *  ③ 第 2 小节只有 2 个音（问长答短），第 3 小节冲到主音高八度当全曲最高点；
+ *  ④ 第 4 小节落回主音后**留一整拍半的空**，循环点自然呼吸，不会"卡"在一起。
  */
-const MOTIF = [
-  // 第 1 小节（Am / C）— 从五音起，级进落到主音
-  [0.0, 3, 1.5], [1.5, 2, 0.5], [2.0, 1, 1.0], [3.0, 0, 1.0],
-  // 第 2 小节（F / G）— 承接：五音 → 主音 → 小七 → 四音，绕一圈不落死
-  [4.0, 1, 1.0], [5.0, 0, 0.5], [5.5, 4, 0.5], [6.0, 2, 1.5],
-  // 第 3 小节（C / Am）— 高点：E → G → 主音高八度，全曲最高
-  [8.0, 3, 1.5], [9.5, 4, 0.5], [10.0, 5, 1.0], [11.0, 4, 1.0],
-  // 第 4 小节（G / F）— 收束：只用 deg4/1/0（换到大调是 A/D/C），两个调性下都不撞
-  [12.0, 4, 1.5], [13.5, 1, 0.5], [14.0, 0, 2.0]
+const HOOK = [
+  // 第 1 小节（Am / C）  A  C  E —— 主和弦分解
+  [0.5, 0, 0.5], [1.0, 1, 0.5], [1.5, 3, 1.5],
+  // 第 2 小节（F / G）  A  C —— 只有两个音，问长答短
+  [4.5, 0, 0.5], [5.0, 1, 2.0],
+  // 第 3 小节（C / Am）  G  A' —— 全曲最高点
+  [8.5, 4, 0.5], [9.0, 5, 2.0],
+  // 第 4 小节（G / F）  G  C  A —— 落回主音，后半小节全空
+  [12.5, 4, 0.5], [13.0, 1, 0.5], [13.5, 0, 2.5]
 ];
 
-/** 变体（第 5-8 小节）：起句改从主音起，收尾停在属音而不是主音 —— 一开一合，8 小节一个乐段 */
-const MOTIF_B = [
-  [0.0, 0, 1.0], [1.5, 2, 0.5], [2.0, 1, 1.0], [3.0, 0, 1.0],
-  [4.0, 1, 1.0], [5.0, 0, 0.5], [5.5, 4, 0.5], [6.0, 2, 1.5],
-  [8.0, 3, 1.5], [9.5, 4, 0.5], [10.0, 5, 1.0], [11.0, 4, 1.0],
-  [12.0, 4, 1.5], [13.5, 1, 0.5], [14.0, 5, 1.0], [15.0, 4, 1.0]
+/**
+ * 循环编排：4 小节一段，8 段一轮 = **32 小节 ≈ 100 秒**。
+ *
+ * 这是「听一下午不烦」的真正机制 —— **旋律一段就够，新鲜感全来自配器**。
+ * 耳朵记住的是旋律（所以不能变），会觉得"每次都不太一样"的是配器（所以要变）。
+ * 反过来做（旋律一直变、配器不变）就变成了"每次都记不住"。
+ *
+ *   mel  这一轮旋律出不出现（0/1）
+ *   oct  旋律八度偏移（12 = 高八度，整个 lift 起来）
+ *   rows 伴奏行掩码（bit0 低音 / bit1 根音 / bit2 三音 / bit3 五音 / bit4 高八 / bit5 高三）
+ *   pad  和声床开不开
+ *   shk  沙锤力度系数
+ */
+const SECTIONS = [
+  // ① 起：旋律照常，但伴奏只留低音 —— 先让人听清骨架
+  { tag: '起',     mel: 1, oct: 0,  rows: 0b000001, pad: 1, shk: 0.6 },
+  // ② 全奏
+  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 },
+  // ③ 全奏（重复 —— 重复本身是记忆点，别怕）
+  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 },
+  // ④ 高八度：旋律整体 +12，抽掉和声床（变薄反而更亮）
+  { tag: '高八度', mel: 1, oct: 12, rows: 0b101001, pad: 0, shk: 1.0 },
+  // ⑤ 回到原八度
+  { tag: '回落',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 },
+  // ⑥ 呼吸：**抽掉旋律**，只留伴奏 + 沙锤减半 —— 这是最有效的防疲劳手法
+  { tag: '呼吸',   mel: 0, oct: 0,  rows: 0b001001, pad: 1, shk: 0.4 },
+  // ⑦ 旋律回来，比第一次更"满"
+  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 },
+  // ⑧ 收尾，接回 ①
+  { tag: '收尾',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0 }
 ];
 
 /** 和弦：每项是 [根音, 三音, 五音] 相对主音的半音偏移（4 小节一轮） */
@@ -249,11 +292,13 @@ let melInst = 'piano';     // 主旋律
  * root 用 MIDI：45=A2、48=C3。
  */
 const SCENES = {
-  calm:   { name: '定主 · 埋底 · 回放', bpm: 62, root: 45, key: 'minor',
+  // BPM 比上一版各 +6~8：76 → 84。同一段旋律，稍快一点"推着走"的感觉明显不一样，
+  // 这是"上头"最省力的一个旋钮（嫌快就把这三个数改回去，其它都不用动）
+  calm:   { name: '定主 · 埋底 · 回放', bpm: 68, root: 45, key: 'minor',
             bright: 0.34, pad: 0.30, shaker: 0,    verb: 0.42 },
-  play:   { name: '出牌（平稳）',        bpm: 76, root: 45, key: 'minor',
+  play:   { name: '出牌（平稳）',        bpm: 84, root: 45, key: 'minor',
             bright: 0.56, pad: 0.18, shaker: 0.12, verb: 0.34 },
-  settle: { name: '结算 · 终局',         bpm: 92, root: 48, key: 'major',
+  settle: { name: '结算 · 终局',         bpm: 96, root: 48, key: 'major',
             bright: 0.82, pad: 0.22, shaker: 0.18, verb: 0.30 }
 };
 
@@ -504,6 +549,8 @@ function scheduleBar(bi, when) {
   const loopBar = bi % 4;
   const voices = chordVoices(CHORDS[sc.key][loopBar], root);
   const bright = clamp(sc.bright + 0.3 * t, 0, 1);
+  // 编排：这一小节属于 32 小节循环里的哪一段
+  const sec = SECTIONS[Math.floor(bi / 4) % SECTIONS.length];
 
   // ① 伴奏：网格驱动，4 小节 × 8 个八分位置
   const base = loopBar * 8;
@@ -514,6 +561,7 @@ function scheduleBar(bi, when) {
       bits = 1 << 0;
       if (t > 0.75) bits |= 1 << 3;
     }
+    bits &= sec.rows;   // 编排决定这一轮哪些行在响（起 / 呼吸 段会变薄）
     if (!bits) continue;
     const idxs = [];
     for (let k = 0; k < 6; k++) if (bits & (1 << k)) idxs.push(k);
@@ -525,26 +573,27 @@ function scheduleBar(bi, when) {
     }
   }
 
-  // ② 和声床：只做低音区的垫底，不抢马林巴
-  vPad(when, voices[0], beat * 4, (sc.pad + 0.1 * t) * 0.55);
+  // ② 和声床：只做低音区的垫底，不抢马林巴（编排里可以抽掉）
+  if (sec.pad) vPad(when, voices[0], beat * 4, (sc.pad + 0.1 * t) * 0.55);
 
-  // ③ 主旋律（动机按小节切片，每 4 小节换一次结尾：A 落主音 / B 停在属音）
+  // ③ 主旋律：全曲就这一条 HOOK，变的是八度和"出不出现"
   //    +12：旋律抬到伴奏之上 —— 马林巴的低音在 41..48、高音点缀在 64..76，
   //    旋律落在 57..69 这一层，正好夹在中间，不会被埋掉
-  const motif = (Math.floor(bi / 4) % 2) ? MOTIF_B : MOTIF;
-  for (const [b, deg, dur] of motif) {
-    if (Math.floor(b / 4) !== loopBar) continue;
-    const local = b % 4;
-    const pitch = root + 12 + SCALE[sc.key][deg];
-    // 轻微人性化：力度 ±6%，时值起音错开几毫秒，避免 16 分音符听起来像打字机
-    const vel = (0.9 + Math.random() * 0.12) * (1 + 0.06 * t);
-    const jitter = (Math.random() - 0.5) * 0.012;
-    voice(melInst, when + local * beat + jitter, pitch, vel, dur * beat, bright);
+  if (sec.mel) {
+    for (const [b, deg, dur] of HOOK) {
+      if (Math.floor(b / 4) !== loopBar) continue;
+      const local = b % 4;
+      const pitch = root + 12 + sec.oct + SCALE[sc.key][deg];
+      // 轻微人性化：力度 ±6%，起音错开几毫秒，避免听起来像打字机
+      const vel = (0.9 + Math.random() * 0.12) * (1 + 0.06 * t);
+      const jitter = (Math.random() - 0.5) * 0.012;
+      voice(melInst, when + local * beat + jitter, pitch, vel, dur * beat, bright);
+    }
   }
 
   // ④ 沙锤（反拍）
   if (sc.shaker > 0) {
-    for (let i = 1; i < 8; i += 2) shaker(when + i * beat * 0.5, sc.shaker * (1 + 0.5 * t));
+    for (let i = 1; i < 8; i += 2) shaker(when + i * beat * 0.5, sc.shaker * sec.shk * (1 + 0.5 * t));
   }
 }
 
@@ -779,6 +828,14 @@ function buildInstPicker(boxId, get, set) {
 buildInstPicker('instBox', () => accInst, k => { accInst = k; });
 buildInstPicker('melBox', () => melInst, k => { melInst = k; });
 
+/* 32 小节循环编排：8 个段，显示当前在哪一段（暗的段 = 没有旋律） */
+SECTIONS.forEach((s, i) => {
+  const d = document.createElement('span');
+  d.className = 'secchip' + (s.mel ? '' : ' dim');
+  d.textContent = (i + 1) + ' ' + s.tag;
+  $('secBox').appendChild(d);
+});
+
 /* 伴奏网格：4 小节 × 8 列 × 6 行，点格子切换（纵轴从上到下 = bit5 → bit0） */
 function renderAccGrid() {
   const names = CHORD_NAME[scene().key];
@@ -903,19 +960,23 @@ function updateStat() {
   const bpm = Math.round(sc.bpm * (1 + 0.08 * tensionCur));
   const keyName = sc.key === 'minor' ? 'A 小调' : 'C 大调';
   const tr = Math.round(-2 * tensionCur);
+  const secIdx = Math.floor(barIndex / 4) % SECTIONS.length;
+  const sec = SECTIONS[secIdx];
   $('stat').innerHTML = [
     ['场景', sc.name],
     ['BPM', bpm],
     ['调性', keyName + (tr ? `（${tr} 半音）` : '')],
     ['紧张度', Math.round(tensionCur * 100)],
-    ['小节', barIndex]
+    ['小节', barIndex + ' / ' + (secIdx + 1) + '·' + sec.tag]
   ].map(([k, v]) => `<div>${k}　<b>${v}</b></div>`).join('');
+
+  Array.prototype.forEach.call($('secBox').children, (c, i) => c.classList.toggle('on', i === secIdx));
 
   const layers = [
     ['伴奏 · ' + INST_LABEL[accInst], true],
-    ['主旋律 · ' + INST_LABEL[melInst], true],
-    ['和声床', sc.pad > 0.01],
-    ['沙锤', sc.shaker > 0],
+    ['主旋律 · ' + INST_LABEL[melInst], sec.mel === 1],
+    ['和声床', sec.pad === 1 && sc.pad > 0.01],
+    ['沙锤', sc.shaker > 0 && sec.shk > 0.3],
     ['紧张补拍', tensionCur > 0.5]
   ];
   $('layerBox').innerHTML = layers
