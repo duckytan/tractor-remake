@@ -140,6 +140,22 @@ function afterChange(): void {
     showCounter: state.showCounter,
   })
   paint()
+
+/*
+ * PWA：生产环境注册 service worker（离线 + 可安装）。
+ *
+ * **本地预览 / e2e 不注册**：它们都跑在 127.0.0.1 / localhost 上，
+ * 而 SW 会把构建产物缓存起来 —— 之后改了代码再跑，读到的还是旧产物，
+ * 排查起来极其费时（PWA 最经典的坑）。部署到 Vercel 等真实域名时才启用。
+ */
+const isLocalHost = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)
+if (import.meta.env.PROD && !isLocalHost && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      /* 注册失败不影响游戏本身（只是没有离线能力） */
+    })
+  })
+}
   // 必须在 paint 之后：飞行牌要量「这张牌刚画到哪儿」，以及牌堆的位置
   trackDealAnimation(root as HTMLElement, state)
   scheduleDeal()

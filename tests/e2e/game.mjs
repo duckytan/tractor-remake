@@ -432,6 +432,39 @@ try {
     rec('S7b 退出回放后回到正常对局', back === null, `replayAt=${back}`)
   }
 
+  /* ---------- S8 PWA 资源（v1.3.17） ----------
+     manifest / 图标 / theme-color 必须真的能取到 —— 少一个浏览器就不会给"安装"入口。
+     （service worker 在 localhost 上刻意不注册，这里只验静态资源。） */
+  {
+    const r = await page.evaluate(async () => {
+      const href = document.querySelector('link[rel="manifest"]')?.getAttribute('href')
+      if (!href) return { href: null }
+      const res = await fetch(href)
+      const m = await res.json()
+      const icons = []
+      for (const i of m.icons) icons.push((await fetch(i.src)).status)
+      return {
+        href,
+        status: res.status,
+        name: m.name,
+        display: m.display,
+        icons,
+        theme: document.querySelector('meta[name="theme-color"]')?.getAttribute('content') ?? '',
+      }
+    })
+    rec(
+      'S8 PWA：manifest 可读、图标 200、theme-color 与 standalone 就位',
+      !!r.href &&
+        r.status === 200 &&
+        r.display === 'standalone' &&
+        Array.isArray(r.icons) &&
+        r.icons.length >= 2 &&
+        r.icons.every((s) => s === 200) &&
+        r.theme === '#0a1410',
+      `href=${r.href} status=${r.status} display=${r.display} icons=${(r.icons ?? []).join('/')} theme=${r.theme}`,
+    )
+  }
+
   /* ---------- S6 手机竖屏布局（v1.3.13） ----------
      独立 context：390×844 + isMobile/hasTouch，验证响应式断点（卡片缩到 52px、
      网格可压缩、弹层宽度跟随视口）真的生效 —— 之前这里是横向溢出 105px、

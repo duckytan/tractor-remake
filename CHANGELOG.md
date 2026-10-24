@@ -8,6 +8,36 @@
 
 ---
 
+## [1.3.17] - 2026-10-24
+
+> PWA：可安装 + 离线可玩。无规则改动。
+
+### 新增
+
+**可安装（Add to Home Screen）**
+
+- `public/manifest.webmanifest`：名称 / 图标 / `display: standalone` / 主题色 —— 手机上会出
+  「添加到主屏幕」，装完是全屏窗口（没有地址栏），和原生 App 一样从任务切换器里找得到
+- 图标：`public/icons/` 三个（192 / 512 / maskable-512）。用 Playwright 把 SVG 渲染成 PNG
+  （不引图形库）：牌桌绿圆角底 + 两张叠牌（蓝色牌背 + 红心 A）
+- iOS 兼容：`apple-mobile-web-app-*` + `apple-touch-icon`
+
+**离线可玩**
+
+- `public/sw.js`：导航请求 **network-first**（部署后立刻拿到新 HTML，断网回落缓存）、
+  同源静态资源 **cache-first**（构建产物带 hash，不会拿到过期的同名文件）
+- **本地 127.0.0.1 / localhost 不注册 SW** —— 否则 e2e 与本地预览会读到缓存里的旧产物
+  （PWA 最经典的坑）；部署到真实域名才启用
+
+### 验证
+
+- 手动注册 SW → 断网刷新：页面照常打开、25 张手牌正常、可继续打（截图确认）
+- `manifest` 200、三个图标全 200、`theme-color` / `display: standalone` 就位
+- E2E 新增 **S8**（manifest / 图标 / theme-color 断言）⇒ **16/16**
+- 单测 **372/372**、覆盖率 **70.12%**、typecheck/build 干净
+
+---
+
 ## [1.3.16] - 2026-10-24
 
 > 新增**逐墩回放**。
