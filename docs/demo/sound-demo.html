@@ -80,10 +80,10 @@
   <header>
     <h1>拖拉机 · 声音系统试听 <span id="verBadge">v6</span></h1>
     <div class="sub">
-      <b>C 大调 · 钟琴主旋律 · 112 BPM · 旋律在 C6–C7</b> —— 实测频谱重心 1856 Hz（欢快区间）<br>
-      如果上面角标不是 <b>v6</b>，说明你看到的是旧版：<b>按 Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开<br>
-      48 小节一轮循环，靠配器变化而不是改旋律来保持新鲜<br>
-      全部实时合成，没有音频文件。先点「启动」，然后放着别管它
+      <b>五套曲风任选</b>：跳跃八音盒 / 卡通木琴 / 温柔钢琴 / 电子轻快 / 和风拨弹<br>
+      每套是<b>不同的旋律 + 音色 + 音区 + 速度</b>，不是换件衣服 —— 挨个听，挑一个再往下调<br>
+      如果角标不是 <b>v7</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开<br>
+      全部实时合成，没有音频文件。先点「启动」，再切曲风
     </div>
   </header>
 
@@ -101,7 +101,12 @@
 
   <!-- 场景 -->
   <div class="card">
-    <h2>场景 <span class="hint">换场景在下一小节生效，不硬切</span></h2>
+    <h2>曲风与场景 <span class="hint">换曲风在下一小节生效，不硬切</span></h2>
+    <div class="row">
+      <label>曲风</label>
+      <div class="grp" id="styleBox"></div>
+    </div>
+    <div class="info" id="styleNote" style="font-size:11.5px;margin:-3px 0 9px"></div>
     <div class="row" id="sceneBox"></div>
     <div class="row"><label>紧张度</label><input type="range" id="tens" min="0" max="100" value="0"><span class="val" id="tensV">0</span></div>
     <div class="row">
@@ -179,28 +184,69 @@ const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 const SCALE = { minor: [0, 3, 5, 7, 10, 12], major: [0, 2, 4, 7, 9, 12] };
 
 /**
- * 核心动机 v5：**大调五声 + 欢快型**。格式 [拍位(0..15), 音级, 时值(拍)]。
- * 大调五声：0=主音 1=二音 2=大三音 3=五音 4=六音 5=高八主音（C D E G A C'）
+ * 五条候选旋律 + 五套编曲。
  *
- * v4 为什么"阴沉"：整个 `play` 场景是 **A 小调**，小三度天生就是暗的，
- * 旋律再怎么改都救不回来。v5 把三个场景全换成 **C 大调**，这是最大的一刀。
+ * 背景：用户连续四轮反馈「不好听」，逐变量盲猜收敛不了。
+ * 所以一次给五套**完整不同的听感**让他挑，而不是继续改一条。
+ * 五条全部 C 大调五声、和声零冲突（校验见 .tmp/styles-check.mjs），
+ * 区别在**节奏密度 / 音区 / 音色 / 速度**这四个最影响"性格"的维度。
  *
- * 欢快靠这四条：
- *  ① **大三音（E）反复出现** —— 大三度是"明/暗"的唯一开关；
- *  ② **上行多于下行** —— 上行=上扬，下行=叹息；
- *  ③ **八分音符 + 断奏**，密度上来才有"跳"的感觉（v4 是长音，听起来像慢歌）；
- *  ④ 第 1 小节的 **G G E G C'** 是"5 5 3 5 1"，最经典的欢快动机型。
+ * 音级（大调五声）：0=主音 1=二音 2=大三音 3=五音 4=六音 5=高八主音（C D E G A C'）
+ * 格式 [拍位(0..15), 音级, 时值(拍)]
  */
-const HOOK = [
-  // 第 1 小节（C）   E  G  A  G  E  —— 从大三音起，拱一下再回来
-  [0.5, 2, 0.5], [1.0, 3, 0.5], [1.5, 4, 0.5], [2.0, 3, 0.5], [2.5, 2, 1.0],
-  // 第 2 小节（G）   D  E  G  D  —— 落在五音
-  [4.5, 1, 0.5], [5.0, 2, 0.5], [5.5, 3, 0.5], [6.0, 1, 1.5],
-  // 第 3 小节（Am）  E  A  C'  —— 冲高
-  [8.5, 2, 0.5], [9.0, 4, 0.5], [9.5, 5, 1.0],
-  // 第 4 小节（F）   A  G  C  —— 落回主音，下一轮再从大三音起
-  [12.5, 4, 0.5], [13.0, 3, 0.5], [13.5, 0, 1.5]
+const HOOKS = {
+  // A 跳跃：拱形，从大三音起，八分音符为主 —— 通用欢快
+  jump: [
+    [0.5, 2, .5], [1.0, 3, .5], [1.5, 4, .5], [2.0, 3, .5], [2.5, 2, 1.0],
+    [4.5, 1, .5], [5.0, 2, .5], [5.5, 3, .5], [6.0, 1, 1.5],
+    [8.5, 2, .5], [9.0, 4, .5], [9.5, 5, 1.0],
+    [12.5, 4, .5], [13.0, 3, .5], [13.5, 0, 1.5]
+  ],
+  // B 卡通：反复音（G G A A），最"闹"，适合轻松对局
+  toon: [
+    [0.5, 3, .5], [1.0, 3, .5], [1.5, 4, .5], [2.0, 4, .5], [2.5, 3, 1.0],
+    [4.5, 3, .5], [5.0, 3, .5], [5.5, 2, .5], [6.0, 2, 1.0],
+    [8.5, 4, .5], [9.0, 4, .5], [9.5, 5, .5], [10.0, 4, 1.0],
+    [12.5, 4, .5], [13.0, 3, .5], [13.5, 0, 1.5]
+  ],
+  // C 温柔：长音多、跳进大，最"静"，适合定主/埋底
+  soft: [
+    [0.5, 5, 1.0], [1.5, 4, .5], [2.0, 3, 1.0],
+    [4.5, 2, .5], [5.0, 3, .5], [5.5, 4, 1.5],
+    [8.5, 5, .5], [9.0, 3, .5], [9.5, 2, 1.0],
+    [12.5, 4, .5], [13.0, 3, .5], [13.5, 0, 1.5]
+  ],
+  // D 电子：连续八分琶音 + 反复音，最有"推进感"
+  chip: [
+    [0.5, 5, .5], [1.0, 5, .5], [1.5, 3, .5], [2.0, 3, .5],
+    [4.5, 4, .5], [5.0, 4, .5], [5.5, 3, .5], [6.0, 3, .5],
+    [8.5, 2, .5], [9.0, 2, .5], [9.5, 3, .5], [10.0, 3, .5],
+    [12.5, 4, .5], [13.0, 3, .5], [13.5, 0, .5], [14.0, 5, 1.0]
+  ],
+  // E 和风：只有 9 个音、大量留白，最"雅"
+  koto: [
+    [0.5, 3, .5], [1.0, 4, 1.5],
+    [4.5, 3, .5], [5.0, 2, 1.5],
+    [8.5, 2, .5], [9.0, 3, .5], [9.5, 4, 1.0],
+    [12.5, 3, .5], [13.0, 0, 2.0]
+  ]
+};
+
+/** 五套编曲：曲风决定旋律 + 音色 + 音区 + 速度 + 混音 */
+const STYLES = [
+  { id: 'jump', name: '跳跃八音盒', hook: 'jump', mel: 'bell', acc: 'marimba', oct: 36,
+    bpm: 112, bright: 0.78, pad: 0.04, shaker: 0.32, verb: 0.10, note: '通用欢快 · 钟琴高音' },
+  { id: 'toon', name: '卡通木琴',   hook: 'toon', mel: 'marimba', acc: 'marimba', oct: 36,
+    bpm: 128, bright: 0.86, pad: 0.03, shaker: 0.42, verb: 0.07, note: '最闹 · 反复音跳进' },
+  { id: 'soft', name: '温柔钢琴',   hook: 'soft', mel: 'piano', acc: 'pluck', oct: 24,
+    bpm: 96,  bright: 0.58, pad: 0.06, shaker: 0.20, verb: 0.14, note: '最静 · 长音大跳' },
+  { id: 'chip', name: '电子轻快',   hook: 'chip', mel: 'pluck', acc: 'bell', oct: 36,
+    bpm: 124, bright: 0.92, pad: 0.02, shaker: 0.34, verb: 0.08, note: '最有推进感 · 连续琶音' },
+  { id: 'koto', name: '和风拨弹',   hook: 'koto', mel: 'pluck', acc: 'pluck', oct: 24,
+    bpm: 92,  bright: 0.48, pad: 0.10, shaker: 0.10, verb: 0.20, note: '最雅 · 9 个音大量留白' }
 ];
+let styleIdx = 0;
+const style = () => STYLES[styleIdx];
 
 /**
  * 循环编排：4 小节一段，**12 段一轮 = 48 小节 ≈ 137 秒**（84 BPM）。
@@ -310,17 +356,29 @@ let melInst = 'bell';      // 主旋律：钟琴最"欢快"，钢琴偏叙事、
  * 场景 = 参数集（不是曲目）。
  * root 用 MIDI：45=A2、48=C3。
  */
-const SCENES = {
-  // 全部 C 大调。v4 的 play 是 A 小调，小三度天生就暗，旋律再怎么改都救不回来。
-  // BPM 也整体提上去了：欢快的第一要素是"走得动"，慢速大调一样会显得闷。
-  // verb（混响）压到 0.20 左右：混响 = 距离感 = 发闷，欢快要"贴脸"。
-  calm:   { name: '定主 · 埋底 · 回放', bpm: 96,  root: 48, key: 'major',
-            bright: 0.62, pad: 0.05, shaker: 0.26, verb: 0.12 },
-  play:   { name: '出牌（平稳）',        bpm: 112, root: 48, key: 'major',
-            bright: 0.78, pad: 0.04, shaker: 0.32, verb: 0.10 },
-  settle: { name: '结算 · 终局',         bpm: 126, root: 48, key: 'major',
-            bright: 0.92, pad: 0.04, shaker: 0.38, verb: 0.09 }
+/** 场景只做「速度 + 亮度」的修饰，叠加在曲风之上 */
+const SCENE_MOD = {
+  calm:   { name: '定主 · 埋底 · 回放', bpmMul: 0.86, dBright: -0.14 },
+  play:   { name: '出牌（平稳）',        bpmMul: 1.00, dBright: 0 },
+  settle: { name: '结算 · 终局',         bpmMul: 1.14, dBright: +0.14 }
 };
+const BG_ROOT = 48;     // C3
+const BG_KEY = 'major'; // 全部 C 大调
+
+/** 合成后的实际参数：曲风打底，场景做速度和亮度的偏移 */
+function scene() {
+  const st = style(), md = SCENE_MOD[sceneKey];
+  return {
+    name: md.name,
+    bpm: st.bpm * md.bpmMul,
+    root: BG_ROOT,
+    key: BG_KEY,
+    bright: clamp(st.bright + md.dBright, 0, 1),
+    pad: st.pad,
+    shaker: st.shaker,
+    verb: st.verb
+  };
+}
 
 let sceneKey = 'play';
 let tensionTarget = 0;      // 0..1
@@ -330,7 +388,6 @@ let barIndex = 0, nextBarTime = 0, timerId = null;
 let volBgm = 0.52, volSfx = 0.72;
 let lastStatAt = 0;
 
-const scene = () => SCENES[sceneKey];
 
 /* ============================================================
    1. 音频引擎
@@ -651,16 +708,14 @@ function scheduleBar(bi, when) {
   //    垫在低音区会把"沉"再叠一层；垫在中音区只增加厚度。
   if (sec.pad) vPad(when, voices[1], beat * 4, (sc.pad + 0.1 * t) * 0.55);
 
-  // ③ 主旋律：全曲就这一条 HOOK，变的是八度和"出不出现"
-  //    **+36**：实测频谱重心从 646Hz 一路提到 2014Hz。
-  //    +12 时旋律最高 523Hz，被伴奏"高三"（659Hz）压在下面；+24（C5–C6）到 1407Hz，
-  //    仍偏闷；+36（C6–C7）才进入欢快音乐的重心区间（1500–3000Hz）。
-  //    同时钟琴的 2.76/5.4 次泛音落进 2.9–5.8kHz，补上原本只有 1% 的"空气"频段。
+  // ③ 主旋律：当前曲风的那一条。音区由曲风的 oct 决定
+  //    （+36 = C6-C7 已实测落在欢快区间；+24 = C5-C6 偏静，给温柔/和风用）
   if (sec.mel) {
-    for (const [b, deg, dur] of HOOK) {
+    const st = style();
+    for (const [b, deg, dur] of HOOKS[st.hook]) {
       if (Math.floor(b / 4) !== loopBar) continue;
       const local = b % 4;
-      const pitch = root + 36 + sec.oct + SCALE[sc.key][deg];
+      const pitch = root + st.oct + sec.oct + SCALE[sc.key][deg];
       // 轻微人性化：力度 ±6%，起音错开几毫秒，避免听起来像打字机
       const vel = (0.9 + Math.random() * 0.12) * (1 + 0.06 * t);
       const jitter = (Math.random() - 0.5) * 0.012;
@@ -871,9 +926,9 @@ function sfx(name, opts) {
 const $ = id => document.getElementById(id);
 
 /* 场景按钮 */
-Object.keys(SCENES).forEach(k => {
+Object.keys(SCENE_MOD).forEach(k => {
   const b = document.createElement('button');
-  b.textContent = SCENES[k].name;
+  b.textContent = SCENE_MOD[k].name;
   b.dataset.scene = k;
   if (k === sceneKey) b.classList.add('on');
   b.onclick = () => {
@@ -887,6 +942,33 @@ Object.keys(SCENES).forEach(k => {
   };
   $('sceneBox').appendChild(b);
 });
+
+/* 曲风选择器：一次给五套完整不同的听感，不用再逐轮盲猜 */
+function buildStyleBox() {
+  STYLES.forEach((st, i) => {
+    const b = document.createElement('button');
+    b.textContent = st.name;
+    b.dataset.style = st.id;
+    b.style.fontSize = '12px'; b.style.padding = '7px 12px';
+    if (i === styleIdx) b.classList.add('on');
+    b.onclick = () => {
+      styleIdx = i;
+      Array.prototype.forEach.call($('styleBox').children, c => c.classList.toggle('on', c.dataset.style === st.id));
+      // 音色跟着曲风走，同时刷新两个音色选择器的高亮
+      accInst = st.acc; melInst = st.mel;
+      Array.prototype.forEach.call($('instBox').children, c => c.classList.toggle('on', c.dataset.inst === st.acc));
+      Array.prototype.forEach.call($('melBox').children, c => c.classList.toggle('on', c.dataset.inst === st.mel));
+      $('styleNote').textContent = st.name + '：' + st.note + ' · ' + st.bpm + ' BPM · 旋律音区 '
+        + (st.oct === 36 ? 'C6–C7（亮）' : 'C5–C6（柔）');
+      updateStat();
+    };
+    $(`styleBox`).appendChild(b);
+  });
+  const st = style();
+  $('styleNote').textContent = st.name + '：' + st.note + ' · ' + st.bpm + ' BPM · 旋律音区 '
+    + (st.oct === 36 ? 'C6–C7（亮）' : 'C5–C6（柔）');
+}
+buildStyleBox();
 
 /* 音色选择器（伴奏 / 主旋律共用一套逻辑） */
 function buildInstPicker(boxId, get, set) {
@@ -1042,7 +1124,7 @@ function updateStat() {
   const keyName = sc.key === 'minor' ? 'A 小调' : 'C 大调';
   // 版本角标实时反映当前状态 —— 用户三次反馈「阴沉」但实测频谱已完全不同，
   // 怀疑是浏览器标签页缓存了旧版。角标一换就能立刻确认自己在听哪一版。
-  $('verBadge').textContent = 'v6 · ' + keyName + ' · ' + bpm + ' BPM';
+  $('verBadge').textContent = 'v7 · ' + style().name + ' · ' + bpm + ' BPM';
   const tr = Math.round(-2 * tensionCur);
   const secIdx = Math.floor(barIndex / 4) % SECTIONS.length;
   const sec = SECTIONS[secIdx];
