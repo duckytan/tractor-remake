@@ -13,9 +13,9 @@ import { clearState, loadPrefs, loadState, savePrefs, saveState } from '@app/per
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
 import type { Prefs } from '@app/persist'
-import { HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
+import { ANIM_SPEED_SCALE, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { refitHand, render } from '@ui/render'
-import { trackDealAnimation } from '@ui/dealFly'
+import { captureFx, setAnimScale, trackDealAnimation, trackPlayFx } from '@ui/dealFly'
 
 const root = document.getElementById('app')
 if (!root) throw new Error('#app 未找到')
@@ -35,6 +35,7 @@ state = {
   fourColor: prefs.fourColor,
   cardSize: prefs.cardSize,
   animation: prefs.animation,
+  animSpeed: prefs.animSpeed,
   showHistory: prefs.showHistory,
   hintSelects: prefs.hintSelects,
   pendingConfig: prefs.ruleConfig,
@@ -102,7 +103,7 @@ function scheduleDeal(): void {
     if (state.revealed >= DEAL_TOTAL || state.dealPrompt) return
     state = reduce(state, { type: 'revealTick' })
     afterChange()
-  }, DEAL_INTERVAL_MS)
+  }, Math.round(DEAL_INTERVAL_MS * (ANIM_SPEED_SCALE[state.animSpeed] ?? 1)))
 }
 
 /**
@@ -132,6 +133,7 @@ function afterChange(): void {
     ruleConfig: state.pendingConfig,
     cardSize: state.cardSize,
     animation: state.animation,
+    animSpeed: state.animSpeed,
     showHistory: state.showHistory,
     hintSelects: state.hintSelects,
   })
@@ -142,13 +144,22 @@ function afterChange(): void {
   scheduleAi()
 }
 
+/** 上一次 paint 用的状态：captureFx 要用它读「上一帧的本墩出牌」（见 ui/dealFly.ts） */
+let lastPainted: GameState | null = null
+
 function paint(): void {
+  // 顺序不能换：render 会重建整棵 DOM，旧元素的矩形只能在它之前量
+  const before = captureFx(root as HTMLElement, lastPainted ?? state)
+  lastPainted = state
+  setAnimScale(state.animSpeed)
   render(root as HTMLElement, state, {
     dispatch,
     hint,
     undo: undoMove,
     canUndo: canUndo(state, undoStore),
   })
+  trackDealAnimation(root as HTMLElement, state)
+  trackPlayFx(root as HTMLElement, state, before)
 }
 
 function dispatch(a: Action): void {

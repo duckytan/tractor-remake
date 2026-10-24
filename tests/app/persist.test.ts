@@ -113,3 +113,19 @@ describe('偏好设置迁移：twoAsPermanent 默认值 false → true', () => {
     expect(loadPrefs().ruleConfig.twoAsPermanent).toBe(false)
   })
 })
+
+describe('偏好设置：动画速度档位（v1.3.8）', () => {
+  it('老档没有 animSpeed 字段 ⇒ 默认「中」', () => {
+    store.setItem(KEY_PREFS, JSON.stringify({ ruleConfig: legacyRuleConfig }))
+    expect(loadPrefs().animSpeed).toBe('normal')
+  })
+
+  it('存档里的 slow / fast 会被尊重，非法值回落「中」', () => {
+    savePrefs({ ...loadPrefs(), animSpeed: 'slow' })
+    expect(loadPrefs().animSpeed).toBe('slow')
+    savePrefs({ ...loadPrefs(), animSpeed: 'fast' })
+    expect(loadPrefs().animSpeed).toBe('fast')
+    store.setItem(KEY_PREFS, JSON.stringify({ prefsVersion: PREFS_VERSION, animSpeed: 'turbo' }))
+    expect(loadPrefs().animSpeed).toBe('normal')
+  })
+})

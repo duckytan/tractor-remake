@@ -35,6 +35,22 @@ export type Phase = 'contract' | 'bury' | 'play' | 'settle' | 'over'
 /** 牌面尺寸档位（FR-18） */
 export type CardSize = 'S' | 'M' | 'L'
 
+/**
+ * 动画速度档位。
+ *
+ * 所有卡牌动画（发牌飞行、出牌飞行、收墩归位、手牌重排）的时长都乘以
+ * `ANIM_SPEED_SCALE[speed]`，见 `ui/dealFly.ts`。
+ * 只影响「观感」，不改变任何规则时序（AI 速度是另一个设置项 `aiSpeedMs`）。
+ */
+export type AnimSpeed = 'slow' | 'normal' | 'fast'
+
+/** 动画速度倍率：慢 1.6× / 中 1× / 快 0.6× */
+export const ANIM_SPEED_SCALE: Record<AnimSpeed, number> = {
+  slow: 1.6,
+  normal: 1,
+  fast: 0.6,
+}
+
 /** 牌面像素宽度 → CSS 变量 --card-w */
 export const CARD_SIZE_PX: Record<CardSize, number> = { S: 120, M: 150, L: 190 }
 
@@ -125,6 +141,8 @@ export interface GameState {
   readonly cardSize: CardSize
   /** 动画开关（关闭后 CSS 过渡全部禁用） */
   readonly animation: boolean
+  /** 动画速度档位：慢 / 中 / 快（影响发牌、出牌、收墩、手牌重排的全部时长） */
+  readonly animSpeed: AnimSpeed
   /** 手牌前方「最近几墩」历史牌条开关（体验项，立即生效） */
   readonly showHistory: boolean
   /**
@@ -177,6 +195,7 @@ export type Action =
   | { readonly type: 'openSettings' }
   | { readonly type: 'closeSettings' }
   | { readonly type: 'setCardSize'; readonly size: CardSize }
+  | { readonly type: 'setAnimSpeed'; readonly speed: AnimSpeed }
   | { readonly type: 'toggleAnimation' }
   | { readonly type: 'toggleShowHistory' }
   | { readonly type: 'toggleHintSelects' }
@@ -256,6 +275,7 @@ export const emptyState = (): GameState => ({
   fourColor: false,
   cardSize: 'M',
   animation: true,
+  animSpeed: 'normal',
   showHistory: true,
   hintSelects: false,
   settingsOpen: false,

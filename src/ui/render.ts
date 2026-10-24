@@ -115,7 +115,13 @@ function roleTag(s: GameState, seat: Seat): string {
 function cardWrap(cards: readonly Card[], o: { cls?: string; width?: number } = {}): HTMLElement {
   const box = document.createElement('div')
   box.className = 'cards'
-  for (const c of cards) box.appendChild(cardEl(c, o))
+  for (const c of cards) {
+    // 正在飞行的牌先不显形（出牌飞行 / 发牌飞行），落地由 ui/dealFly.ts 揭开。
+    // 不藏的话会看到「牌已经在出牌区了，同时还有一张在飞」。
+    const cls = isInFlight(c.id) ? `${o.cls ?? ''} card--incoming`.trim() : o.cls
+    // data-id 必带：出牌飞行 / 收墩归位都靠它把「状态里的牌」和「DOM 元素」对上
+    box.appendChild(cardEl(c, { ...o, cls, id: c.id }))
+  }
   return box
 }
 
@@ -683,6 +689,14 @@ function settingsPanel(s: GameState): string {
           { v: 'off', label: '关', on: !s.animation },
         ])}
       </div>
+      <div class="set-row">
+        <span>动画速度<small class="set-desc">发牌 / 出牌 / 收墩 / 手牌重排</small></span>
+        ${seg('setAnimSpeed', '动画速度', [
+          { v: 'slow', label: '慢', on: s.animSpeed === 'slow' },
+          { v: 'normal', label: '中', on: s.animSpeed === 'normal' },
+          { v: 'fast', label: '快', on: s.animSpeed === 'fast' },
+        ])}
+      </div>
       ${swAct('toggleShowHistory', '各家出牌留痕', `各家面前显示最近 ${PAST_DEPTH} 墩的历史小牌`, s.showHistory)}
       ${swAct('toggleHintSelects', '提示即选中', '点「提示」直接选中提示的牌（会覆盖已选牌，并写入存档）', s.hintSelects)}
     </div>
@@ -948,6 +962,11 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
         break
       case 'setCardSize':
         if (val !== undefined) act.dispatch({ type: 'setCardSize', size: val as CardSize })
+        break
+      case 'setAnimSpeed':
+        if (val === 'slow' || val === 'normal' || val === 'fast') {
+          act.dispatch({ type: 'setAnimSpeed', speed: val })
+        }
         break
       default:
         break

@@ -495,6 +495,7 @@ function emptyBase(): GameState {
     fourColor: false,
     cardSize: 'M',
     animation: true,
+    animSpeed: 'normal',
     showHistory: true,
     hintSelects: false,
     settingsOpen: false,
@@ -1106,6 +1107,7 @@ export function reduce(s: GameState, action: Action): GameState {
             fourColor: s.fourColor,
             cardSize: s.cardSize,
             animation: s.animation,
+            animSpeed: s.animSpeed,
           },
           s.seed + 1,
         )
@@ -1147,6 +1149,9 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'setCardSize':
       return { ...s, cardSize: action.size }
+
+    case 'setAnimSpeed':
+      return { ...s, animSpeed: action.speed }
 
     case 'showHint':
       // 纯视觉提示，不碰 selected / 不推进局面（FR-19 ③）

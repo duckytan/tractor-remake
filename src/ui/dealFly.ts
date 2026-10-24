@@ -24,8 +24,24 @@
 
 import type { Card } from '@core'
 import { HUMAN_SEAT } from '@app/state'
-import type { GameState } from '@app/state'
+import type { AnimSpeed, GameState } from '@app/state'
+import { ANIM_SPEED_SCALE } from '@app/state'
 import { cardEl } from './card'
+
+/**
+ * 动画速度倍率（慢 1.6 / 中 1 / 快 0.6）。
+ * 由 `render()` 每次 paint 时按 `state.animSpeed` 写入，所有卡牌动画的时长都乘它。
+ */
+let animScale = 1
+
+export function setAnimScale(speed: AnimSpeed): void {
+  animScale = ANIM_SPEED_SCALE[speed] ?? 1
+}
+
+/** 把基准时长换算成当前档位的时长（ms） */
+export function animMs(base: number): number {
+  return Math.round(base * animScale)
+}
 
 /**
  * 飞行时长。
@@ -111,6 +127,7 @@ export function trackDealAnimation(root: HTMLElement, s: GameState): void {
   // 牌堆上的牌比手牌小 ⇒ 起飞时缩小，落位时恢复到 1
   const deckScale = Math.max(0.35, Math.min(1, from.width / width))
 
+  const dur = animMs(FLY_MS)
   const t0 = performance.now()
   let done = false
 
@@ -125,7 +142,7 @@ export function trackDealAnimation(root: HTMLElement, s: GameState): void {
 
   const frame = (now: number): void => {
     if (done) return
-    const raw = Math.min(1, (now - t0) / FLY_MS)
+    const raw = Math.min(1, (now - t0) / dur)
 
     const cur = findTarget()
     if (cur === null) {
@@ -155,5 +172,224 @@ export function trackDealAnimation(root: HTMLElement, s: GameState): void {
 
   requestAnimationFrame(frame)
   // 兜底：标签页切到后台时 rAF 会暂停，没有这个兜底真牌会一直藏着不显形
-  window.setTimeout(finish, FLY_MS + 400)
+  window.setTimeout(finish, dur + 400)
+}
+
+/* ============================================================
+ * 出牌 / 收墩 / 手牌重排（v1.3.8）
+ *
+ * 与发牌飞行共用同一套「幽灵牌」机制：真牌先藏（inFlight + .card--incoming），
+ * 飞行层里放一张等尺寸的克隆牌做抛物线运动，落地那帧再把真牌揭开。
+ * 原因同发牌：`render()` 每次 paint 都重建 DOM，挂在元素上的 CSS animation
+ * 会在下一次 paint 随元素一起消失。
+ * ============================================================ */
+
+/** 出牌飞行基准时长（中速） */
+const PLAY_FLY_MS = 280
+/** 收墩归位基准时长 */
+const COLLECT_MS = 340
+/** 手牌重排（FLIP）基准时长 */
+const FLIP_MS = 200
+
+export interface FxPlay {
+  readonly cards: readonly Card[]
+  readonly rects: readonly DOMRect[]
+}
+
+/** paint 之前的「动画前」快照，paint 之后用它对比出新出的牌 / 刚结算的墩 */
+export interface FxSnapshot {
+  /** 人类手牌：卡 id → 矩形（出牌的起飞点） */
+  readonly hand: Map<number, DOMRect>
+  /** 本墩各家已出的牌（收墩的起飞点） */
+  readonly plays: Map<number, FxPlay>
+  /** 三家 AI 的牌背区（AI 出牌的起飞点 / 收墩的落点） */
+  readonly seats: Map<number, DOMRect>
+  /** 人类手牌区（兜底起飞点 / 收墩落点） */
+  readonly southHand: DOMRect | null
+  readonly histLen: number
+}
+
+/**
+ * 必须在 `render()` 之前调用 —— render 会重建整棵 DOM，旧元素就量不到了。
+ *
+ * `prevState` 必须是**上一次 paint 用的状态**（不是当前状态）：此时 DOM 还是
+ * 上一帧的画面，本墩已出的牌要按上一帧的 `trick.plays` 来取。
+ * 传当前状态会拿到「结算后已清空」的 trick ⇒ 收墩动画永远触发不了（踩过）。
+ */
+export function captureFx(root: HTMLElement, prevState: GameState): FxSnapshot {
+  const hand = new Map<number, DOMRect>()
+  for (const el of root.querySelectorAll<HTMLElement>('[data-slot="hand"] .card[data-id]')) {
+    hand.set(Number(el.dataset.id), el.getBoundingClientRect())
+  }
+  const plays = new Map<number, FxPlay>()
+  for (const play of prevState.trick.plays) {
+    const slot = play.seat === HUMAN_SEAT ? 'plays-mine' : `plays-${play.seat}`
+    const els = root.querySelectorAll<HTMLElement>(`[data-slot="${slot}"] .plays__now .card[data-id]`)
+    const rects = [...els].map((el) => el.getBoundingClientRect())
+    if (rects.length === 0) continue
+    plays.set(play.seat, { cards: play.cards, rects })
+  }
+  const seats = new Map<number, DOMRect>()
+  for (const seat of [1, 2, 3]) {
+    const el = root.querySelector<HTMLElement>(`[data-slot="back-${seat}"]`)
+    if (el !== null) seats.set(seat, el.getBoundingClientRect())
+  }
+  const southHand =
+    root.querySelector<HTMLElement>('[data-slot="hand"]')?.getBoundingClientRect() ?? null
+  return { hand, plays, seats, southHand, histLen: prevState.history.length }
+}
+
+/**
+ * 一张幽灵牌从 `from` 飞到 `to`。
+ * 尺寸从出发牌插值到落点牌（手牌比出牌区大 ⇒ 有「甩出去变小」的感觉）。
+ */
+function flyGhost(
+  card: Card,
+  from: DOMRect,
+  to: DOMRect,
+  dur: number,
+  opts: { fade?: boolean; arc?: number } = {},
+): void {
+  const w0 = Math.round(from.width > 0 ? from.width : to.width)
+  const w1 = Math.round(to.width > 0 ? to.width : w0)
+  if (w0 <= 0 || w1 <= 0) return
+
+  const sx = from.left + from.width / 2
+  const sy = from.top + from.height / 2
+  const tx = to.left + to.width / 2
+  const ty = to.top + to.height / 2
+
+  const el = cardEl(card, { width: w0, cls: 'deal-fly__card' })
+  el.style.left = `${sx - w0 / 2}px`
+  el.style.top = `${sy - (w0 * 1.4) / 2}px`
+  ensureLayer().appendChild(el)
+
+  const arc = opts.arc ?? 16
+  const endScale = w1 / w0
+  const t0 = performance.now()
+  let done = false
+
+  const frame = (now: number): void => {
+    if (done) return
+    const raw = Math.min(1, (now - t0) / dur)
+    const t = easeOut(raw)
+    const lift = Math.sin(raw * Math.PI) * arc
+    const cx = sx + (tx - sx) * t
+    const cy = sy + (ty - sy) * t - lift
+    const sc = 1 + (endScale - 1) * t
+    const rot = (opts.fade ? 10 : -6) * (1 - t)
+    el.style.transform = `translate(${cx - sx}px, ${cy - sy}px) scale(${sc.toFixed(3)}) rotate(${rot.toFixed(2)}deg)`
+    if (opts.fade) el.style.opacity = String(1 - t * 0.85)
+    if (raw >= 1) {
+      done = true
+      el.remove()
+      return
+    }
+    requestAnimationFrame(frame)
+  }
+  requestAnimationFrame(frame)
+  // 兜底：标签页切后台时 rAF 会暂停，别把幽灵牌永远留在层里
+  window.setTimeout(() => {
+    if (!done) {
+      done = true
+      el.remove()
+    }
+  }, dur + 400)
+}
+
+/** 手牌重排：出牌后整排重新居中，用 FLIP 滑过去而不是瞬移 */
+function flipHand(root: HTMLElement, prev: FxSnapshot): void {
+  const dur = animMs(FLIP_MS)
+  for (const el of root.querySelectorAll<HTMLElement>('[data-slot="hand"] .card[data-id]')) {
+    const id = Number(el.dataset.id)
+    if (inFlight.has(id)) continue
+    const before = prev.hand.get(id)
+    if (before === undefined) continue
+    const after = el.getBoundingClientRect()
+    if (after.width === 0) continue
+    const dx = before.left - after.left
+    const dy = before.top - after.top
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue
+    el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], {
+      duration: dur,
+      easing: 'cubic-bezier(.2,.8,.25,1)',
+    })
+  }
+}
+
+/**
+ * 每次 paint 之后调用一次：出牌飞行、收墩归位、手牌重排。
+ *
+ * `prev` 是 paint **之前** `captureFx` 量到的快照。
+ */
+export function trackPlayFx(root: HTMLElement, s: GameState, prev: FxSnapshot): void {
+  if (!s.animation || s.phase !== 'play') return
+
+  // ① 出牌飞行：本墩新出现的牌，从「人类手牌 / AI 牌背」飞到出牌区
+  for (const play of s.trick.plays) {
+    const known = new Set(prev.plays.get(play.seat)?.cards.map((c) => c.id) ?? [])
+    const slot = play.seat === HUMAN_SEAT ? 'plays-mine' : `plays-${play.seat}`
+    const els = root.querySelectorAll<HTMLElement>(`[data-slot="${slot}"] .plays__now .card[data-id]`)
+    for (const el of els) {
+      const id = Number(el.dataset.id)
+      if (known.has(id)) continue
+      const card = play.cards.find((c) => c.id === id)
+      if (card === undefined) continue
+      const to = el.getBoundingClientRect()
+      if (to.width <= 0) continue
+      const from =
+        play.seat === HUMAN_SEAT
+          ? (prev.hand.get(id) ?? prev.southHand)
+          : (prev.seats.get(play.seat) ?? null)
+      if (from === null) continue
+
+      // 真牌先藏：当前元素加 class，后续 paint 由 cardWrap 按 inFlight 继续藏
+      inFlight.add(id)
+      el.classList.add('card--incoming')
+      const dur = animMs(PLAY_FLY_MS)
+      flyGhost(card, from, to, dur, { arc: 14 })
+      window.setTimeout(() => {
+        inFlight.delete(id)
+        const t = root.querySelector<HTMLElement>(
+          `[data-slot="${slot}"] .plays__now .card[data-id="${id}"]`,
+        )
+        if (t !== null) t.classList.remove('card--incoming')
+      }, dur)
+    }
+  }
+
+  // ② 收墩归位：上一帧本墩有牌、这一帧刚结算 ⇒ 四家的牌飞向赢家并淡出
+  if (s.history.length > prev.histLen && prev.plays.size > 0) {
+    const rec = s.history[s.history.length - 1]
+    const target = rec
+      ? rec.winner === HUMAN_SEAT
+        ? prev.southHand
+        : (prev.seats.get(rec.winner) ?? null)
+      : null
+    if (target !== null && rec !== undefined) {
+      const dur = animMs(COLLECT_MS)
+      for (const { cards, rects } of prev.plays.values()) {
+        cards.forEach((c, i) => {
+          const r = rects[i]
+          if (r !== undefined && r.width > 0) {
+            flyGhost(c, r, target, dur, { fade: true, arc: 26 })
+          }
+        })
+      }
+      // 第 4 张牌：出牌与整墩结算发生在同一次 reduce 里，桌上从未出现过它。
+      // 直接从「手牌 / 牌背」飞向赢家，否则这一张会凭空消失。
+      for (const p of rec.plays) {
+        if (prev.plays.has(p.seat)) continue
+        const from =
+          p.seat === HUMAN_SEAT
+            ? (p.cards[0] !== undefined ? prev.hand.get(p.cards[0].id) : undefined) ?? prev.southHand
+            : (prev.seats.get(p.seat) ?? null)
+        if (from === null || from === undefined) continue
+        for (const c of p.cards) flyGhost(c, from, target, dur, { fade: true, arc: 22 })
+      }
+    }
+  }
+
+  // ③ 手牌重排
+  flipHand(root, prev)
 }

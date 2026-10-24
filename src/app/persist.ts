@@ -7,7 +7,7 @@
 
 import type { GameState } from './state'
 import { STATE_VERSION } from './state'
-import type { CardSize } from './state'
+import type { AnimSpeed, CardSize } from './state'
 import { DEFAULT_RULE_CONFIG, HAND_SIZE } from '@core'
 import type { Card } from '@core'
 import type { RuleConfig } from '@core'
@@ -51,6 +51,8 @@ export interface Prefs {
   readonly cardSize: CardSize
   /** 动画开关 */
   readonly animation: boolean
+  /** 动画速度档位：慢 / 中 / 快 */
+  readonly animSpeed: AnimSpeed
   /** 手牌前方历史牌条开关 */
   readonly showHistory: boolean
   /** 提示即选中 */
@@ -65,6 +67,7 @@ const DEFAULT_PREFS: Prefs = {
   ruleConfig: DEFAULT_RULE_CONFIG,
   cardSize: 'M',
   animation: true,
+  animSpeed: 'normal',
   showHistory: true,
   hintSelects: false,
 }
@@ -127,6 +130,11 @@ export function loadPrefs(): Prefs {
       ruleConfig: sanitizeConfig(o.ruleConfig, isLegacyArchive),
       cardSize,
       animation: o.animation !== false,
+      // 动画速度：老档没有这个字段 ⇒ 中速
+      animSpeed:
+        o.animSpeed === 'slow' || o.animSpeed === 'fast'
+          ? o.animSpeed
+          : DEFAULT_PREFS.animSpeed,
       // 缺字段按默认：历史牌条默认开、提示即选中默认关
       showHistory: o.showHistory !== false,
       hintSelects: o.hintSelects === true,
