@@ -14,8 +14,9 @@
   .wrap{max-width:920px;margin:0 auto}
   header{text-align:center;margin-bottom:22px}
   h1{font-size:22px;font-weight:600;letter-spacing:.5px;color:#f0eee6}
-  h1 span{font-size:12px;font-weight:400;color:#7f9c8e;margin-left:8px;
-          padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.07)}
+  h1 span{font-size:12px;font-weight:600;color:#7fe0bb;margin-left:8px;
+          padding:3px 11px;border-radius:999px;background:rgba(29,158,117,.20);
+          border:1px solid rgba(29,158,117,.55)}
   .sub{font-size:12.5px;color:#7f9c8e;margin-top:8px;line-height:1.8}
   .card{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.08);
         border-radius:14px;padding:15px 17px;margin-bottom:13px}
@@ -77,10 +78,10 @@
 <div class="wrap">
 
   <header>
-    <h1>拖拉机 · 声音系统试听 <span>方案 v1</span></h1>
+    <h1>拖拉机 · 声音系统试听 <span id="verBadge">v6</span></h1>
     <div class="sub">
-      <b>C 大调 · 断奏 · 108 BPM</b> —— 三个场景全用大调，先保证"明亮"再谈别的<br>
-      主旋律 v5：大三音反复出现、上行多于下行、八分音符断奏，第 1 小节是「5 5 3 5 1」<br>
+      <b>C 大调 · 钟琴主旋律 · 112 BPM · 旋律在 C6–C7</b> —— 实测频谱重心 1856 Hz（欢快区间）<br>
+      如果上面角标不是 <b>v6</b>，说明你看到的是旧版：<b>按 Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开<br>
       48 小节一轮循环，靠配器变化而不是改旋律来保持新鲜<br>
       全部实时合成，没有音频文件。先点「启动」，然后放着别管它
     </div>
@@ -220,25 +221,25 @@ const HOOK = [
  */
 const SECTIONS = [
   // ① 起：旋律照常，但伴奏只留低音 —— 先让人听清骨架
-  { tag: '起',     mel: 1, oct: 0,  rows: 0b000001, pad: 1, shk: 0.6, tr: 0 },
+  { tag: '起',     mel: 1, oct: 0,  rows: 0b000001, pad: 1, shk: 0.7, tr: 0 },
   // ②③ 全奏（重复本身是记忆点，别怕两段一样）
   { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
   { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
-  // ④ 高八度：旋律整体 +12，抽掉和声床（变薄反而更亮）
-  { tag: '高八度', mel: 1, oct: 12, rows: 0b101001, pad: 0, shk: 1.0, tr: 0 },
-  // ⑤ 回到原八度
+  // ④ 提亮：抽掉和声床 —— 变薄反而更亮（旋律基频已在 C5–C6，不再靠 +12 八度去顶）
+  { tag: '提亮',   mel: 1, oct: 0,  rows: 0b101001, pad: 0, shk: 1.0, tr: 0 },
+  // ⑤ 回到完整
   { tag: '回落',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
   // ⑥ 呼吸：**抽掉旋律**，只留伴奏 + 沙锤减半 —— 最有效的防疲劳手法
-  { tag: '呼吸',   mel: 0, oct: 0,  rows: 0b001001, pad: 1, shk: 0.4, tr: 0 },
+  { tag: '呼吸',   mel: 0, oct: 0,  rows: 0b001001, pad: 1, shk: 0.5, tr: 0 },
   // ⑦ 旋律回来
   { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
   // ⑧⑨ 转调：整体 +2 半音（大二度上行），旋律原样重述但"换了个地方"
   { tag: '转调',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 2 },
-  { tag: '转调',   mel: 1, oct: 12, rows: 0b101001, pad: 0, shk: 1.0, tr: 2 },
+  { tag: '转调',   mel: 1, oct: 0,  rows: 0b101001, pad: 0, shk: 1.0, tr: 2 },
   // ⑩ 转回原调（落回来那一下很舒服，这是转调最大的收益）
   { tag: '回落',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
   // ⑪ 极简：只剩低音 + 沙锤，比"呼吸"更空
-  { tag: '极简',   mel: 0, oct: 0,  rows: 0b000001, pad: 1, shk: 0.3, tr: 0 },
+  { tag: '极简',   mel: 0, oct: 0,  rows: 0b000001, pad: 1, shk: 0.4, tr: 0 },
   // ⑫ 收尾，接回 ①
   { tag: '收尾',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 }
 ];
@@ -295,9 +296,10 @@ const ACC_GRID = Array.from({ length: 32 }, (_, i) => ACC_BAR[i % 8]);
 
 /**
  * 每一行自己的力度：低音是地基给足，越往上越轻。
- * 高三（三音高八度）只当点缀 —— 它在 69..76，正好压在主旋律头顶上，给满了就会抢旋律。
+ * 高三（三音高八度）在 69–76，正好是"亮片"，旋律抬到 C5–C6 之后它在旋律下面，
+ * 可以多给一点而不抢戏。
  */
-const ROW_VEL = [1.0, 0.92, 0.85, 0.80, 0.78, 0.62];
+const ROW_VEL = [0.80, 0.92, 0.85, 0.82, 0.80, 0.74];
 
 /** 音色（试听时可换，正式版做成设置项） */
 const INST_LABEL = { bell: '钟琴', marimba: '马林巴', pluck: '拨弦', piano: '钢琴' };
@@ -309,14 +311,15 @@ let melInst = 'bell';      // 主旋律：钟琴最"欢快"，钢琴偏叙事、
  * root 用 MIDI：45=A2、48=C3。
  */
 const SCENES = {
-  // 全部 C 大调。v4 的 play 是 A 小调，小三度天生就暗，旋律怎么写都救不回来。
+  // 全部 C 大调。v4 的 play 是 A 小调，小三度天生就暗，旋律再怎么改都救不回来。
   // BPM 也整体提上去了：欢快的第一要素是"走得动"，慢速大调一样会显得闷。
-  calm:   { name: '定主 · 埋底 · 回放', bpm: 92,  root: 48, key: 'major',
-            bright: 0.62, pad: 0.10, shaker: 0.10, verb: 0.34 },
-  play:   { name: '出牌（平稳）',        bpm: 108, root: 48, key: 'major',
-            bright: 0.78, pad: 0.06, shaker: 0.18, verb: 0.30 },
-  settle: { name: '结算 · 终局',         bpm: 122, root: 48, key: 'major',
-            bright: 0.92, pad: 0.06, shaker: 0.24, verb: 0.28 }
+  // verb（混响）压到 0.20 左右：混响 = 距离感 = 发闷，欢快要"贴脸"。
+  calm:   { name: '定主 · 埋底 · 回放', bpm: 96,  root: 48, key: 'major',
+            bright: 0.62, pad: 0.05, shaker: 0.26, verb: 0.12 },
+  play:   { name: '出牌（平稳）',        bpm: 112, root: 48, key: 'major',
+            bright: 0.78, pad: 0.04, shaker: 0.32, verb: 0.10 },
+  settle: { name: '结算 · 终局',         bpm: 126, root: 48, key: 'major',
+            bright: 0.92, pad: 0.04, shaker: 0.38, verb: 0.09 }
 };
 
 let sceneKey = 'play';
@@ -487,15 +490,16 @@ function vPiano(when, midi, vel, dur, bright) {
 function vBell(when, midi, vel, dur, bright) {
   const f = mtof(midi);
   const out = ctx.createGain();
-  out.gain.value = vel * 0.16;
+  out.gain.value = vel * 0.18;
   out.connect(musicBus);
 
   const hold = Math.max(0.16, dur * 0.58);
-  // 高次泛音的占比跟着 bright 走：紧张时更"脆"，松时更"圆"
-  const PARTS = [[1, 1, 1.0], [2.76, 0.26 + 0.16 * bright, 0.52], [5.4, 0.04 + 0.08 * bright, 0.30]];
+  // 5.4 次泛音是"闪"的来源（旋律在 C5–C6 时它落在 2.8–5.6kHz），
+  // 之前只给 0.04~0.12，实测 4kHz 以上能量只占 1% —— 这就是"不亮"的直接原因。
+  const PARTS = [[1, 1, 1.0], [2.76, 0.30 + 0.16 * bright, 0.55], [5.4, 0.07 + 0.11 * bright, 0.34]];
   for (let i = 0; i < PARTS.length; i++) {
     const h = PARTS[i][0], amp = PARTS[i][1], dm = PARTS[i][2];
-    if (f * h > 9000) continue;          // 泛音封顶，防止高把位刺耳
+    if (f * h > 9500) continue;          // 泛音封顶，防止高把位刺耳
     const end = when + hold * dm;
     const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * h;
     const g = ctx.createGain();
@@ -508,7 +512,7 @@ function vBell(when, midi, vel, dur, bright) {
   // 敲击瞬间的一点金属"叮"
   const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
   const nf = ctx.createBiquadFilter(); nf.type = 'bandpass';
-  nf.frequency.value = Math.min(7000, f * 3.2); nf.Q.value = 2.4;
+  nf.frequency.value = Math.min(9000, f * 4.5); nf.Q.value = 2.4;
   const ng = ctx.createGain();
   ng.gain.setValueAtTime(0, when);
   ng.gain.linearRampToValueAtTime(0.05 * vel, when + 0.002);
@@ -529,8 +533,10 @@ function vMarimba(when, midi, vel, dur, bright) {
   out.gain.value = vel * 0.20;
   out.connect(musicBus);
 
-  // 越往高走余音越短 —— 木琴的真实行为：高音槌短、衰减快
-  const decay = Math.max(0.45, 0.95 - Math.max(0, midi - 55) * 0.010);
+  // 越往高走余音越短 —— 木琴的真实行为：高音槌短、衰减快。
+  // v5 之前低音衰减 0.95s，而 108 BPM 下八分只有 0.28s ⇒ 低音三下完全叠在一起，
+  // 中低频糊成一团，这是"沉"的第二大来源。收到 0.60s。
+  const decay = Math.max(0.22, 0.46 - Math.max(0, midi - 55) * 0.006);
   // bright 只调 4 倍频 / 9 倍频的占比：紧张时木头敲得更「脆」
   const PARTS = [[1, 1.00, 1.0], [4, 0.14 + 0.18 * bright, 0.42], [9, 0.02 + 0.07 * bright, 0.22]];
   for (let i = 0; i < PARTS.length; i++) {
@@ -583,7 +589,7 @@ function shaker(when, vel) {
   const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 8200; bp.Q.value = 1.2;
   const g = ctx.createGain();
   g.gain.setValueAtTime(0, when);
-  g.gain.linearRampToValueAtTime(vel * 0.05, when + 0.005);
+  g.gain.linearRampToValueAtTime(vel * 0.095, when + 0.005);
   g.gain.exponentialRampToValueAtTime(0.0001, when + 0.09);
   s.connect(hp); hp.connect(bp); bp.connect(g); g.connect(musicBus);
   s.start(when); s.stop(when + 0.12);
@@ -632,21 +638,29 @@ function scheduleBar(bi, when) {
     const vel = (i % 2 === 0 ? 0.95 : 0.72) * (0.85 + Math.random() * 0.25)
               * (idxs.length > 1 ? 1 / Math.sqrt(idxs.length) : 1) * (1 + 0.06 * t);
     for (const k of idxs) {
-      voice(accInst, when + i * beat * 0.5, voices[k], vel * ROW_VEL[k], beat * 0.9, bright);
+      // 第 5 行（高三）整体再 +12：马林巴是正弦泛音，八度一高，
+      // 它的 4×/9× 次泛音就落进 3.5–5kHz —— 这正是之前完全缺失的「空气」频段
+      // （实测 4kHz 以上原本只占 1%，声音再干净也发闷）。
+      const pitch = voices[k] + (k === 5 ? 12 : 0);
+      voice(accInst, when + i * beat * 0.5, pitch, vel * ROW_VEL[k], beat * 0.9, bright);
     }
   }
 
   // ② 和声床：只做低音区的垫底，不抢马林巴（编排里可以抽掉）
-  if (sec.pad) vPad(when, voices[0], beat * 4, (sc.pad + 0.1 * t) * 0.55);
+  //    垫在 voices[1]（根音，53–60Hz 往上）而不是 voices[0]（低音 41–48）——
+  //    垫在低音区会把"沉"再叠一层；垫在中音区只增加厚度。
+  if (sec.pad) vPad(when, voices[1], beat * 4, (sc.pad + 0.1 * t) * 0.55);
 
   // ③ 主旋律：全曲就这一条 HOOK，变的是八度和"出不出现"
-  //    +12：旋律抬到伴奏之上 —— 马林巴的低音在 41..48、高音点缀在 64..76，
-  //    旋律落在 57..69 这一层，正好夹在中间，不会被埋掉
+  //    **+36**：实测频谱重心从 646Hz 一路提到 2014Hz。
+  //    +12 时旋律最高 523Hz，被伴奏"高三"（659Hz）压在下面；+24（C5–C6）到 1407Hz，
+  //    仍偏闷；+36（C6–C7）才进入欢快音乐的重心区间（1500–3000Hz）。
+  //    同时钟琴的 2.76/5.4 次泛音落进 2.9–5.8kHz，补上原本只有 1% 的"空气"频段。
   if (sec.mel) {
     for (const [b, deg, dur] of HOOK) {
       if (Math.floor(b / 4) !== loopBar) continue;
       const local = b % 4;
-      const pitch = root + 12 + sec.oct + SCALE[sc.key][deg];
+      const pitch = root + 36 + sec.oct + SCALE[sc.key][deg];
       // 轻微人性化：力度 ±6%，起音错开几毫秒，避免听起来像打字机
       const vel = (0.9 + Math.random() * 0.12) * (1 + 0.06 * t);
       const jitter = (Math.random() - 0.5) * 0.012;
@@ -1026,6 +1040,9 @@ function updateStat() {
   const sc = scene();
   const bpm = Math.round(sc.bpm * (1 + 0.08 * tensionCur));
   const keyName = sc.key === 'minor' ? 'A 小调' : 'C 大调';
+  // 版本角标实时反映当前状态 —— 用户三次反馈「阴沉」但实测频谱已完全不同，
+  // 怀疑是浏览器标签页缓存了旧版。角标一换就能立刻确认自己在听哪一版。
+  $('verBadge').textContent = 'v6 · ' + keyName + ' · ' + bpm + ' BPM';
   const tr = Math.round(-2 * tensionCur);
   const secIdx = Math.floor(barIndex / 4) % SECTIONS.length;
   const sec = SECTIONS[secIdx];
