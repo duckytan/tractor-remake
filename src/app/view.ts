@@ -6,6 +6,7 @@
  */
 
 import type { Card, Seat, Team } from '@core'
+import { HAND_SIZE } from '@core'
 import {
   BIG_JOKER,
   SMALL_JOKER,
@@ -119,6 +120,53 @@ export function pastPlaysView(s: GameState, seat: Seat, depth: number): PastPlay
     tricks.push(p ? p.cards : [])
   }
   return { nos, tricks }
+}
+
+/* ---------- 发牌进度（v1.3.15） ---------- */
+
+/**
+ * 某一家在发牌进度 `revealed` 时「应该已经看到几张牌」。
+ *
+ * 纯展示口径，规则零影响：`GameState.hands` 从开局就是完整的，
+ * 只有 `revealed`（0..DEAL_TOTAL）在推进。逐张发牌是「每 tick 四家各得 1 张」，
+ * 第 26 tick 起只有庄家再得 1 张（庄家 33 张）。
+ *
+ * 人类的手牌由 `render` 按 `revealed` 截断；AI 家的牌背也用它逐张长出来 ——
+ * 之前三家的牌背是「啪」一下全出现，与人类手牌的逐张飞行不一致。
+ */
+export function dealtCardsFor(s: GameState, seat: Seat): number {
+  return dealtCardsAt(s, seat, s.revealed)
+}
+
+/**
+ * 这一帧某一家「新长出来的那张牌背」的下标（没有则 -1）。
+ *
+ * 三种情况都不该飞：
+ * ① 张数没增加（同一 tick 只发一张）；
+ * ② 牌背数量被布局上限截断（侧家最多 10 张）—— 否则会把已经显示的那张
+ *    **反复重飞**（v1.3.15 踩过）；
+ * ③ 一家都没有（domCount = 0）。
+ */
+export function newBackIndex(
+  s: GameState,
+  seat: Seat,
+  prevRevealed: number,
+  domCount: number,
+): number {
+  const before = dealtCardsAt(s, seat, prevRevealed)
+  const after = dealtCardsAt(s, seat, s.revealed)
+  if (after <= before) return -1
+  if (after > domCount) return -1
+  return after - 1
+}
+
+/** 同上，但显式给发牌进度（动画要算「上一帧该有几张」） */
+export function dealtCardsAt(s: GameState, seat: Seat, revealed: number): number {
+  const hand = s.hands[seat] as readonly Card[]
+  if (s.phase !== 'contract') return hand.length
+  const base = Math.min(HAND_SIZE, revealed)
+  const extra = seat === s.dealer ? Math.max(0, revealed - HAND_SIZE) : 0
+  return Math.min(hand.length, base + extra)
 }
 
 /* ---------- 记牌器（v1.3.14） ----------

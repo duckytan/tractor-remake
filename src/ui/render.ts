@@ -14,10 +14,10 @@ import type { AiLevel } from '@ai/policy'
 import type { Action, CardSize, GameState } from '@app/state'
 import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
-import { counterView, pastPlaysView, trickLogView } from '@app/view'
+import { counterView, dealtCardsFor, pastPlaysView, trickLogView } from '@app/view'
 import type { CounterSlot } from '@app/view'
 import { backEl, cardEl, ensureDefs } from './card'
-import { isInFlight } from './dealFly'
+import { isBackInFlight, isInFlight } from './dealFly'
 
 export interface Actions {
   readonly dispatch: (a: Action) => void
@@ -283,6 +283,8 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const backRow = box.querySelector(`[data-slot="back-${seat}"]`) as HTMLElement
     const narrow = window.innerWidth <= 900
     let show = Math.min(hand.length, side ? (narrow ? 8 : SIDE_SHOW) : 13)
+    // 逐张发牌期间：牌背也一张一张长出来（否则三家是「啪」一下全出现）
+    if (s.phase === 'contract') show = Math.min(show, dealtCardsFor(s, seat))
     if (side) {
       // 此时 back-row 还没有子节点，clientHeight 就是 flex 分给它的可用高度
       const avail = backRow.clientHeight
@@ -293,7 +295,11 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     }
     for (let i = 0; i < show; i++) {
       backRow.appendChild(
-        backEl(1, { width: side ? sideW : Math.round(cardW * NORTH_BACK_RATIO) }),
+        backEl(1, {
+          width: side ? sideW : Math.round(cardW * NORTH_BACK_RATIO),
+          // 这张还在从牌堆飞过来 ⇒ 先占位不显形（见 ui/dealFly.ts）
+          cls: isBackInFlight(seat, i) ? 'card--incoming' : undefined,
+        }),
       )
     }
     if (side) fitSideStack(backRow, show, sideW)

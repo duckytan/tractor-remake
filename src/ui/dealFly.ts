@@ -26,7 +26,9 @@ import type { Card } from '@core'
 import { HUMAN_SEAT } from '@app/state'
 import type { AnimSpeed, GameState } from '@app/state'
 import { ANIM_SPEED_SCALE } from '@app/state'
-import { cardEl } from './card'
+import { backEl, cardEl } from './card'
+import { newBackIndex } from '@app/view'
+import type { Seat } from '@core'
 import { justResolved, newPlaysSince } from './fxDiff'
 import type { PlayLike } from './fxDiff'
 
@@ -55,12 +57,27 @@ const FLY_MS = 320
 /** 弧线抬升幅度（px）。让牌走一条抛物线，而不是直线平移 */
 const ARC_LIFT = 24
 
+/** AI 牌背的飞行时长（比人类手牌略短：同一 tick 三家一起飞，太长会糊成一团） */
+const BACK_FLY_MS = 260
+
 /** 正在飞的牌（按 `card.id`）。`render()` 用它把「还没落地」的真牌藏起来 */
 const inFlight = new Set<number>()
 
 /** 这张牌是不是还在飞（render 用） */
 export function isInFlight(id: number): boolean {
   return inFlight.has(id)
+}
+
+/**
+ * 正在飞的 **AI 牌背**，key = `座位:序号`。
+ *
+ * 牌背没有 card id（它不代表具体某张牌），所以单独一个集合；
+ * `render` 按它给对应的牌背加 `.card--incoming` 先藏起来。
+ */
+const flyingBacks = new Set<string>()
+
+export function isBackInFlight(seat: number, idx: number): boolean {
+  return flyingBacks.has(`${seat}:${idx}`)
 }
 
 /** 上一次 paint 时的发牌进度，用来判断这一 tick 新发了哪一张 */
@@ -95,12 +112,18 @@ export function trackDealAnimation(root: HTMLElement, s: GameState): void {
   if (s.phase !== 'contract') return
   if (s.revealed !== prev + 1) return
 
+  const deck = root.querySelector<HTMLElement>('[data-slot="deck"]')
+  if (deck === null) return
+
+  // ① 三家的牌背：逐张发牌是「每 tick 四家各得 1 张」，所以同一 tick 三家一起飞。
+  //    先做这一步再处理人类手牌 —— 下面有几处 early return（手牌越界等），
+  //    放在后面会被那些分支跳过。
+  flySeatBacks(root, s, prev, deck)
+
+  // ② 人类手牌：从牌堆飞到手上
   const hand = s.hands[HUMAN_SEAT] as readonly Card[]
   const card = hand[s.revealed - 1]
   if (card === undefined) return
-
-  const deck = root.querySelector<HTMLElement>('[data-slot="deck"]')
-  if (deck === null) return
 
   // 手牌重建后是全新元素，所以每次都要重新查，不能缓存
   const findTarget = (): HTMLElement | null =>
@@ -253,6 +276,19 @@ function flyGhost(
   opts: { fade?: boolean; arc?: number } = {},
 ): void {
   const w0 = Math.round(from.width > 0 ? from.width : to.width)
+  if (w0 <= 0) return
+  animateGhost(cardEl(card, { width: w0, cls: 'deal-fly__card' }), w0, from, to, dur, opts)
+}
+
+/** 幽灵动画核心（牌面 / 牌背共用）：从 from 飞到 to，尺寸从 w0 插值到落点宽度 */
+function animateGhost(
+  el: HTMLElement,
+  w0: number,
+  from: DOMRect,
+  to: DOMRect,
+  dur: number,
+  opts: { fade?: boolean; arc?: number } = {},
+): void {
   const w1 = Math.round(to.width > 0 ? to.width : w0)
   if (w0 <= 0 || w1 <= 0) return
 
@@ -261,7 +297,6 @@ function flyGhost(
   const tx = to.left + to.width / 2
   const ty = to.top + to.height / 2
 
-  const el = cardEl(card, { width: w0, cls: 'deal-fly__card' })
   el.style.left = `${sx - w0 / 2}px`
   el.style.top = `${sy - (w0 * 1.4) / 2}px`
   ensureLayer().appendChild(el)
@@ -396,4 +431,40 @@ export function trackPlayFx(root: HTMLElement, s: GameState, prev: FxSnapshot): 
 
   // ③ 手牌重排
   flipHand(root, prev)
+}
+
+/**
+ * AI 三家的牌背飞行（v1.3.15）。
+ *
+ * 每 tick 四家各得 1 张（见 `app/view.ts` 的 `dealtCardsAt`），所以三家各自长出一张。
+ * 牌背没有 card id，用 `座位:序号` 作 key 记在 `flyingBacks` 里，`render` 按它先藏。
+ * 张数被布局上限截断时（侧家最多 10 张）没有新牌背可飞，直接跳过。
+ */
+function flySeatBacks(root: HTMLElement, s: GameState, prevRevealed: number, deck: HTMLElement): void {
+  const from = deck.getBoundingClientRect()
+  if (from.width <= 0) return
+  const dur = animMs(BACK_FLY_MS)
+
+  for (const seat of [1, 2, 3] as Seat[]) {
+    const backs = root.querySelectorAll<HTMLElement>(`[data-slot="back-${seat}"] .card`)
+    const idx = newBackIndex(s, seat, prevRevealed, backs.length)
+    if (idx < 0) continue
+    const el = backs[idx]
+    if (el === undefined) continue
+    const to = el.getBoundingClientRect()
+    if (to.width <= 0) continue
+
+    const key = `${seat}:${idx}`
+    flyingBacks.add(key)
+    el.classList.add('card--incoming')
+    const w = Math.round(to.width)
+    animateGhost(backEl(1, { width: w, cls: 'deal-fly__card' }), w, from, to, dur, { arc: 20 })
+    window.setTimeout(() => {
+      flyingBacks.delete(key)
+      const t = root.querySelector<HTMLElement>(
+        `[data-slot="back-${seat}"] .card:nth-child(${idx + 1})`,
+      )
+      if (t !== null) t.classList.remove('card--incoming')
+    }, dur)
+  }
 }
