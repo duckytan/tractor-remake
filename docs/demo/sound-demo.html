@@ -50,6 +50,21 @@
   .kv b{color:#e8e6df;font-weight:600;font-variant-numeric:tabular-nums}
   footer{text-align:center;font-size:11.5px;color:#5d7a6d;margin-top:18px;line-height:1.9}
   .step{font-size:12px;color:#f0c674;min-height:18px}
+
+  /* 伴奏网格：纵轴 6 行音级，横轴 4 小节 × 8 个八分位置 */
+  .accwrap{display:flex;gap:8px;margin-top:7px;align-items:flex-start}
+  .acclabels{flex:0 0 32px;padding-top:22px;display:grid;grid-template-rows:repeat(6,15px);gap:3px}
+  .acclabels i{font-size:10.5px;line-height:15px;color:#7f9c8e;font-style:normal;text-align:right}
+  .accbars{display:flex;gap:6px;flex:1;min-width:0}
+  .accbar{flex:1;min-width:0;background:rgba(255,255,255,.022);border-radius:7px;padding:5px 6px 6px}
+  .accbar .cap{font-size:11px;color:#8fb3a3;text-align:center;height:14px;line-height:14px;margin-bottom:3px}
+  .accbar .cells{display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(6,15px);gap:3px}
+  .accbar .cells i{background:rgba(255,255,255,.055);border-radius:3px;cursor:pointer;transition:background .12s}
+  .accbar .cells i:nth-child(8n+1){background:rgba(255,255,255,.11)}
+  .accbar .cells i:hover{background:rgba(255,255,255,.24)}
+  .accbar .cells i.on{background:#c98a4b}
+  .accbar .cells i.on:hover{background:#e0a05e}
+  .row .grp{display:flex;gap:7px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -59,6 +74,7 @@
     <h1>拖拉机 · 声音系统试听 <span>方案 v1</span></h1>
     <div class="sub">
       一条核心动机（A 小调五声）+ 3 个基底 + 连续紧张度 · 12 个电子音效（音高跟调、轮转不重复）<br>
+      伴奏换成<b>马林巴</b>，走 4 小节 × 8 个八分位置的网格音型（可点格子自己改）<br>
       全部实时合成，没有音频文件。先点「启动」，再随便点。
     </div>
   </header>
@@ -84,6 +100,24 @@
       <button id="btnRamp">⤴ 紧张度自动爬升（20 秒，听它怎么变紧）</button>
     </div>
     <div class="tags" id="layerBox"></div>
+  </div>
+
+  <!-- 伴奏 -->
+  <div class="card">
+    <h2>伴奏 <span class="hint">4 小节 × 8 个八分位置 · 纵轴是音级不是音名，换和弦自动跟着走</span></h2>
+    <div class="row">
+      <label>音色</label>
+      <div class="grp" id="instBox"></div>
+      <button id="btnResetAcc" style="margin-left:auto;font-size:11.5px;padding:6px 11px">↺ 重置音型</button>
+    </div>
+    <div class="accwrap">
+      <div class="acclabels"><i>高三</i><i>高八</i><i>五音</i><i>三音</i><i>根音</i><i>低音</i></div>
+      <div class="accbars" id="accGrid"></div>
+    </div>
+    <div class="info" style="margin-top:9px;font-size:11.5px;line-height:1.9">
+      点格子加音、再点一次删音，同一列可以叠成柱式和弦；改完在下一小节生效。
+      当前音型：低音落在第 1 / 2 拍后半 / 第 3 拍，五音+高三叠在第 2 / 4 拍当高音点缀。
+    </div>
   </div>
 
   <!-- 音效 -->
@@ -134,34 +168,64 @@ const MOTIF = [
   [12, 3, 2], [14, 2, 1], [15, 0, 1]                          // 第4小节（收束）
 ];
 
-/** 和弦：相对主音的半音偏移（4 小节一轮） */
+/** 和弦：每项是 [根音, 三音, 五音] 相对主音的半音偏移（4 小节一轮） */
 const CHORDS = {
   // i – VI – III – VII  （Am – F – C – G）
   minor: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5]],
   // I – V – vi – IV    （C – G – Am – F）
   major: [[0, 4, 7], [7, 11, 14], [9, 12, 16], [5, 9, 12]]
 };
+const CHORD_NAME = { minor: ['Am', 'F', 'C', 'G'], major: ['C', 'G', 'Am', 'F'] };
 
-/** 伴奏型：一小节 8 个八分位置，每格 {t:和弦音序号, o:八度} 或 null */
-const PAT = {
-  calm:   [null, null, { t: 0, o: 0 }, null, null, null, { t: 2, o: 0 }, null],
-  play:   [{ t: 0, o: 0 }, { t: 2, o: 0 }, { t: 1, o: 0 }, { t: 2, o: 0 },
-           { t: 0, o: 0 }, { t: 2, o: 0 }, { t: 1, o: 1 }, { t: 2, o: 0 }],
-  settle: [{ t: 0, o: 0 }, { t: 1, o: 0 }, { t: 2, o: 0 }, { t: 0, o: 1 },
-           { t: 0, o: 0 }, { t: 1, o: 0 }, { t: 2, o: 0 }, { t: 0, o: 1 }]
-};
+/**
+ * 把三和弦展开成伴奏用的 6 个声部，和网格纵轴一一对应：
+ *   0 低音（根音下八度） 1 根音 2 三音 3 五音 4 高八 5 高三
+ * 用「音级」而不是绝对音高来算 —— 换和弦 / 换调时每行的实际音高自动跟着走，网格不用重画。
+ */
+function chordVoices(triad, root) {
+  const r = triad[0], th = triad[1], f = triad[2];
+  const base = root + r;          // 低音
+  const t3 = th - r, t5 = f - r;  // 三音 / 五音相对根音的音程（3 或 4 / 7）
+  return [base, base + 12, base + 12 + t3, base + 12 + t5, base + 24, base + 24 + t3];
+}
+
+/**
+ * 伴奏网格：4 小节 × 8 个八分位置，每列一个 6 位掩码。
+ * bit0 低音 / bit1 根音 / bit2 三音 / bit3 五音 / bit4 高八 / bit5 高三
+ * 同一列叠多位 = 柱式和弦；0 = 休止。
+ *
+ * 定稿的这一小节型（马林巴型）：
+ *   低音在 0 / 3 / 4（第 1 拍、第 2 拍后半、第 3 拍），五音+高三叠在 2 / 6（第 2、4 拍）当高音点缀。
+ *   连起来是「咚 · 嗒 咚 咚 · 嗒」。
+ */
+const ACC_BAR = [
+  1 << 0,               // 0  低音
+  0,                    // 1  休止
+  (1 << 3) | (1 << 5),  // 2  五音 + 高三（柱式）
+  1 << 0,               // 3  低音
+  1 << 0,               // 4  低音
+  0,                    // 5  休止
+  (1 << 3) | (1 << 5),  // 6  五音 + 高三（柱式）
+  0                     // 7  休止
+];
+/** 铺成 32 列：四小节同型（截图里四小节完全一致） */
+const ACC_GRID = Array.from({ length: 32 }, (_, i) => ACC_BAR[i % 8]);
+
+/** 伴奏音色（试听时可换，正式版做成设置项） */
+const INST_LABEL = { marimba: '马林巴', pluck: '拨弦', piano: '钢琴' };
+let accInst = 'marimba';
 
 /**
  * 场景 = 参数集（不是曲目）。
  * root 用 MIDI：45=A2、48=C3。
  */
 const SCENES = {
-  calm:   { name: '定主 · 埋底 · 回放', bpm: 62, root: 45, key: 'minor', acc: 'pluck', mel: 'piano',
-            dens: 0.25, bright: 0.34, pad: 0.30, shaker: 0,    verb: 0.42 },
-  play:   { name: '出牌（平稳）',        bpm: 76, root: 45, key: 'minor', acc: 'pluck', mel: 'piano',
-            dens: 0.55, bright: 0.56, pad: 0.18, shaker: 0.12, verb: 0.34 },
-  settle: { name: '结算 · 终局',         bpm: 92, root: 48, key: 'major', acc: 'piano', mel: 'piano',
-            dens: 0.72, bright: 0.82, pad: 0.22, shaker: 0.18, verb: 0.30 }
+  calm:   { name: '定主 · 埋底 · 回放', bpm: 62, root: 45, key: 'minor', mel: 'piano',
+            bright: 0.34, pad: 0.30, shaker: 0,    verb: 0.42 },
+  play:   { name: '出牌（平稳）',        bpm: 76, root: 45, key: 'minor', mel: 'piano',
+            bright: 0.56, pad: 0.18, shaker: 0.12, verb: 0.34 },
+  settle: { name: '结算 · 终局',         bpm: 92, root: 48, key: 'major', mel: 'piano',
+            bright: 0.82, pad: 0.22, shaker: 0.18, verb: 0.30 }
 };
 
 let sceneKey = 'play';
@@ -317,6 +381,45 @@ function vPiano(when, midi, vel, dur, bright) {
   ns.start(when); ns.stop(when + 0.1);
 }
 
+/**
+ * 马林巴：泛音比例 1 : 4 : 9（木琴类乐器的物理特征），起音带一点木槌闷响。
+ * 三根正弦就够 —— 木琴的「木味」全在这个非整数泛音比上，堆多了反而糊。
+ */
+function vMarimba(when, midi, vel, dur, bright) {
+  const f = mtof(midi);
+  const out = ctx.createGain();
+  out.gain.value = vel * 0.26;          // 马林巴低频厚、起音短，电平略压一点
+  out.connect(musicBus);
+
+  // 越往高走余音越短 —— 木琴的真实行为：高音槌短、衰减快
+  const decay = Math.max(0.45, 0.95 - Math.max(0, midi - 55) * 0.010);
+  // bright 只调 4 倍频 / 9 倍频的占比：紧张时木头敲得更「脆」
+  const PARTS = [[1, 1.00, 1.0], [4, 0.14 + 0.18 * bright, 0.42], [9, 0.02 + 0.07 * bright, 0.22]];
+  for (let i = 0; i < PARTS.length; i++) {
+    const h = PARTS[i][0], amp = PARTS[i][1], dm = PARTS[i][2];
+    if (f * h > 13000) continue;
+    const end = when + decay * dm;
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * h;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.linearRampToValueAtTime(amp, when + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, end);
+    o.connect(g); g.connect(out);
+    o.start(when); o.stop(end + 0.05);
+  }
+
+  // 木槌击中：极短、低通、低音量，只给一个「触」的实感
+  const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
+  const nf = ctx.createBiquadFilter(); nf.type = 'lowpass';
+  nf.frequency.value = 700 + bright * 900; nf.Q.value = 0.7;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, when);
+  ng.gain.linearRampToValueAtTime(0.10 * vel, when + 0.002);
+  ng.gain.exponentialRampToValueAtTime(0.0001, when + 0.035);
+  ns.connect(nf); nf.connect(ng); ng.connect(out);
+  ns.start(when); ns.stop(when + 0.05);
+}
+
 function vPad(when, midi, dur, vel) {
   const f = mtof(midi);
   const out = ctx.createGain();
@@ -349,7 +452,8 @@ function shaker(when, vel) {
 }
 
 function voice(kind, when, midi, vel, dur, bright) {
-  if (kind === 'pluck') vPluck(when, midi, vel, dur, bright);
+  if (kind === 'marimba') vMarimba(when, midi, vel, dur, bright);
+  else if (kind === 'pluck') vPluck(when, midi, vel, dur, bright);
   else vPiano(when, midi, vel, dur, bright);
 }
 
@@ -364,48 +468,47 @@ function scheduleBar(bi, when) {
   // 紧张时整体降 0..2 个半音
   const tr = Math.round(-2 * t);
   const root = sc.root + tr;
-  const chord = CHORDS[sc.key][bi % 4].map(x => x + root);
+  const loopBar = bi % 4;
+  const voices = chordVoices(CHORDS[sc.key][loopBar], root);
   const bright = clamp(sc.bright + 0.3 * t, 0, 1);
 
-  // ① 伴奏
-  const pat = PAT[sc.key === 'major' ? 'settle' : sceneKey === 'calm' ? 'calm' : 'play'];
+  // ① 伴奏：网格驱动，4 小节 × 8 个八分位置
+  const base = loopBar * 8;
   for (let i = 0; i < 8; i++) {
-    const slot = pat[i];
-    // dens：高紧张时把休止格补上（加密）
-    const fill = slot === null && t > 0.45 && i % 2 === 1;
-    if (!slot && !fill) continue;
-    const s = slot || { t: i % 3 === 1 ? 2 : 0, o: 0 };
-    const pitch = chord[s.t] + 12 * s.o;
-    const vel = (i % 2 === 0 ? 0.9 : 0.68) * (slot ? 1 : 0.55) * (1 + 0.1 * t);
-    voice(sc.acc, when + i * beat * 0.5, pitch, vel, beat * 0.85, bright);
+    let bits = ACC_GRID[base + i] | 0;
+    // 紧张度补空拍（加密而不是加响）：>0.5 补低音，>0.75 再叠五音
+    if (!bits && t > 0.5 && i % 2 === 1) {
+      bits = 1 << 0;
+      if (t > 0.75) bits |= 1 << 3;
+    }
+    if (!bits) continue;
+    const idxs = [];
+    for (let k = 0; k < 6; k++) if (bits & (1 << k)) idxs.push(k);
+    // 同一列叠了几个音就把每音压一点，免得柱式比单音吵一大截
+    const vel = (i % 2 === 0 ? 0.95 : 0.72) * (0.85 + Math.random() * 0.25)
+              * (idxs.length > 1 ? 1 / Math.sqrt(idxs.length) : 1) * (1 + 0.06 * t);
+    for (const k of idxs) {
+      voice(accInst, when + i * beat * 0.5, voices[k], vel, beat * 0.9, bright);
+    }
   }
 
-  // ② 低音（每小节一个长音）
-  voice('pluck', when, chord[0] - 12, 0.42, beat * 3, bright * 0.7);
+  // ② 和声床：只做低音区的垫底，不抢马林巴
+  vPad(when, voices[0], beat * 4, (sc.pad + 0.1 * t) * 0.55);
 
-  // ③ 和声床
-  vPad(when, chord[0] + 12, beat * 4, (sc.pad + 0.1 * t) * 0.55);
-
-  // ④ 主旋律（动机按小节切片）
-  const loopBar = bi % 4;
+  // ③ 主旋律（动机按小节切片）
+  //    +12：旋律抬到伴奏之上 —— 马林巴的低音在 41..48、高音点缀在 64..76，
+  //    旋律落在 57..67 这一层，正好夹在中间，不会被埋掉
   for (const [b, deg, dur] of MOTIF) {
     if (Math.floor(b / 4) !== loopBar) continue;
     const local = b % 4;
-    const pitch = root + SCALE[sc.key][deg];
+    const pitch = root + 12 + SCALE[sc.key][deg];
     const vel = (0.88 + Math.random() * 0.1) * (1 + 0.08 * t);
     voice(sc.mel, when + local * beat, pitch, vel, dur * beat, bright);
   }
 
-  // ⑤ 沙锤（反拍）
+  // ④ 沙锤（反拍）
   if (sc.shaker > 0) {
     for (let i = 1; i < 8; i += 2) shaker(when + i * beat * 0.5, sc.shaker * (1 + 0.5 * t));
-  }
-
-  // ⑥ 高紧张：八分低音脉冲（"心跳"）
-  if (t > 0.6) {
-    for (let i = 0; i < 8; i++) {
-      voice('pluck', when + i * beat * 0.5, chord[0] - 12, 0.16 * t, beat * 0.35, 0.3);
-    }
   }
 }
 
@@ -613,10 +716,67 @@ Object.keys(SCENES).forEach(k => {
     // 换场景给一个短提示音（真正的变化在下一小节生效）
     sfx(k === 'settle' ? 'levelup' : 'ui', { force: true });
     if (k !== 'play') { tensionTarget = 0; $('tens').value = 0; $('tensV').textContent = '0'; }
+    renderAccGrid();   // 和弦名跟着调性变
     updateStat();
   };
   $('sceneBox').appendChild(b);
 });
+
+/* 伴奏音色 */
+Object.keys(INST_LABEL).forEach(k => {
+  const b = document.createElement('button');
+  b.textContent = INST_LABEL[k];
+  b.dataset.inst = k;
+  b.style.fontSize = '12px'; b.style.padding = '7px 12px';
+  if (k === accInst) b.classList.add('on');
+  b.onclick = () => {
+    accInst = k;
+    Array.prototype.forEach.call($('instBox').children, c => c.classList.toggle('on', c.dataset.inst === k));
+    if (playing) voice(k, ctx.currentTime + 0.02, scene().root + 12, 0.9, 0.4, 0.6);
+    updateStat();
+  };
+  $('instBox').appendChild(b);
+});
+
+/* 伴奏网格：4 小节 × 8 列 × 6 行，点格子切换（纵轴从上到下 = bit5 → bit0） */
+function renderAccGrid() {
+  const names = CHORD_NAME[scene().key];
+  let html = '';
+  for (let bar = 0; bar < 4; bar++) {
+    html += '<div class="accbar"><div class="cap">' + names[bar] + '</div><div class="cells">';
+    for (let r = 5; r >= 0; r--) {
+      for (let i = 0; i < 8; i++) {
+        const col = bar * 8 + i;
+        html += '<i data-col="' + col + '" data-row="' + r + '"'
+              + ((ACC_GRID[col] >> r) & 1 ? ' class="on"' : '') + '></i>';
+      }
+    }
+    html += '</div></div>';
+  }
+  $('accGrid').innerHTML = html;
+}
+renderAccGrid();
+
+$('accGrid').onclick = e => {
+  const el = e.target;
+  if (!el || el.dataset.col === undefined) return;
+  const col = +el.dataset.col, row = +el.dataset.row;
+  ACC_GRID[col] ^= 1 << row;
+  el.classList.toggle('on');
+  // 点完立刻试听这一格（只有启动后才出声）
+  if (playing && ((ACC_GRID[col] >> row) & 1)) {
+    const bar = Math.floor(col / 8);
+    const v = chordVoices(CHORDS[scene().key][bar], scene().root + Math.round(-2 * tensionCur));
+    voice(accInst, ctx.currentTime + 0.02, v[row], 0.9, 0.4, 0.6);
+  }
+};
+
+$('btnResetAcc').onclick = () => {
+  for (let i = 0; i < 32; i++) ACC_GRID[i] = ACC_BAR[i % 8];
+  renderAccGrid();
+  $('step').textContent = '音型已重置';
+  setTimeout(() => { if ($('step').textContent === '音型已重置') $('step').textContent = ''; }, 1400);
+};
 
 /* 音效按钮 */
 Object.keys(SFX).forEach(k => {
@@ -655,7 +815,7 @@ $('btnRamp').onclick = () => {
     tensionTarget = x / 100;
     if (x >= 100) {
       clearInterval(id);
-      $('step').textContent = '紧张度已到 100 —— 听：加密 / 降调 / 变亮 / 低音脉冲';
+      $('step').textContent = '紧张度已到 100 —— 听：加密补拍 / 降调 / 木头更脆 / 速度 +8%';
     }
   }, 1000);
 };
@@ -711,14 +871,17 @@ function updateStat() {
   ].map(([k, v]) => `<div>${k}　<b>${v}</b></div>`).join('');
 
   const layers = [
-    ['伴奏', true], ['低音', true], ['和声床', sc.pad > 0.01],
-    ['主旋律', true], ['沙锤', sc.shaker > 0], ['低音脉冲', tensionCur > 0.6]
+    ['伴奏 · ' + INST_LABEL[accInst], true],
+    ['和声床', sc.pad > 0.01],
+    ['主旋律', true],
+    ['沙锤', sc.shaker > 0],
+    ['紧张补拍', tensionCur > 0.5]
   ];
   $('layerBox').innerHTML = layers
     .map(([n, on]) => `<span class="tag${on ? ' act' : ''}">${n}</span>`).join('');
 
   $('stat2').innerHTML = playing
-    ? `运行中 · 音效音高 = 场景主音 + 音阶音级（当前根音 <b>${sc.root + 24 + tr}</b>）· 采样率 ${ctx.sampleRate} Hz`
+    ? `运行中 · 伴奏 ${INST_LABEL[accInst]} · 音效音高 = 场景主音 + 音阶音级（当前根音 <b>${sc.root + 24 + tr}</b>）· 采样率 ${ctx.sampleRate} Hz`
     : '未启动 —— 点上面的「启动」（浏览器要求先有用户手势才能出声）';
 }
 
