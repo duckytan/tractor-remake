@@ -92,9 +92,27 @@ const SIDE_ORDER: Record<Suit, readonly Suit[]> = {
  */
 const SIDE_ORDER_NT: readonly Suit[] = [0, 1, 2, 3]
 
-/** 纯按牌力降序。AI 埋底「留大牌」用 —— 与展示序解耦，见 sortHand 注释。 */
+/**
+ * AI 侧的手牌顺序：**纯牌力降序，且与输入顺序无关的全序**。
+ *
+ * 为什么必须是全序：AI 的候选生成（`enumeratePlays`）与并列取舍都按手牌遍历顺序走，
+ * 所以「手牌在数组里的顺序」会渗进 AI 决策。展示排序 `sortHand` 已经改过两次
+ * （v1.2.1 换成 smallnest 序、v1.3.0 换成红黑相间），每次都顺手改变了 AI 的强度测量
+ * （v1.3.0 那次把 L2 vs L1 打到 50.0%，见 docs/15 与 CHANGELOG v1.3.4）。
+ *
+ * 修法：给 AI 一份按「牌力降序 → 牌值升序 → 卡 id 升序」排序的副本 ——
+ * 同一手牌无论怎么打乱，AI 看到的顺序都一样，展示序再也影响不到决策。
+ *
+ * 用途两处：AI 埋底（留大牌）、AI 出牌（`aiPlayFor` 传给 `decide`）。
+ */
 function sortByPowerDesc(hand: readonly Card[], ctx: RuleContext): Card[] {
-  return [...hand].sort((a, b) => ctx.power.get(b.value) - ctx.power.get(a.value))
+  return [...hand].sort((a, b) => {
+    const byPower = ctx.power.get(b.value) - ctx.power.get(a.value)
+    if (byPower !== 0) return byPower
+    // 四门副牌同点数牌力相同 ⇒ 必须再比牌值；两副牌同值两张 ⇒ 最后比 id
+    const byValue = a.value - b.value
+    return byValue !== 0 ? byValue : a.id - b.id
+  })
 }
 
 /**
@@ -998,7 +1016,9 @@ export function aiPlayFor(s: GameState, seat: Seat, level: AiLevel): GameState {
   const decision = decide(
     {
       seat,
-      hand: s.hands[seat] as readonly Card[],
+      // 用与展示序解耦的全序副本（见 sortByPowerDesc 注释）——
+      // 否则改手牌展示排序会连带改变 AI 决策与强度测量
+      hand: sortByPowerDesc(s.hands[seat] as readonly Card[], ctx),
       ctx,
       play: pc,
       currentWinner,
