@@ -19,14 +19,16 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# 固定 ubuntu-24.04：ubuntu-latest 将于 2026-10-19 起迁移到 Ubuntu 26，
+# 不固定的话某天会「自己变了」，浏览器/系统库都可能跟着变。
 jobs:
   quality:
     name: 类型 / 单测 / 覆盖率 / 构建
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -46,11 +48,11 @@ jobs:
 
   e2e:
     name: 浏览器端到端（12 个场景）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -74,7 +76,7 @@ jobs:
       # 失败时把各阶段截图带出来，方便看是哪一步挂了
       - name: 上传端到端截图
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: e2e-shots
           path: .tmp/e2e-shots
