@@ -80,11 +80,12 @@
   <header>
     <h1>拖拉机 · 声音系统试听 <span id="verBadge">v6</span></h1>
     <div class="sub">
-      <b>完整移植 design/engine-ab.html</b> —— 春夏秋冬四主题 + 播放引擎 + <b>两种发声引擎可切换</b><br>
-      引擎：<b>原生 Web Audio</b>（零依赖、手写加法/FM/Karplus）／ <b>Tone.js</b>（第三方库，需联网或本地 tone.min.js）<br>
+      <b>v12：按 docs/21 审计补齐 —— 30 个音效 / 6 个场景 / 座位声像 / 音量记忆 / M 静音</b><br>
+      补的 P0：甩牌被压回 · 非法出牌 · 结算「升 N 级」用音数表达 · 闲家上台 · 必打截断 · 终局胜负两版 · 回放场景<br>
+      引擎可切：<b>原生 Web Audio</b>（零依赖、手写加法/FM/Karplus）／ <b>Tone.js</b>（需联网或本地 tone.min.js）<br>
       主题决定旋律与主奏音色；场景（定主/出牌/结算）各配一种"光线"：咖啡小憩 / 午后阳光 / 微风散步<br>
       引擎：钢琴 7 层泛音 · phraseAccent 力度呼吸 · 八度叠音 / 对位 / 装饰音三种变奏 · 立体声分轨<br>
-      如果角标不是 <b>v11</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开
+      如果角标不是 <b>v12</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开
     </div>
   </header>
 
@@ -158,7 +159,8 @@
     <div class="sfxgrid" id="sfxBox"></div>
     <div class="row" style="margin-top:11px">
       <button id="btnRr">🔁 连打 8 次「出牌」听轮转</button>
-      <button id="btnDemo">🎬 演示一局（发牌→亮主→出牌→赢墩→结算）</button>
+      <button id="btnDemo">🎬 演示一局（发牌→定主→埋底→出牌→结算→终局→回放）</button>
+      <button id="btnErr">⚠ 演示异常（甩牌被压回 / 非法出牌 / 悔牌 / 必打截断）</button>
     </div>
   </div>
 
@@ -322,12 +324,26 @@ const MOODS = {
   men:     { t: '素面时节', bpm: 126, tp: 0,  gtr: 0.55, pno: 1.0,  mel: 1.0,  dens: 1.1,  verb: 0.28, bright: 0.84, shaker: 0.20, pad: 0.12 }
 };
 
-/** 游戏场景 → 一个情绪预设（牌桌三阶段各配一种"光线"） */
+/**
+ * 游戏场景 → 一个情绪预设。
+ * 这里对应的是 **Phase 枚举的真实分支**（src/app/state.ts）：
+ *   contract + bury → calm / play → play / settle → settle / over → overWin|overLose
+ *   replayAt !== null → replay
+ * 之前只有 3 个（calm/play/settle），把「终局」并进了结算、回放完全没处理 —— 都补上了。
+ */
 const SCENE_MOD = {
-  calm:   { name: '定主 · 埋底 · 回放', mood: 'cafe',  bpmMul: 1.00, dBright: 0 },
-  play:   { name: '出牌（平稳）',        mood: 'sunny', bpmMul: 1.00, dBright: 0 },
-  settle: { name: '结算 · 终局',         mood: 'walk',  bpmMul: 1.00, dBright: 0 }
+  calm:     { name: '定主 · 埋底',  mood: 'cafe',   bpmMul: 1.00, dBright: 0 },
+  play:     { name: '出牌（平稳）', mood: 'sunny',  bpmMul: 1.00, dBright: 0 },
+  settle:   { name: '结算',         mood: 'walk',   bpmMul: 1.00, dBright: 0 },
+  // 终局两版：胜 = 明亮释放；负 = 降 2 度 + 更暗（memory 预设自带 tp:-2）
+  overWin:  { name: '终局 · 胜',    mood: 'walk',   bpmMul: 1.06, dBright: +0.10 },
+  overLose: { name: '终局 · 负',    mood: 'memory', bpmMul: 0.94, dBright: -0.10 },
+  // 回放：只留 pad + 极稀疏，让"复盘"听得清
+  replay:   { name: '逐墩回放',     mood: 'cafe',   bpmMul: 0.92, dBright: -0.08 }
 };
+
+/** 回放时抽掉主旋律与沙锤（S9：只 pad + 极稀疏拨弦） */
+const REPLAY_MUTE = { mel: 0, shk: 0.25 };
 
 /** 合成后的实际参数：情绪预设打底 */
 function scene() {
@@ -456,7 +472,8 @@ function initAudio() {
   if (ctx) return;
   ctx = new (window.AudioContext || window.webkitAudioContext)();
 
-  master = ctx.createGain(); master.gain.value = 0.80;
+  master = ctx.createGain();
+  master.gain.value = (function () { const v = +$('vol').value; return isFinite(v) ? v / 100 : 0.72; })();
   // 音色闸门：压掉 8.5kHz 以上的毛刺，比在每个音色里各加一次低通省事
   tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 8500; tone.Q.value = 0.5;
   comp = ctx.createDynamicsCompressor();
@@ -1219,7 +1236,9 @@ function scheduleBar(bi, when) {
   keyShift = sc.tp;
 
   // 编排：这一小节属于 48 小节循环里的哪一段（8 小节一段）
-  const sec = SECTIONS[Math.floor(bi / 8) % SECTIONS.length];
+  let sec = SECTIONS[Math.floor(bi / 8) % SECTIONS.length];
+  // 回放（S9）：只留 pad + 极稀疏拨弦，让"复盘"听得清
+  if (sceneKey === 'replay') sec = Object.assign({}, sec, REPLAY_MUTE, { rows: 0b001001, lh: 0 });
   if (loopBar === 0) refreshVariation();
 
   const r = makeRng(seed * 31 + bi * 7717);
@@ -1381,14 +1400,32 @@ function stop() {
 const rr = {};        // 每个事件的轮转计数
 const lastAt = {};    // 上次触发时间（密度抑制）
 
-/** 音效的音高：场景 root 高两个八度 + 音阶音级（轮转） */
+/** 音效的音高：C 大调高两个八度 + 音阶音级（轮转，避免千篇一律） */
 function sfxPitch(name, degreeOverride) {
-  const sc = scene();
   const deg = degreeOverride !== undefined ? degreeOverride : (rr[name] = ((rr[name] || 0) + 1) % 5);
   return 72 + SCALE[deg % SCALE.length] + Math.round(-2 * tensionCur) + keyShift;
 }
 
 function now() { return ctx.currentTime + 0.004; }
+
+/* ---------------- 座位声像 ----------------
+   4 家出牌如果全在正中间，会糊成一团、也听不出"谁出的"。
+   按座位分声道是最便宜的空间感来源（原版参考实现也是这么做的）。 */
+const SEAT_PAN = { 0: 0, 1: -0.45, 2: 0, 3: 0.45 };   // 0=我方(下) 1=左 2=对面 3=右
+const seatBuses = {};
+let curSfxBus = null;      // 每次触发时临时指向"中心"或某个座位
+let sfxLive = 0;           // 当前并发的事件音数量
+
+function sfxBusFor(seat) {
+  if (seat === undefined || seat === null) return sfxBus;
+  if (!seatBuses[seat]) {
+    const pn = ctx.createStereoPanner();
+    pn.pan.value = SEAT_PAN[seat] === undefined ? 0 : SEAT_PAN[seat];
+    pn.connect(sfxBus);
+    seatBuses[seat] = pn;
+  }
+  return seatBuses[seat];
+}
 
 function noiseHit(when, freq, q, dur, vel, type) {
   const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
@@ -1398,7 +1435,7 @@ function noiseHit(when, freq, q, dur, vel, type) {
   g.gain.setValueAtTime(0, when);
   g.gain.linearRampToValueAtTime(vel, when + 0.003);
   g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-  s.connect(f); f.connect(g); g.connect(sfxBus);
+  s.connect(f); f.connect(g); g.connect(curSfxBus);
   s.start(when); s.stop(when + dur + 0.02);
 }
 
@@ -1411,54 +1448,61 @@ function ping(when, midi, dur, vel, bright, type) {
   g.gain.setValueAtTime(0, when);
   g.gain.linearRampToValueAtTime(vel, when + 0.004);
   g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
-  o.connect(lp); lp.connect(g); g.connect(sfxBus);
+  o.connect(lp); lp.connect(g); g.connect(curSfxBus);
   o.start(when); o.stop(when + dur + 0.05);
 }
 
+/** 噪声扫频（出牌 / 悔牌 共用，方向相反） */
+function sweep(when, f0, f1, dur, vel, q) {
+  const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = q || 1.2;
+  bp.frequency.setValueAtTime(f0, when);
+  bp.frequency.exponentialRampToValueAtTime(f1, when + dur * 0.7);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(vel, when + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+  s.connect(bp); bp.connect(g); g.connect(curSfxBus);
+  s.start(when); s.stop(when + dur + 0.04);
+}
+
+/* ============================================================
+   音效表
+   ------------------------------------------------------------
+   分三档：
+     P0 规则反馈（甩牌被压回 / 非法出牌 / 结算级数 / 上台 / 必打截断）
+     P1 过程提示（摸到级牌 / 选够 8 张 / 最后一墩 / 得分悬崖 / 悔牌）
+     基础操作（发牌 / 选牌 / 出牌 / 赢墩 / 输墩 / 亮主 / 反主 / 加固 / 埋底 / 按钮）
+   约定：play(w, o) —— w 是 AudioContext 时间，o 是触发选项（可带 seat / n）
+   ============================================================ */
 const SFX = {
-  /* 发牌：噪声短 tick（演示里每 4 张一次；实际游戏 55ms/张 ⇒ 必须降频） */
+
+  /* ---------- 发牌阶段 ---------- */
+
+  /* 发牌 tick。实际游戏 33 张 × 55ms，逐张响会像机关枪 ⇒ 调用方必须每 4 张一次 */
   deal: { label: '发牌 tick', play: (w) => noiseHit(w, 3000, 1.2, 0.02, 0.14) },
 
-  /* 选牌 / 取消：极短方波 */
-  select: { label: '选牌', play: (w) => ping(w, sfxPitch('select'), 0.03, 0.10, 0.5, 'square') },
-  deselect: { label: '取消选牌', play: (w) => ping(w, sfxPitch('deselect', 1), 0.03, 0.09, 0.4, 'square') },
-
-  /* 出牌：噪声扫频（与 280ms 飞行动画同步） */
-  play: {
-    label: '出牌',
+  /* 摸到级牌（发牌暂停问你要不要亮主）：比选牌亮一档，提示"该决定了" */
+  levelCard: {
+    label: '摸到级牌',
     play: (w) => {
-      const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
-      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
-      bp.frequency.setValueAtTime(700, w);
-      bp.frequency.exponentialRampToValueAtTime(3200, w + 0.18);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0, w);
-      g.gain.linearRampToValueAtTime(0.20, w + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, w + 0.26);
-      s.connect(bp); bp.connect(g); g.connect(sfxBus);
-      s.start(w); s.stop(w + 0.3);
-      // 叠一个根音，让它"在调上"
-      ping(w + 0.01, sfxPitch('play', 0), 0.12, 0.07, 0.4);
+      ping(w, sfxPitch('levelCard', 5), 0.5, 0.12, 1, 'sine');
+      ping(w + 0.06, sfxPitch('levelCard', 4) + 12, 0.35, 0.06, 1, 'sine');
     }
   },
-
-  /* 赢墩：上行两音 */
-  win: {
-    label: '赢墩',
-    play: (w) => {
-      ping(w, sfxPitch('win', 0), 0.16, 0.13, 0.75);
-      ping(w + 0.085, sfxPitch('win', 4), 0.22, 0.11, 0.85);
-    }
-  },
-
-  /* 输墩：单音闷一点 */
-  lose: { label: '输墩', play: (w) => ping(w, sfxPitch('lose', 3), 0.16, 0.10, 0.12, 'sine') },
 
   /* 亮主：三音琶音 */
   declare: {
     label: '亮主',
+    play: (w) => { [0, 2, 4].forEach((d, i) => ping(w + i * 0.06, sfxPitch('declare', d), 0.24, 0.11, 0.9)); }
+  },
+
+  /* 抢庄：亮主 + 一个上行三音（"抢到了"）。第一局谁先亮谁坐庄，比普通亮主更重 */
+  grab: {
+    label: '抢庄',
     play: (w) => {
-      [0, 2, 4].forEach((d, i) => ping(w + i * 0.06, sfxPitch('declare', d), 0.24, 0.11, 0.9));
+      [0, 2, 4].forEach((d, i) => ping(w + i * 0.06, sfxPitch('grab', d), 0.24, 0.11, 0.9));
+      [2, 3, 5].forEach((d, i) => ping(w + 0.22 + i * 0.07, sfxPitch('grab', d) + 2, 0.3, 0.12, 1));
     }
   },
 
@@ -1476,42 +1520,236 @@ const SFX = {
     label: '加固',
     play: (w) => {
       noiseHit(w, 5200, 3, 0.06, 0.16);
-      ping(w, 60, 0.18, 0.12, 0.2, 'sine');          // C4
+      ping(w, 60, 0.18, 0.12, 0.2, 'sine');
       noiseHit(w + 0.01, 900, 1, 0.1, 0.08);
     }
   },
 
-  /* 埋底：低频"放置" */
+  /* 无人亮主流局：一个"空转"的低音 */
+  noDeclare: {
+    label: '无人亮主流局',
+    play: (w) => {
+      ping(w, 43, 0.5, 0.12, 0.1, 'sine');
+      ping(w + 0.3, 41, 0.6, 0.10, 0.08, 'sine');
+    }
+  },
+
+  /* ---------- 埋底阶段 ---------- */
+
+  /* 进入埋底（"你是庄家，选 8 张牌扣底"）：一个"交给你了"的低音 + 轻提示 */
+  buryStart: {
+    label: '进入埋底',
+    play: (w) => {
+      ping(w, 48, 0.4, 0.13, 0.15, 'sine');
+      ping(w + 0.16, sfxPitch('buryStart', 2), 0.3, 0.09, 0.5);
+    }
+  },
+
+  /* 埋底确认：低频"放置" */
   bury: {
     label: '埋底',
     play: (w) => {
-      ping(w, 48, 0.18, 0.16, 0.15, 'sine');         // C3
+      ping(w, 48, 0.18, 0.16, 0.15, 'sine');
       noiseHit(w, 500, 0.8, 0.12, 0.08, 'lowpass');
     }
   },
 
-  /* 升级：五音上行 */
-  levelup: {
-    label: '升级 / 上台',
+  /* 选够 8 张（可以按确认了）：一个干脆的"嗒" */
+  buryReady: {
+    label: '选够 8 张',
     play: (w) => {
-      [0, 1, 2, 3, 4].forEach((d, i) => ping(w + i * 0.07, sfxPitch('levelup', d), 0.3, 0.11, 0.85));
+      ping(w, sfxPitch('buryReady', 2), 0.10, 0.11, 0.7);
+      noiseHit(w, 2600, 2.2, 0.04, 0.09);
     }
   },
 
+  /* ---------- 出牌阶段 ---------- */
+
+  select: { label: '选牌', play: (w) => ping(w, sfxPitch('select'), 0.03, 0.10, 0.5, 'square') },
+  deselect: { label: '取消选牌', play: (w) => ping(w, sfxPitch('deselect', 1), 0.03, 0.09, 0.4, 'square') },
+
+  /* 我方出牌：噪声扫频 700→3200Hz（与 280ms 飞行动画同步）+ 根音，让它"在调上" */
+  play: {
+    label: '我方出牌',
+    play: (w) => {
+      sweep(w, 700, 3200, 0.26, 0.20, 1.1);
+      ping(w + 0.01, sfxPitch('play', 0), 0.12, 0.07, 0.4);
+    }
+  },
+
+  /* AI 出牌：同一个音色但更轻、更短、按座位声像 —— 一墩四家连出才不会糊成一团 */
+  playAi: {
+    label: 'AI 出牌',
+    play: (w) => {
+      sweep(w, 800, 2600, 0.20, 0.13, 1.1);
+      ping(w + 0.01, sfxPitch('playAi', 2) - 12, 0.10, 0.05, 0.3);
+    }
+  },
+
+  /* 甩牌（多组同时出）：出牌 + 一层低音厚度，听感更"重" */
+  playMulti: {
+    label: '甩牌',
+    play: (w) => {
+      sweep(w, 600, 3400, 0.30, 0.22, 1.0);
+      ping(w + 0.01, sfxPitch('playMulti', 0), 0.16, 0.10, 0.5);
+      ping(w + 0.02, sfxPitch('playMulti', 0) - 12, 0.22, 0.09, 0.2, 'sine');
+    }
+  },
+
+  /* ★P0 甩牌被压回：规则惩罚事件，必须让玩家立刻知道"我甩的牌被压回来了"。
+     下行小二度 = 挫败感，但不能长（0.16s），否则会拖慢节奏 */
+  bump: {
+    label: '甩牌被压回',
+    play: (w) => {
+      const base = sfxPitch('bump', 2);
+      ping(w, base, 0.10, 0.13, 0.35);
+      ping(w + 0.09, base - 1, 0.16, 0.15, 0.20);
+      noiseHit(w, 900, 1.6, 0.10, 0.10, 'lowpass');
+    }
+  },
+
+  /* ★P0 非法出牌：固定音高（不跟调）—— 机械感才对，跟调会像音乐 */
+  illegal: {
+    label: '非法出牌',
+    play: (w) => {
+      ping(w, 55, 0.07, 0.13, 0.9, 'square');
+      ping(w + 0.11, 55, 0.09, 0.13, 0.9, 'square');
+    }
+  },
+
+  /* ★P1 最后一墩：低频心跳两下 + 一个高音亮一下 */
+  lastTrick: {
+    label: '最后一墩',
+    play: (w) => {
+      ping(w, 43, 0.22, 0.18, 0.08, 'sine');
+      ping(w + 0.24, 43, 0.22, 0.16, 0.08, 'sine');
+      ping(w + 0.05, sfxPitch('lastTrick', 5), 0.5, 0.09, 0.95);
+    }
+  },
+
+  /* ★P1 得分悬崖（40 / 80 / 120 / 160）：全曲最有戏剧性的四个点。
+     低频落石 + 短混响，比"赢墩"重得多 */
+  cliff: {
+    label: '得分悬崖',
+    play: (w) => {
+      ping(w, 36, 0.5, 0.20, 0.05, 'sine');
+      noiseHit(w, 260, 0.7, 0.35, 0.14, 'lowpass');
+      ping(w + 0.02, sfxPitch('cliff', 4), 0.3, 0.08, 0.6);
+    }
+  },
+
+  /* 赢墩：上行两音 */
+  win: {
+    label: '赢墩',
+    play: (w) => {
+      ping(w, sfxPitch('win', 0), 0.16, 0.13, 0.75);
+      ping(w + 0.085, sfxPitch('win', 4), 0.22, 0.11, 0.85);
+    }
+  },
+
+  /* 输墩：单音闷一点 */
+  lose: { label: '输墩', play: (w) => ping(w, sfxPitch('lose', 3), 0.16, 0.10, 0.12, 'sine') },
+
+  /* ★P1 悔牌撤回：反相 whoosh（高→低），和出牌正好相反 */
+  undo: { label: '悔牌撤回', play: (w) => sweep(w, 3600, 500, 0.24, 0.16, 1.3) },
+
+  /* 提示（showHint）：一声轻亮的"在这" */
+  hint: { label: '提示', play: (w) => ping(w, sfxPitch('hint', 3), 0.22, 0.08, 0.9, 'sine') },
+
+  /* ---------- 结算 / 终局 ---------- */
+
+  /* ★P0 升级 N 级：**用音数表达级数** —— 升 1 级一个音，升 2 级两个，升 3 级三个再补高音。
+     一个固定的"升级音"表达不了"升了几级"，玩家听不出结果。 */
+  settleUp: {
+    label: '升级 N 级',
+    play: (w, o) => {
+      const n = Math.max(1, Math.min(3, (o && o.n) || 1));
+      const seq = [0, 1, 2];
+      for (let i = 0; i < n; i++) ping(w + i * 0.11, sfxPitch('settleUp', seq[i]), 0.34, 0.12, 0.85);
+      if (n === 3) ping(w + 0.36, sfxPitch('settleUp', 5), 0.5, 0.13, 1);
+    }
+  },
+
+  /* ★P0 闲家上台：换和弦色彩（升两个半音）+ 亮一下，和"庄家升级"明确区分 */
+  promote: {
+    label: '闲家上台',
+    play: (w) => {
+      [0, 2, 4, 5].forEach((d, i) => ping(w + i * 0.08, sfxPitch('promote', d) + 2, 0.3, 0.13, 1));
+      noiseHit(w + 0.1, 7000, 2.5, 0.2, 0.06);
+    }
+  },
+
+  /* ★P0 必打截断：上行到三音就停（不上五音），再补一个"卡住"的低音 */
+  guardStop: {
+    label: '必打截断',
+    play: (w) => {
+      ping(w, sfxPitch('guardStop', 0), 0.14, 0.12, 0.7);
+      ping(w + 0.12, sfxPitch('guardStop', 2), 0.14, 0.12, 0.7);
+      ping(w + 0.24, sfxPitch('guardStop', 3), 0.10, 0.10, 0.5);
+      noiseHit(w + 0.3, 400, 1.2, 0.12, 0.10, 'lowpass');
+    }
+  },
+
+  /* ★P0 终局·胜：大调上行五音 + 长混响（释放感） */
+  overWin: {
+    label: '终局 · 胜',
+    play: (w) => {
+      [0, 1, 2, 3, 4, 5].forEach((d, i) => ping(w + i * 0.13, sfxPitch('overWin', d), 0.7, 0.13, 0.95));
+      ping(w + 0.8, sfxPitch('overWin', 5) + 12, 1.2, 0.10, 1, 'sine');
+    }
+  },
+
+  /* ★P0 终局·负：小调下行 + 渐弱（落幕） */
+  overLose: {
+    label: '终局 · 负',
+    play: (w) => {
+      [4, 3, 2, 0].forEach((d, i) => ping(w + i * 0.17, sfxPitch('overLose', d) - 2, 0.8, 0.12 - i * 0.015, 0.35, 'sine'));
+      ping(w + 0.7, 36, 1.4, 0.09, 0.05, 'sine');
+    }
+  },
+
+  /* ---------- 回放 ---------- */
+
+  /* 回放翻墩：极轻的翻页声，绝不能抢 BGM */
+  replayStep: { label: '回放翻墩', play: (w) => noiseHit(w, 4200, 1.8, 0.03, 0.06) },
+
+  /* ---------- 通用 ---------- */
+
   /* 按钮 / 弹层：极轻（注意 ping 收的是 MIDI 音高，不是频率） */
-  ui: { label: '按钮', play: (w) => ping(w, 84, 0.012, 0.05, 0.5, 'square') }   // C6
+  ui: { label: '按钮', play: (w) => ping(w, 84, 0.012, 0.05, 0.5, 'square') }
 };
 
-/** 触发一个音效（带密度抑制：同事件 70ms 内不重复） */
+/**
+ * 触发一个音效。
+ *   opts.force  跳过密度抑制
+ *   opts.seat   0..3，按座位分声道（不传 = 正中）
+ *   opts.n      参数化音效的数值（如 settleUp 的升级级数）
+ *
+ * 三层保护：
+ *  ① 同事件 70ms 内不重复（防连点）；
+ *  ② 全局同时最多 5 个事件音（一墩四家连出会叠）；
+ *  ③ 上下文没起 / 没在播放就直接返回。
+ */
+const SFX_MAX_LIVE = 5;
+
 function sfx(name, opts) {
   if (!ctx || !playing) return;
+  const o = opts || {};
   const t = performance.now();
-  if (!opts || !opts.force) {
-    if (lastAt[name] && t - lastAt[name] < 70) return;
-  }
+  if (!o.force && lastAt[name] && t - lastAt[name] < 70) return;
+  // 全局并发上限：满了就丢（事件音不该排队，排队会整体滞后）
+  if (sfxLive >= SFX_MAX_LIVE && !o.force) return;
   lastAt[name] = t;
+
   const cfg = SFX[name];
-  if (cfg) cfg.play(now());
+  if (!cfg) return;
+
+  curSfxBus = sfxBusFor(o.seat);
+  sfxLive++;
+  try { cfg.play(now(), o); }
+  catch (e) { /* 单个音效失败不该影响游戏 */ }
+  // 粗估时长后归还名额（最长的事件音约 1.5s）
+  setTimeout(() => { sfxLive = Math.max(0, sfxLive - 1); }, 1500);
 }
 
 /* ============================================================
@@ -1707,9 +1945,9 @@ const bindVol = (id, vid, fn) => {
   const el = $(id), v = $(vid);
   el.oninput = () => { v.textContent = el.value; fn(+el.value / 100); };
 };
-bindVol('vol', 'volV', x => { if (master) master.gain.setTargetAtTime(x, ctx.currentTime, 0.05); });
-bindVol('bgm', 'bgmV', x => { volBgm = x; if (musicBus) musicBus.gain.setTargetAtTime(x, ctx.currentTime, 0.05); });
-bindVol('sfx', 'sfxV', x => { volSfx = x; if (sfxBus) sfxBus.gain.setTargetAtTime(x, ctx.currentTime, 0.05); });
+bindVol('vol', 'volV', x => { if (master) master.gain.setTargetAtTime(x, ctx.currentTime, 0.05); savePrefs(); });
+bindVol('bgm', 'bgmV', x => { volBgm = x; if (musicBus) musicBus.gain.setTargetAtTime(x, ctx.currentTime, 0.05); savePrefs(); });
+bindVol('sfx', 'sfxV', x => { volSfx = x; if (sfxBus) sfxBus.gain.setTargetAtTime(x, ctx.currentTime, 0.05); savePrefs(); });
 
 /* 紧张度 */
 $('tens').oninput = () => {
@@ -1746,24 +1984,143 @@ $('btnRr').onclick = () => {
   setTimeout(() => { $('step').textContent = ''; }, 2400);
 };
 
-/* 演示一局 */
+/* ---------------- 演示序列 ----------------
+   两段演示：
+     「演示一局」= 正常流程（发牌 → 定主 → 埋底 → 出牌 → 结算 → 终局 → 回放）
+     「演示异常」= 只有出错/特殊时才响的那几个（甩牌被压回 / 非法出牌 / 悔牌 / 必打截断）
+   分开是因为异常音如果混在正常流程里，会让人以为"这游戏老出错"。
+   ------------------------------------------- */
+
+function runSteps(steps) {
+  steps.forEach(([ms, label, fn]) => setTimeout(() => {
+    $('step').textContent = '演示：' + label;
+    try { fn(); } catch (e) {}
+  }, ms));
+}
+
+/* 演示一局：按真实时序走一遍 */
 $('btnDemo').onclick = () => {
   if (!playing) return;
-  const steps = [
-    [0,    '发牌：每 4 张一次 tick', () => { for (let i = 0; i < 4; i++) setTimeout(() => sfx('deal', { force: true }), i * 280); }],
-    [1200, '亮主', () => sfx('declare', { force: true })],
-    [2100, '四家出牌（whoosh ×4）', () => { for (let i = 0; i < 4; i++) setTimeout(() => sfx('play', { force: true }), i * 420); }],
-    [4000, '本墩：我方赢', () => sfx('win', { force: true })],
-    [4800, '下一墩：四家出牌', () => { for (let i = 0; i < 4; i++) setTimeout(() => sfx('play', { force: true }), i * 420); }],
-    [6800, '本墩：对方赢', () => sfx('lose', { force: true })],
-    [7600, '本局结算（切到结算基底 + 升级音）', () => {
-      $('sceneBox').querySelector('[data-scene="settle"]').click();
-      sfx('levelup', { force: true });
-    }],
-    [9000, '演示结束（想再听一次就再点）', () => { $('step').textContent = ''; }]
-  ];
-  steps.forEach(([ms, label, fn]) => setTimeout(() => { $('step').textContent = '演示：' + label; fn(); }, ms));
+  const go = (k) => { const b = $('sceneBox').querySelector('[data-scene="' + k + '"]'); if (b) b.click(); };
+  runSteps([
+    [0,     '发牌（33 张 × 55ms ⇒ 必须每 4 张一次 tick，否则像机关枪）',
+      () => { go('calm'); for (let i = 0; i < 6; i++) setTimeout(() => sfx('deal', { force: true }), i * 220); }],
+    [1500,  '摸到级牌 —— 暂停问你要不要亮主',
+      () => sfx('levelCard', { force: true })],
+    [2100,  '亮主（第一局先亮者抢庄）',
+      () => sfx('grab', { force: true })],
+    [2900,  '对手反主',
+      () => sfx('counter', { force: true })],
+    [3700,  '庄家加固 —— 反主门槛升到 3 张',
+      () => sfx('guard', { force: true })],
+    [4500,  '进入埋底：你是庄家，选 8 张扣底',
+      () => sfx('buryStart', { force: true })],
+    [5200,  '选牌 ×3',
+      () => { for (let i = 0; i < 3; i++) setTimeout(() => sfx('select', { force: true }), i * 160); }],
+    [5800,  '选够 8 张（可以确认了）',
+      () => sfx('buryReady', { force: true })],
+    [6400,  '确认埋底',
+      () => sfx('bury', { force: true })],
+    [7200,  '进入出牌',
+      () => go('play')],
+    [7400,  '我方出牌',
+      () => sfx('play', { force: true, seat: 0 })],
+    [8000,  'AI 出牌 ×3（按座位分声道：左 / 对面 / 右）',
+      () => { [1, 2, 3].forEach((seat, i) => setTimeout(() => sfx('playAi', { force: true, seat }), i * 420)); }],
+    [9500,  '本墩我方赢',
+      () => sfx('win', { force: true })],
+    [10300, '下一墩：四家出牌',
+      () => { [0, 1, 2, 3].forEach((seat, i) => setTimeout(() => sfx(i === 0 ? 'play' : 'playAi', { force: true, seat }), i * 380)); }],
+    [12000, '本墩对方赢',
+      () => sfx('lose', { force: true })],
+    [12800, '闲家得分越过 40 —— 第一道悬崖',
+      () => sfx('cliff', { force: true })],
+    [13800, '最后一墩（四家手牌将空，不是固定第 25 墩）',
+      () => sfx('lastTrick', { force: true })],
+    [15200, '本局结算：庄家升 3 级（音数 = 级数）',
+      () => { go('settle'); sfx('settleUp', { force: true, n: 3 }); }],
+    [16400, '终局 · 我方胜',
+      () => { go('overWin'); sfx('overWin', { force: true }); }],
+    [18000, '逐墩回放（BGM 只留 pad）',
+      () => { go('replay'); sfx('replayStep', { force: true }); }],
+    [19200, '演示结束（想再听一次就再点）',
+      () => { go('play'); $('step').textContent = ''; }]
+  ]);
 };
+
+/* 演示异常：这些音只在"出问题"时响，单独试听 */
+$('btnErr').onclick = () => {
+  if (!playing) return;
+  runSteps([
+    [0,    '甩牌被压回 —— 你甩的牌不敌三家，只出最小单位（P0）',
+      () => sfx('bump', { force: true })],
+    [1800, '非法出牌 —— 不符合跟牌规则（P0）',
+      () => sfx('illegal', { force: true })],
+    [3200, '悔牌 —— 撤回本墩四家出牌（P1）',
+      () => sfx('undo', { force: true })],
+    [4600, '必打截断 —— 升级本该跳级，被"必打"卡住（P0）',
+      () => sfx('guardStop', { force: true })],
+    [6200, '闲家上台 —— 80~119 分，只上台不升级（P0）',
+      () => sfx('promote', { force: true })],
+    [7600, '终局 · 我方负（P0）',
+      () => { const b = $('sceneBox').querySelector('[data-scene="overLose"]'); if (b) b.click(); sfx('overLose', { force: true }); }],
+    [9600, '演示结束',
+      () => { const b = $('sceneBox').querySelector('[data-scene="play"]'); if (b) b.click(); $('step').textContent = ''; }]
+  ]);
+};
+
+/* ============================================================
+   框架级：切后台自动静音 / 音量持久化 / 静音快捷键
+   ------------------------------------------------------------
+   这三条审计里都是缺口（F2 / F6 / F7），但成本很低、体验差别很大。
+   ============================================================ */
+
+/** 切到后台就 suspend：省电，也避免锁屏还在响 */
+document.addEventListener('visibilitychange', function () {
+  if (!ctx) return;
+  if (document.hidden) {
+    if (playing) { try { ctx.suspend(); } catch (e) {} }
+  } else {
+    if (playing) { try { ctx.resume(); } catch (e) {} }
+  }
+});
+
+/** 音量/开关持久化（正式版应该并进 persist.ts，这里先用 localStorage 对齐） */
+const PREF_KEY = 'tractor-sound-demo-prefs';
+function loadPrefs() {
+  try {
+    const raw = localStorage.getItem(PREF_KEY);
+    if (!raw) return;
+    const o = JSON.parse(raw);
+    if (typeof o.vol === 'number') { $('vol').value = o.vol * 100; $('volV').textContent = Math.round(o.vol * 100); }
+    if (typeof o.bgm === 'number') { volBgm = o.bgm; $('bgm').value = o.bgm * 100; $('bgmV').textContent = Math.round(o.bgm * 100); }
+    if (typeof o.sfx === 'number') { volSfx = o.sfx; $('sfx').value = o.sfx * 100; $('sfxV').textContent = Math.round(o.sfx * 100); }
+    if (o.engine && ENGINES[o.engine]) engineMode = o.engine;
+    if (o.theme && THEMES[o.theme]) themeKey = o.theme;
+  } catch (e) { /* 隐私模式下 localStorage 会抛，忽略即可 */ }
+}
+function savePrefs() {
+  try {
+    localStorage.setItem(PREF_KEY, JSON.stringify({
+      vol: +$('vol').value / 100, bgm: +$('bgm').value / 100, sfx: +$('sfx').value / 100,
+      engine: engineMode, theme: themeKey
+    }));
+  } catch (e) {}
+}
+
+/** M 键切静音（Esc 也行，但 Esc 在设置面板里有别的用途，所以只用 M） */
+let mutedBefore = null;
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'm' && e.key !== 'M') return;
+  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  const el = $('vol');
+  if (mutedBefore === null) { mutedBefore = +el.value; el.value = 0; }
+  else { el.value = mutedBefore; mutedBefore = null; }
+  $('volV').textContent = el.value;
+  if (master && ctx) master.gain.setTargetAtTime(+el.value / 100, ctx.currentTime, 0.05);
+  setEngNote(mutedBefore === null ? '已取消静音' : '已静音（按 M 恢复）', false);
+  savePrefs();
+});
 
 /* 启动按钮 */
 $('btnStart').onclick = () => {
@@ -1779,7 +2136,7 @@ function updateStat() {
   const keyName = 'C 大调';
   // 版本角标实时反映当前状态 —— 用户三次反馈「阴沉」但实测频谱已完全不同，
   // 怀疑是浏览器标签页缓存了旧版。角标一换就能立刻确认自己在听哪一版。
-  $('verBadge').textContent = 'v11 · ' + theme().name + ' · ' + bpm + ' BPM';
+  $('verBadge').textContent = 'v12 · ' + theme().name + ' · ' + bpm + ' BPM';
   const tr = Math.round(-2 * tensionCur);
   const secIdx = Math.floor(barIndex / 4) % SECTIONS.length;
   const sec = SECTIONS[secIdx];
@@ -1808,6 +2165,13 @@ function updateStat() {
     : '未启动 —— 点上面的「启动」（浏览器要求先有用户手势才能出声）';
 }
 
+// 先恢复上次的音量/引擎/主题，再同步按钮高亮
+loadPrefs();
+syncEngineButtons();
+Array.prototype.forEach.call($('themeBox').children, c => c.classList.toggle('on', c.dataset.theme === themeKey));
+melInst = theme().inst;
+Array.prototype.forEach.call($('melBox').children, c => c.classList.toggle('on', c.dataset.inst === melInst));
+renderThemeNote();
 updateStat();
 })();
 </script>
