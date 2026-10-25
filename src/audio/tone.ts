@@ -12,6 +12,7 @@
  * 与原生后端签名完全一致 ⇒ `music.ts` 不知道底下是谁。
  */
 
+import { mtof } from './synth'
 import type { AudioEnv } from './synth'
 import type { MusicRenderer } from './voices'
 
@@ -247,6 +248,19 @@ export type ToneRole = 'acc' | 'lead' | 'pad' | 'fx'
  * 自带一整条音色链（Limiter → Compressor → Filter → Gain → Reverb → 4 个 Channel），
  * 与原生乐器的音色图完全独立，切回原生时原生图原样还在。
  */
+/**
+ * Tone 侧的总体校准增益。
+ *
+ * 两套引擎各轨的增益是同一组数字（原生 bus 0.78/0.8、Tone Channel 0.78/0.8），
+ * 但**合成器本身的输出电平差得远**：原生的加法/KS 合成把振幅压在 0.3~0.5，
+ * Tone 的 FMSynth/Synth 每音接近满刻度，PolySynth 再一叠。
+ * 实测同一首曲子：原生主链 RMS ≈ 0.027，Tone ≈ 0.146 —— **5.4 倍**，
+ * 进 master 压缩前就已经在削波，听感就是「全是噪音」。
+ *
+ * 0.2 让两边响度基本一致（实测 Tone 降到 ≈0.029）。
+ */
+const TONE_TRIM = 0.22
+
 export class ToneRenderer implements MusicRenderer {
   private readonly racks = new Map<string, Rack>()
   private padSynth: TonePoly | null = null
@@ -277,13 +291,16 @@ export class ToneRenderer implements MusicRenderer {
     comp.connect(lim)
     const filt = new t.Filter(8500, 'lowpass')
     filt.connect(comp)
-    this.master = new t.Gain(1)
+    this.master = new t.Gain(TONE_TRIM)
     this.master.connect(filt)
     const dry = new t.Gain(1)
     dry.connect(this.master)
     const rev = new t.Reverb({ decay: 2.0, preDelay: 0.02 })
     rev.wet.value = 1
-    const wetGain = new t.Gain(0.36)
+    // 只给 0.12：Tone 的输出接进原生 musicBus，那里还有一层 dry/wet（wet 0.36）。
+    // 两边都给 0.36 等于**二次混响**，湿声叠湿声会把频谱重心压到 450Hz 以下，
+    // 听感就是"糊"。Tone 侧只补一点点空间感即可。
+    const wetGain = new t.Gain(0.12)
     const wet = new t.Gain(1)
     wet.connect(rev)
     rev.connect(wetGain)
@@ -328,7 +345,9 @@ export class ToneRenderer implements MusicRenderer {
         const t = when < lastT ? lastT + 0.0005 : when
         lastT = t
         try {
-          node.triggerAttackRelease(midi, Math.max(0.05, dur), t, Math.min(1, vel))
+          // 必须 mtof()：Tone 的 triggerAttackRelease 收到**数字**时按频率(Hz)解释，
+          // 不是 MIDI 音高。直接传 midi 41 会响 41Hz，整条旋律变成 40~80Hz 的嗡鸣。
+          node.triggerAttackRelease(mtof(midi), Math.max(0.05, dur), t, Math.min(1, vel))
         } catch {
           /* 单个音失败不该带走整小节 */
         }
@@ -364,7 +383,7 @@ export class ToneRenderer implements MusicRenderer {
       this.padSynth.connect(this.chans.pad)
     }
     try {
-      this.padSynth.triggerAttackRelease(midi, Math.max(0.2, dur), when, Math.min(1, vel * 3.2))
+      this.padSynth.triggerAttackRelease(mtof(midi), Math.max(0.2, dur), when, Math.min(1, vel * 3.2))
     } catch {
       /* 忽略 */
     }
