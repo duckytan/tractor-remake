@@ -80,21 +80,26 @@
   <header>
     <h1>拖拉机 · 声音系统试听 <span id="verBadge">v6</span></h1>
     <div class="sub">
-      <b>v12：按 docs/21 审计补齐 —— 30 个音效 / 6 个场景 / 座位声像 / 音量记忆 / M 静音</b><br>
+      <b>v13：两套播放系统独立开关</b>（只开音效也能听事件音 / 只开 BGM 就是纯音乐）+ 30 个音效 / 6 个场景<br>
       补的 P0：甩牌被压回 · 非法出牌 · 结算「升 N 级」用音数表达 · 闲家上台 · 必打截断 · 终局胜负两版 · 回放场景<br>
       引擎可切：<b>原生 Web Audio</b>（零依赖、手写加法/FM/Karplus）／ <b>Tone.js</b>（需联网或本地 tone.min.js）<br>
       主题决定旋律与主奏音色；场景（定主/出牌/结算）各配一种"光线"：咖啡小憩 / 午后阳光 / 微风散步<br>
       引擎：钢琴 7 层泛音 · phraseAccent 力度呼吸 · 八度叠音 / 对位 / 装饰音三种变奏 · 立体声分轨<br>
-      如果角标不是 <b>v12</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开
+      如果角标不是 <b>v13</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开
     </div>
   </header>
 
   <!-- 启动 / 音量 -->
   <div class="card">
-    <h2>开关与音量</h2>
+    <h2>开关与音量 <span class="hint">两套系统独立开关，互不干扰</span></h2>
     <div class="row">
-      <button class="primary" id="btnStart">▶ 启动</button>
+      <button class="primary" id="btnBgm">▶ 启动 BGM</button>
+      <button class="primary" id="btnSfx" style="background:#2b6ea8;border-color:#2b6ea8">🔔 音效 开</button>
       <span class="step" id="step"></span>
+    </div>
+    <div class="info" style="font-size:11.5px;margin:-3px 0 9px">
+      <b>只开音效</b>不开 BGM 也能听事件音；<b>只开 BGM</b>关掉音效就是纯音乐。
+      两者共用同一个音频上下文（浏览器对上下文数量有限制），但调度器与触发权限完全独立。
     </div>
     <div class="row">
       <label>引擎</label>
@@ -421,7 +426,13 @@ const SECTIONS = [
 let sceneKey = 'play';
 let tensionTarget = 0;      // 0..1
 let tensionCur = 0;         // 平滑后的值
-let playing = false;
+/* 两套播放系统，各自独立开关：
+     bgmOn —— BGM 调度器是否在跑（决定有没有音乐）
+     sfxOn —— 音效是否允许触发（决定有没有事件音）
+   共用同一个 AudioContext（浏览器对上下文数量有限制，且共用才能保证时序一致），
+   但生命周期互不依赖：只开音效不开 BGM 是合法状态。 */
+let bgmOn = false;
+let sfxOn = true;
 let barIndex = 0, nextBarTime = 0, timerId = null;
 let volBgm = 0.52, volSfx = 0.72;
 let lastStatAt = 0;
@@ -1327,7 +1338,7 @@ function scheduleBar(bi, when) {
 }
 
 function scheduler() {
-  if (!playing) return;
+  if (!bgmOn) return;
   const now = ctx.currentTime;
   // 紧张度平滑（约 0.7 秒收敛）
   tensionCur += (tensionTarget - tensionCur) * 0.06;
@@ -1354,50 +1365,91 @@ function scheduler() {
   if (performance.now() - lastStatAt > 200) { lastStatAt = performance.now(); updateStat(); }
 }
 
-async function start() {
-  const btn = document.getElementById('btnStart');
+/** 懒创建音频图：谁先需要谁创建（BGM 与音效共用一套总线） */
+function ensureAudio() {
+  if (ctx) {
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
+    return true;
+  }
+  initAudio();
+  if (ctx && ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
+  return !!ctx;
+}
+
+/** 有一方在用就保持 running，两边都关就 suspend（省电，也不占音频线程） */
+function syncAudioState() {
+  if (!ctx) return;
+  if (bgmOn || sfxOn) {
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
+  } else {
+    try { ctx.suspend(); } catch (e) {}
+  }
+}
+
+/* ---------------- BGM 开关 ---------------- */
+
+async function startBgm() {
+  if (bgmOn) return;
+  const btn = document.getElementById('btnBgm');
+
   if (engineMode === 'tone') {
+    // Tone 自己管上下文：先把可能存在的原生上下文关掉，避免两套图并存
+    if (ctx) { try { ctx.close(); } catch (e) {} ctx = null; }
     if (!tInited) {
       btn.textContent = '⏳ 加载 Tone.js…';
       try { await toneInit(); }
       catch (e) {
-        // 起不来就退回原生引擎，把原因写在页面上 —— 对照台的意义是能听，不是能报错
         setEngNote('Tone 引擎起不来（' + e.message + '），已退回原生引擎', true);
         engineMode = 'native';
         syncEngineButtons();
       }
     }
   }
-  if (engineMode === 'native') {
-    initAudio();
-    if (ctx.state === 'suspended') ctx.resume();
+  if (engineMode === 'native' && !ensureAudio()) {
+    setEngNote('音频上下文没起来，再点一次', true);
+    btn.textContent = '▶ 启动 BGM';
+    return;
   }
-  if (!ctx) { setEngNote('音频上下文没起来，再点一次「启动」', true); btn.textContent = '▶ 启动'; return; }
+  if (!ctx) { btn.textContent = '▶ 启动 BGM'; return; }
 
-  playing = true;
+  bgmOn = true;
   barIndex = 0;
   nextBarTime = ctx.currentTime + 0.25;
   timerId = setInterval(scheduler, 40);
   scheduler();
-  btn.textContent = '⏸ 停止';
-  btn.classList.add('on');
+  syncAudioState();
+  syncSwitches();
 }
 
-function stop() {
-  playing = false;
+function stopBgm() {
+  bgmOn = false;
   if (timerId !== null) { clearInterval(timerId); timerId = null; }
-  if (engineMode === 'tone') {
-    toneTeardown();
-    try { Tone.getContext().rawContext.suspend(); } catch (e) {}
-  } else if (ctx) {
-    // 停止 = 关掉整个 context：已排出去的音符不会自己停（照抄参考实现的教训）
-    try { ctx.close(); } catch (e) {}
+  // Tone 侧要拆掉发声节点；原生侧只停调度器 ——
+  // 已排出去的音（≤0.45s 前瞻）让它自然收尾，比硬切干净
+  if (engineMode === 'tone') { toneTeardown(); }
+  syncAudioState();
+  syncSwitches();
+}
+
+/* ---------------- 音效开关 ---------------- */
+
+function setSfxOn(on) {
+  sfxOn = !!on;
+  if (sfxOn) ensureAudio();      // 只开音效时也要有上下文
+  syncAudioState();
+  syncSwitches();
+}
+
+function syncSwitches() {
+  const b1 = document.getElementById('btnBgm'), b2 = document.getElementById('btnSfx');
+  if (b1) {
+    b1.textContent = bgmOn ? '⏸ 停止 BGM' : '▶ 启动 BGM';
+    b1.classList.toggle('on', bgmOn);
   }
-  ctx = null;
-  if (engineMode === 'tone') { sfxBus = null; noiseBuf = null; }
-  pluckCache.clear();
-  document.getElementById('btnStart').textContent = '▶ 启动';
-  document.getElementById('btnStart').classList.remove('on');
+  if (b2) {
+    b2.textContent = sfxOn ? '🔔 音效 开' : '🔕 音效 关';
+    b2.classList.toggle('on', sfxOn);
+  }
   updateStat();
 }
 
@@ -1740,7 +1792,8 @@ const SFX = {
 const SFX_MAX_LIVE = 5;
 
 function sfx(name, opts) {
-  if (!ctx || !playing) return;
+  if (!sfxOn) return;
+  if (!ensureAudio()) return;
   const o = opts || {};
   const t = performance.now();
   if (!o.force && lastAt[name] && t - lastAt[name] < 70) return;
@@ -1774,7 +1827,7 @@ Object.keys(SCENE_MOD).forEach(k => {
     sceneKey = k;
     Array.prototype.forEach.call($('sceneBox').children, c => c.classList.toggle('on', c.dataset.scene === k));
     // 换场景给一个短提示音（真正的变化在下一小节生效）
-    sfx(k === 'settle' ? 'levelup' : 'ui', { force: true });
+    sfx(k === 'settle' ? 'settleUp' : 'ui', { force: true, n: 1 });
     if (k !== 'play') { tensionTarget = 0; $('tens').value = 0; $('tensV').textContent = '0'; }
     renderAccGrid();   // 和弦名跟着调性变
     updateStat();
@@ -1823,7 +1876,7 @@ function buildEngineBox() {
     b.style.fontSize = '12px'; b.style.padding = '7px 12px';
     b.onclick = async () => {
       if (k === engineMode) return;
-      if (playing) stop();               // 换引擎必须重起上下文
+      if (bgmOn) stopBgm();              // 换引擎必须重起 BGM
       engineMode = k;
       syncEngineButtons();
       updateStat();
@@ -1881,7 +1934,7 @@ function buildInstPicker(boxId, get, set) {
       set(k);
       Array.prototype.forEach.call($(boxId).children, c => c.classList.toggle('on', c.dataset.inst === k));
       // 立刻听一下这个音色（只有启动后才出声）
-      if (playing) voice(k, ctx.currentTime + 0.02, 72, 0.9, 0.4, scene().bright, null);
+      if (ctx && sfxOn) voice(k, ctx.currentTime + 0.02, 72, 0.9, 0.4, scene().bright, null);
       updateStat();
     };
     $(boxId).appendChild(b);
@@ -1924,7 +1977,7 @@ $('accGrid').onclick = e => {
   ACC_GRID[col] ^= 1 << row;
   el.classList.toggle('on');
   // 点完立刻试听这一格（只有启动后才出声）
-  if (playing && ((ACC_GRID[col] >> row) & 1)) {
+  if (ctx && sfxOn && ((ACC_GRID[col] >> row) & 1)) {
     const bar = Math.floor(col / 8);
     const ch = CHORDS[bar % 4];
     const pitch = ch.p[row] + Math.round(-2 * tensionCur) + (row === 5 ? 12 : 0);
@@ -1943,7 +1996,7 @@ $('btnResetAcc').onclick = () => {
 Object.keys(SFX).forEach(k => {
   const b = document.createElement('button');
   b.textContent = SFX[k].label;
-  b.onclick = () => { if (!playing) return; sfx(k, { force: true }); };
+  b.onclick = () => { if (!sfxOn) return; sfx(k, { force: true }); };
   $('sfxBox').appendChild(b);
 });
 
@@ -1974,7 +2027,7 @@ $('tens').oninput = () => {
 
 /* 紧张度自动爬升 */
 $('btnRamp').onclick = () => {
-  if (!playing) return;
+  if (!bgmOn) { setEngNote('紧张度是 BGM 的参数，先启动 BGM', true); return; }
   if (sceneKey !== 'play') {
     $('sceneBox').querySelector('[data-scene="play"]').click();
   }
@@ -1993,7 +2046,7 @@ $('btnRamp').onclick = () => {
 
 /* 连打 8 次出牌音：听轮转 */
 $('btnRr').onclick = () => {
-  if (!playing) return;
+  if (!sfxOn) return;
   $('step').textContent = '连打 8 次「出牌」—— 音高在 I / III / V / VII / X 之间轮转';
   for (let i = 0; i < 8; i++) {
     setTimeout(() => sfx('play', { force: true }), i * 240);
@@ -2017,7 +2070,7 @@ function runSteps(steps) {
 
 /* 演示一局：按真实时序走一遍 */
 $('btnDemo').onclick = () => {
-  if (!playing) return;
+  if (!sfxOn && !bgmOn) return;
   const go = (k) => { const b = $('sceneBox').querySelector('[data-scene="' + k + '"]'); if (b) b.click(); };
   runSteps([
     [0,     '发牌（33 张 × 55ms ⇒ 必须每 4 张一次 tick，否则像机关枪）',
@@ -2067,7 +2120,7 @@ $('btnDemo').onclick = () => {
 
 /* 演示异常：这些音只在"出问题"时响，单独试听 */
 $('btnErr').onclick = () => {
-  if (!playing) return;
+  if (!sfxOn && !bgmOn) return;
   runSteps([
     [0,    '甩牌被压回 —— 你甩的牌不敌三家，只出最小单位（P0）',
       () => sfx('bump', { force: true })],
@@ -2096,9 +2149,9 @@ $('btnErr').onclick = () => {
 document.addEventListener('visibilitychange', function () {
   if (!ctx) return;
   if (document.hidden) {
-    if (playing) { try { ctx.suspend(); } catch (e) {} }
+    if (bgmOn || sfxOn) { try { ctx.suspend(); } catch (e) {} }
   } else {
-    if (playing) { try { ctx.resume(); } catch (e) {} }
+    if (bgmOn || sfxOn) { try { ctx.resume(); } catch (e) {} }
   }
 });
 
@@ -2141,9 +2194,8 @@ document.addEventListener('keydown', function (e) {
 });
 
 /* 启动按钮 */
-$('btnStart').onclick = () => {
-  if (playing) { stop(); } else { start(); }
-};
+$('btnBgm').onclick = () => { if (bgmOn) stopBgm(); else startBgm(); };
+$('btnSfx').onclick = () => setSfxOn(!sfxOn);
 
 /* ============================================================
    5. 状态显示
@@ -2154,7 +2206,7 @@ function updateStat() {
   const keyName = 'C 大调';
   // 版本角标实时反映当前状态 —— 用户三次反馈「阴沉」但实测频谱已完全不同，
   // 怀疑是浏览器标签页缓存了旧版。角标一换就能立刻确认自己在听哪一版。
-  $('verBadge').textContent = 'v12 · ' + theme().name + ' · ' + bpm + ' BPM';
+  $('verBadge').textContent = 'v13 · ' + theme().name + ' · ' + bpm + ' BPM';
   const tr = Math.round(-2 * tensionCur);
   const secIdx = Math.floor(barIndex / 4) % SECTIONS.length;
   const sec = SECTIONS[secIdx];
@@ -2178,14 +2230,17 @@ function updateStat() {
   $('layerBox').innerHTML = layers
     .map(([n, on]) => `<span class="tag${on ? ' act' : ''}">${n}</span>`).join('');
 
-  $('stat2').innerHTML = playing
-    ? `运行中 · 伴奏 ${INST_LABEL[accInst]} / 主旋律 ${INST_LABEL[melInst]} · 音效根音 <b>${72 + tr + keyShift}</b>${keyShift ? '（转调 ' + (keyShift > 0 ? '+' : '') + keyShift + '）' : ''} · 采样率 ${ctx.sampleRate} Hz`
-    : '未启动 —— 点上面的「启动」（浏览器要求先有用户手势才能出声）';
+  $('stat2').innerHTML = (bgmOn || sfxOn)
+    ? `BGM <b>${bgmOn ? '运行中' : '未启动'}</b> · 音效 <b>${sfxOn ? '开' : '关'}</b>`
+      + (bgmOn ? ` · 伴奏 ${INST_LABEL[accInst]} / 主旋律 ${INST_LABEL[melInst]} · 音效根音 <b>${72 + tr + keyShift}</b>${keyShift ? '（转调 ' + (keyShift > 0 ? '+' : '') + keyShift + '）' : ''}` : '')
+      + ` · 采样率 ${ctx ? ctx.sampleRate + ' Hz' : '—（首次触发时创建）'}`
+    : '两套系统都关着 —— 点「启动 BGM」听音乐，点「音效 开」听事件音（可以只开一个）';
 }
 
 // 先恢复上次的音量/引擎/主题，再同步按钮高亮
 loadPrefs();
 syncEngineButtons();
+syncSwitches();
 Array.prototype.forEach.call($('themeBox').children, c => c.classList.toggle('on', c.dataset.theme === themeKey));
 melInst = theme().inst;
 Array.prototype.forEach.call($('melBox').children, c => c.classList.toggle('on', c.dataset.inst === melInst));
