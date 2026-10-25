@@ -80,10 +80,11 @@
   <header>
     <h1>拖拉机 · 声音系统试听 <span id="verBadge">v6</span></h1>
     <div class="sub">
-      <b>完整移植 design/engine-ab.html</b> —— 春夏秋冬四个主题 + 播放引擎（变奏 / 力度呼吸 / 分轨）<br>
+      <b>完整移植 design/engine-ab.html</b> —— 春夏秋冬四主题 + 播放引擎 + <b>两种发声引擎可切换</b><br>
+      引擎：<b>原生 Web Audio</b>（零依赖、手写加法/FM/Karplus）／ <b>Tone.js</b>（第三方库，需联网或本地 tone.min.js）<br>
       主题决定旋律与主奏音色；场景（定主/出牌/结算）各配一种"光线"：咖啡小憩 / 午后阳光 / 微风散步<br>
       引擎：钢琴 7 层泛音 · phraseAccent 力度呼吸 · 八度叠音 / 对位 / 装饰音三种变奏 · 立体声分轨<br>
-      如果角标不是 <b>v10</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开
+      如果角标不是 <b>v11</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开
     </div>
   </header>
 
@@ -94,6 +95,11 @@
       <button class="primary" id="btnStart">▶ 启动</button>
       <span class="step" id="step"></span>
     </div>
+    <div class="row">
+      <label>引擎</label>
+      <div class="grp" id="engineBox"></div>
+    </div>
+    <div class="info" id="engNote" style="font-size:11.5px;margin:-3px 0 9px"></div>
     <div class="row"><label>总音量</label><input type="range" id="vol" min="0" max="100" value="72"><span class="val" id="volV">72</span></div>
     <div class="row"><label>BGM</label><input type="range" id="bgm" min="0" max="100" value="52"><span class="val" id="bgmV">52</span></div>
     <div class="row"><label>音效</label><input type="range" id="sfx" min="0" max="100" value="72"><span class="val" id="sfxV">72</span></div>
@@ -738,6 +744,7 @@ function vPad(when, midi, dur, vel, bus) {
   g.gain.linearRampToValueAtTime(vel, when + dur * 0.35);
   g.gain.linearRampToValueAtTime(vel * 0.7, when + dur * 0.75);
   g.gain.linearRampToValueAtTime(0, when + dur);
+  if (engineMode === 'tone' && toneEnqueue('pad', [when, midi, dur, vel])) return;
   o1.connect(lp); o2.connect(lp); lp.connect(g); g.connect(bus || padBus);
   o1.start(when); o2.start(when); o1.stop(when + dur + 0.1); o2.stop(when + dur + 0.1);
 }
@@ -811,6 +818,7 @@ function vHarp(when, midi, vel, dur, bright, bus) {
 }
 
 function shaker(when, vel) {
+  if (engineMode === 'tone' && toneEnqueue('shaker', [when, vel])) return;
   const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
   const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5200;
   const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 8200; bp.Q.value = 1.2;
@@ -864,8 +872,305 @@ let accInst = 'guitar';
 let melInst = 'piano';
 
 function voiceEntry(k) { return VOICE[k] || COMBO[k] || VOICE.piano; }
+
+/** 总线对象 → 名字（Tone 侧按名字取通道） */
+function busNameOf(bus) {
+  if (bus === leadBus) return 'lead';
+  if (bus === padBus) return 'pad';
+  if (bus === fxBus) return 'fx';
+  return 'acc';
+}
+
 function voice(kind, when, midi, vel, dur, bright, bus) {
+  // Tone 模式：收进队列，整小节排好序再下发（Tone 的时间轴要求单调）
+  if (engineMode === 'tone' && toneEnqueue('voice', [kind, when, midi, vel, dur, busNameOf(bus)])) return;
   voiceEntry(kind).fn(when, midi, vel, dur, bright, bus);
+}
+
+/* ============================================================
+   TONE.JS 后端（移植 engine-ab.html 的 Tone 侧）
+   ------------------------------------------------------------
+   与原生后端「同接口、同事件流」，只换发声实现：
+   调度器仍是同一套 lookahead，同一份 THEMES / ACC_GRID / scene / seed
+   产出的音符事件两边完全一致，差异只落在「怎么把一个音符变成声音」。
+   所以两边比较的是发声层，而不是功能多少。
+   ============================================================ */
+let engineMode = 'native';      // 'native' | 'tone'
+let toneReady = false, toneLoading = null, toneLibFrom = '';
+let tInited = false;
+let tMaster, tTone, tComp, tLim, tDry, tWet, tWetGain, tRev;
+let tLead, tAcc, tPad, tFx, tShaker, tPadSynth;
+const toneRacks = new Map();
+let toneQueue = [], toneQueueOn = false;
+let tPadLast = -1, tShakerLast = -1;
+
+/** Tone 的音色表（22 种合成音色；采样钢琴不在对照范围，属功能差异） */
+const TONE_VOICES = {
+  piano:    { kind: 'poly', V: 'FMSynth', o: { harmonicity: 1, modulationIndex: 1.8,
+                oscillator: { type: 'sine' }, envelope: { attack: 0.004, decay: 1.6, sustain: 0.10, release: 1.2 },
+                modulation: { type: 'sine' }, modulationEnvelope: { attack: 0.004, decay: 0.5, sustain: 0.05, release: 0.6 } } },
+  pianoSoft:{ kind: 'poly', V: 'FMSynth', o: { harmonicity: 1, modulationIndex: 1.2,
+                oscillator: { type: 'sine' }, envelope: { attack: 0.008, decay: 1.4, sustain: 0.08, release: 1.2 },
+                modulation: { type: 'sine' }, modulationEnvelope: { attack: 0.008, decay: 0.4, sustain: 0.03, release: 0.5 } } },
+  epiano:   { kind: 'poly', V: 'FMSynth', o: { harmonicity: 3, modulationIndex: 8,
+                oscillator: { type: 'sine' }, envelope: { attack: 0.002, decay: 1.5, sustain: 0.10, release: 1.2 },
+                modulation: { type: 'sine' }, modulationEnvelope: { attack: 0.002, decay: 0.25, sustain: 0, release: 0.3 } } },
+  celesta:  { kind: 'poly', V: 'FMSynth', o: { harmonicity: 5.7, modulationIndex: 12,
+                oscillator: { type: 'sine' }, envelope: { attack: 0.001, decay: 0.55, sustain: 0, release: 0.6 },
+                modulation: { type: 'sine' }, modulationEnvelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 } } },
+  musicbox: { kind: 'poly', V: 'FMSynth', o: { harmonicity: 8, modulationIndex: 16,
+                oscillator: { type: 'sine' }, envelope: { attack: 0.001, decay: 0.9, sustain: 0, release: 0.9 },
+                modulation: { type: 'sine' }, modulationEnvelope: { attack: 0.001, decay: 0.25, sustain: 0, release: 0.25 } } },
+  vibes:    { kind: 'poly', V: 'FMSynth', o: { harmonicity: 4, modulationIndex: 9,
+                oscillator: { type: 'sine' }, envelope: { attack: 0.002, decay: 1.6, sustain: 0.05, release: 1.5 },
+                modulation: { type: 'sine' }, modulationEnvelope: { attack: 0.002, decay: 0.3, sustain: 0.05, release: 0.4 } } },
+  guitar:   { kind: 'pluck', o: { attackNoise: 1.2, dampening: 3400, resonance: 0.93 } },
+  harp:     { kind: 'pluck', o: { attackNoise: 0.55, dampening: 4400, resonance: 0.95 } },
+  flute:    { kind: 'poly', V: 'Synth', o: { oscillator: { type: 'sine' },
+                envelope: { attack: 0.07, decay: 0.12, sustain: 0.85, release: 0.3 } } },
+  marimba:  { kind: 'poly', V: 'FMSynth', o: { harmonicity: 3.2, modulationIndex: 6,
+                oscillator: { type: 'sine' }, envelope: { attack: 0.002, decay: 0.42, sustain: 0, release: 0.42 },
+                modulation: { type: 'sine' }, modulationEnvelope: { attack: 0.002, decay: 0.15, sustain: 0, release: 0.15 } } },
+  pad:      { kind: 'poly', V: 'Synth', o: { oscillator: { type: 'fatsawtooth', count: 3, spread: 24 },
+                envelope: { attack: 0.7, decay: 0.6, sustain: 0.8, release: 2.2 } } }
+};
+
+/** 叠加音色：与原生 COMBO 一一对应，只是分两路发声 */
+const TONE_COMBO = {
+  pianoGuitar: [['piano', 1.0], ['guitar', 0.72]],
+  flutePiano:  [['flute', 1.0], ['piano', 0.62]]
+};
+
+/** 加载一支外部脚本，带超时 */
+function toneScriptLoad(src, ms) {
+  return new Promise(function (res, rej) {
+    const sc = document.createElement('script');
+    let done = false;
+    const tid = setTimeout(function () {
+      if (done) return;
+      done = true; sc.onload = sc.onerror = null;
+      try { sc.parentNode && sc.parentNode.removeChild(sc); } catch (e) {}
+      rej(new Error('超时 ' + ms + 'ms · ' + src));
+    }, ms);
+    sc.onload = function () { if (done) return; done = true; clearTimeout(tid); res(); };
+    sc.onerror = function () { if (done) return; done = true; clearTimeout(tid); rej(new Error('下载失败 · ' + src)); };
+    sc.src = src;
+    document.head.appendChild(sc);
+  });
+}
+
+/** 三级来源：同目录 tone.min.js → jsdelivr → unpkg */
+function toneLoadLib() {
+  if (window.Tone) { if (!toneLibFrom) toneLibFrom = '已加载'; return Promise.resolve(toneLibFrom); }
+  if (toneLoading) return toneLoading;
+  const srcs = [
+    './tone.min.js',
+    'https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js',
+    'https://unpkg.com/tone@14.8.49/build/Tone.js'
+  ];
+  toneLoading = (async function () {
+    const errs = [];
+    for (let i = 0; i < srcs.length; i++) {
+      try { await toneScriptLoad(srcs[i], 8000); }
+      catch (e) { errs.push(e.message); continue; }
+      if (window.Tone) { toneLibFrom = srcs[i]; return srcs[i]; }
+      errs.push('加载了但没有 window.Tone · ' + srcs[i]);
+    }
+    toneLoading = null;
+    throw new Error(errs.join(' ／ '));
+  })();
+  return toneLoading;
+}
+
+function toneRunning() { try { return Tone.getContext().state === 'running'; } catch (e) { return false; } }
+function toneKarplusOk() {
+  try {
+    if (location.protocol === 'file:') return false;
+    const raw = Tone.getContext().rawContext;
+    return !!(raw && raw.audioWorklet);
+  } catch (e) { return false; }
+}
+function toneBusOf(n) {
+  if (n === 'lead') return tLead;
+  if (n === 'pad') return tPad;
+  if (n === 'fx') return tFx;
+  return tAcc;
+}
+
+function toneMakeRack(k, busName) {
+  const def = TONE_VOICES[k];
+  if (!def) return null;
+  const bus = toneBusOf(busName);
+
+  if (def.kind === 'pluck') {
+    const useKs = toneKarplusOk();
+    const pool = [];
+    for (let i = 0; i < 6; i++) {
+      const n = useKs
+        ? new Tone.PluckSynth(def.o)
+        : new Tone.MonoSynth({
+            oscillator: { type: 'triangle' },
+            filter: { Q: 1.5, type: 'lowpass', rolloff: -24 },
+            filterEnvelope: { attack: 0.001, decay: 0.17, sustain: 0.02, release: 0.25, baseFrequency: 3400, octaves: 3.2 },
+            envelope: { attack: 0.002, decay: 0.85, sustain: 0, release: 0.3 }
+          });
+      n.connect(bus); pool.push(n);
+    }
+    let idx = 0, lastT = -1;
+    return {
+      trigger: function (f, t, d, v) {
+        if (t < lastT) t = lastT + 0.0005;   // Tone 时间轴必须单调，宁可挪 0.5ms
+        lastT = t;
+        const n = pool[idx++ % pool.length];
+        try {
+          if (useKs) n.triggerAttack(f, t, v);
+          else n.triggerAttackRelease(f, Math.max(0.14, d), t, v);
+        } catch (e) {}
+      },
+      dispose: function () { pool.forEach(function (n) { try { n.dispose(); } catch (e) {} }); }
+    };
+  }
+
+  const Cls = Tone[def.V] || Tone.Synth;
+  const node = new Tone.PolySynth(Cls, def.o).connect(bus);
+  try { node.maxPolyphony = 16; } catch (e) {}
+  let lastT2 = -1;
+  return {
+    trigger: function (f, t, d, v) {
+      if (t < lastT2) t = lastT2 + 0.0005;
+      lastT2 = t;
+      try { node.triggerAttackRelease(f, Math.max(0.05, d), t, v); } catch (e) {}
+    },
+    dispose: function () { try { node.dispose(); } catch (e) {} }
+  };
+}
+
+function toneGetRack(k, busName) {
+  const ck = k + '|' + busName;
+  let r = toneRacks.get(ck);
+  if (r) return r;
+  r = toneMakeRack(k, busName);
+  if (r) toneRacks.set(ck, r);
+  return r;
+}
+
+function toneEnqueue(kind, a) {
+  if (!toneQueueOn) return false;
+  toneQueue.push({ kind: kind, t: a[0], a: a });
+  return true;
+}
+
+/* 一小节一缓冲：整小节按时间排好再一次性下发。
+   scheduleBar 的真实写法不是时间单调的（先铺伴奏到 t+3.5 拍、再补左手和弦回到 t；
+   装饰音还要往前挪 0.22 拍），裸 Web Audio 乱序无所谓，Tone 复用同一个 PolySynth
+   就会抛 "Start time must be strictly greater than previous start time"。 */
+function toneFlush() {
+  if (!toneQueue.length) return;
+  const q = toneQueue;
+  toneQueue = [];
+  q.sort(function (x, y) { return x.t - y.t; });
+  for (let i = 0; i < q.length; i++) {
+    const e = q[i];
+    try {
+      if (e.kind === 'voice') tonePlayVoice(e.a[0], e.a[1], e.a[2], e.a[3], e.a[4], e.a[5]);
+      else if (e.kind === 'pad') tonePlayPad(e.a[0], e.a[1], e.a[2], e.a[3]);
+      else tonePlayShaker(e.a[0], e.a[1]);
+    } catch (err) { /* 单个音失败不该带走整小节 */ }
+  }
+}
+
+function tonePlayVoice(k, when, midi, vel, dur, busName) {
+  const c = TONE_COMBO[k];
+  if (c) {
+    for (let i = 0; i < c.length; i++) {
+      const r = toneGetRack(c[i][0], busName);
+      if (r) r.trigger(mtof(midi), when, Math.max(0.05, dur), Math.min(1, vel * c[i][1]));
+    }
+    return;
+  }
+  const r = toneGetRack(k, busName);
+  if (r) r.trigger(mtof(midi), when, Math.max(0.05, dur), Math.min(1, vel));
+}
+
+function tonePlayPad(when, midi, dur, vel) {
+  if (!tPadSynth) return;
+  if (when < tPadLast) when = tPadLast + 0.0005;
+  tPadLast = when;
+  try { tPadSynth.triggerAttackRelease(mtof(midi), Math.max(0.2, dur), when, Math.min(1, vel * 3.2)); } catch (e) {}
+}
+
+function tonePlayShaker(when, vel) {
+  if (!tShaker) return;
+  if (when < tShakerLast) when = tShakerLast + 0.0005;
+  tShakerLast = when;
+  try { tShaker.triggerAttackRelease(0.09, when, Math.min(1, vel * 0.09 / 0.06)); } catch (e) {}
+}
+
+/* 浏览器在「没有用户手势」时返回一个永远不 resolve 的 resume()，
+   任何「等它恢复」的地方都必须带超时，否则 start() 会静默挂死 */
+function toneWait(ms, pr) {
+  return Promise.race([pr, new Promise(function (r) { setTimeout(r, ms); })]);
+}
+
+async function toneInit() {
+  await toneLoadLib();
+  if (!window.Tone) throw new Error('Tone.js 未就绪');
+  await toneWait(3000, Tone.start());
+  if (!toneRunning()) { try { await toneWait(1500, Tone.getContext().resume()); } catch (e) {} }
+  if (!toneRunning()) throw new Error('浏览器没允许出声（自动播放拦截），点一下页面空白处再点「启动」');
+
+  ctx = Tone.getContext().rawContext;          // 调度器统一读 ctx.currentTime
+
+  tLim = new Tone.Limiter(-1).toDestination();
+  tComp = new Tone.Compressor({ threshold: -20, ratio: 2.6, attack: 0.012, release: 0.28 }).connect(tLim);
+  tTone = new Tone.Filter(8500, 'lowpass').connect(tComp);
+  tMaster = new Tone.Gain(0.8).connect(tTone);
+  tDry = new Tone.Gain(1.0).connect(tMaster);
+  tRev = new Tone.Reverb({ decay: 2.0, preDelay: 0.02 });
+  tRev.wet.value = 1;
+  tWetGain = new Tone.Gain(0.36);
+  tWet = new Tone.Gain(1.0);
+  tWet.connect(tRev); tRev.connect(tWetGain); tWetGain.connect(tMaster);
+  await tRev.ready;
+
+  tLead = new Tone.Channel({ volume: Tone.gainToDb(0.80), pan: 0.06 });
+  tAcc = new Tone.Channel({ volume: Tone.gainToDb(0.78), pan: -0.12 });
+  tPad = new Tone.Channel({ volume: Tone.gainToDb(0.20), pan: 0 });
+  tFx = new Tone.Channel({ volume: Tone.gainToDb(1.00), pan: 0 });
+  [tLead, tAcc, tPad, tFx].forEach(function (c) { c.connect(tDry); c.connect(tWet); });
+
+  tPadSynth = new Tone.PolySynth(Tone.Synth, {
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.35, decay: 0.2, sustain: 0.75, release: 0.6 }
+  }).connect(tPad);
+  try { tPadSynth.maxPolyphony = 12; } catch (e) {}
+
+  tShaker = new Tone.NoiseSynth({ noise: { type: 'white' },
+    envelope: { attack: 0.006, decay: 0.09, sustain: 0, release: 0.02 } }).connect(tFx);
+
+  // 音效仍用原生节点，但必须挂在 Tone 的上下文上 —— 跨 context 连节点会直接抛错
+  sfxBus = ctx.createGain(); sfxBus.gain.value = volSfx;
+  sfxBus.connect(ctx.destination);
+  noiseBuf = makeNoise(ctx, 2.0);
+  pluckCache.clear();
+
+  tInited = true;
+  toneReady = true;
+  setEngNote('Tone 引擎已就绪（库来源：' + (toneLibFrom || '未知') + '）', false);
+}
+
+function toneTeardown() {
+  toneRacks.forEach(function (r) { try { if (r && r.dispose) r.dispose(); } catch (e) {} });
+  toneRacks.clear();
+  [tPadSynth, tShaker, tLead, tAcc, tPad, tFx,
+   tWet, tRev, tWetGain, tDry, tMaster, tTone, tComp, tLim].forEach(function (n) {
+    try { if (n && n.dispose) n.dispose(); } catch (e) {}
+  });
+  tPadSynth = tShaker = tLead = tAcc = tPad = tFx = null;
+  tWet = tRev = tWetGain = tDry = tMaster = tTone = tComp = tLim = null;
+  tInited = false; toneReady = false;
+  tPadLast = -1; tShakerLast = -1;
+  toneQueue = []; toneQueueOn = false;
 }
 
 /* ============================================================
@@ -1010,7 +1315,10 @@ function scheduler() {
   }
   let guard = 0;
   while (nextBarTime < now + 0.45 && guard++ < 6) {
+    // Tone 模式：整小节先收进队列，排好序再一次性下发
+    toneQueueOn = (engineMode === 'tone');
     scheduleBar(barIndex, nextBarTime);
+    if (toneQueueOn) { toneQueueOn = false; toneFlush(); }
     nextBarTime += barDur;
     barIndex++;
   }
@@ -1018,23 +1326,47 @@ function scheduler() {
   if (performance.now() - lastStatAt > 200) { lastStatAt = performance.now(); updateStat(); }
 }
 
-function start() {
-  initAudio();
-  if (ctx.state === 'suspended') ctx.resume();
+async function start() {
+  const btn = document.getElementById('btnStart');
+  if (engineMode === 'tone') {
+    if (!tInited) {
+      btn.textContent = '⏳ 加载 Tone.js…';
+      try { await toneInit(); }
+      catch (e) {
+        // 起不来就退回原生引擎，把原因写在页面上 —— 对照台的意义是能听，不是能报错
+        setEngNote('Tone 引擎起不来（' + e.message + '），已退回原生引擎', true);
+        engineMode = 'native';
+        syncEngineButtons();
+      }
+    }
+  }
+  if (engineMode === 'native') {
+    initAudio();
+    if (ctx.state === 'suspended') ctx.resume();
+  }
+  if (!ctx) { setEngNote('音频上下文没起来，再点一次「启动」', true); btn.textContent = '▶ 启动'; return; }
+
   playing = true;
   barIndex = 0;
   nextBarTime = ctx.currentTime + 0.25;
   timerId = setInterval(scheduler, 40);
   scheduler();
-  document.getElementById('btnStart').textContent = '⏸ 停止';
-  document.getElementById('btnStart').classList.add('on');
+  btn.textContent = '⏸ 停止';
+  btn.classList.add('on');
 }
 
 function stop() {
   playing = false;
   if (timerId !== null) { clearInterval(timerId); timerId = null; }
-  // 停止 = 关掉整个 context：已排出去的音符不会自己停（照抄参考实现的教训）
-  if (ctx) { try { ctx.close(); } catch (e) {} ctx = null; }
+  if (engineMode === 'tone') {
+    toneTeardown();
+    try { Tone.getContext().rawContext.suspend(); } catch (e) {}
+  } else if (ctx) {
+    // 停止 = 关掉整个 context：已排出去的音符不会自己停（照抄参考实现的教训）
+    try { ctx.close(); } catch (e) {}
+  }
+  ctx = null;
+  if (engineMode === 'tone') { sfxBus = null; noiseBuf = null; }
   pluckCache.clear();
   document.getElementById('btnStart').textContent = '▶ 启动';
   document.getElementById('btnStart').classList.remove('on');
@@ -1202,6 +1534,58 @@ Object.keys(SCENE_MOD).forEach(k => {
   };
   $('sceneBox').appendChild(b);
 });
+
+/* ============================================================
+   引擎选择器：原生 Web Audio / Tone.js
+   ------------------------------------------------------------
+   两个后端「同接口、同事件流」：调度器、THEMES、ACC_GRID、scene、seed 全部共用，
+   产出的音符事件一模一样，差别只在「怎么把一个音符变成声音」。
+   所以这里比的是发声层，不是功能多少。
+   ============================================================ */
+const ENGINES = {
+  native: { name: '原生 Web Audio', desc: '零依赖 · 手写加法/FM/Karplus 合成 · 起播零延迟' },
+  tone:   { name: 'Tone.js',        desc: '第三方库 · 内置 PolySynth / Reverb / Channel · 需联网或本地 tone.min.js' }
+};
+let engNoteOrigin = null, engNoteTimer = null;
+
+function setEngNote(msg, warn) {
+  const el = $('engNote');
+  if (!el) return;
+  if (engNoteOrigin === null) engNoteOrigin = el.innerHTML;
+  el.innerHTML = (warn ? '<b style="color:#f0a04b">⚠ </b>' : '<b style="color:#7fe0bb">● </b>') + msg;
+  if (engNoteTimer) clearTimeout(engNoteTimer);
+  engNoteTimer = setTimeout(function () {
+    if (el) el.innerHTML = engNoteOrigin;
+    engNoteTimer = null;
+  }, warn ? 15000 : 5000);
+}
+
+function syncEngineButtons() {
+  Array.prototype.forEach.call($('engineBox').children, c =>
+    c.classList.toggle('on', c.dataset.engine === engineMode));
+  const e = ENGINES[engineMode];
+  $('engNote').innerHTML = '<b>' + e.name + '</b> — ' + e.desc;
+  engNoteOrigin = $('engNote').innerHTML;
+}
+
+function buildEngineBox() {
+  Object.keys(ENGINES).forEach(k => {
+    const b = document.createElement('button');
+    b.textContent = ENGINES[k].name;
+    b.dataset.engine = k;
+    b.style.fontSize = '12px'; b.style.padding = '7px 12px';
+    b.onclick = async () => {
+      if (k === engineMode) return;
+      if (playing) stop();               // 换引擎必须重起上下文
+      engineMode = k;
+      syncEngineButtons();
+      updateStat();
+    };
+    $('engineBox').appendChild(b);
+  });
+  syncEngineButtons();
+}
+buildEngineBox();
 
 /* 主题选择器：春夏秋冬（移植 engine-ab.html 的 SEASONS） */
 function buildThemeBox() {
@@ -1393,7 +1777,7 @@ function updateStat() {
   const keyName = 'C 大调';
   // 版本角标实时反映当前状态 —— 用户三次反馈「阴沉」但实测频谱已完全不同，
   // 怀疑是浏览器标签页缓存了旧版。角标一换就能立刻确认自己在听哪一版。
-  $('verBadge').textContent = 'v10 · ' + theme().name + ' · ' + bpm + ' BPM';
+  $('verBadge').textContent = 'v11 · ' + theme().name + ' · ' + bpm + ' BPM';
   const tr = Math.round(-2 * tensionCur);
   const secIdx = Math.floor(barIndex / 4) % SECTIONS.length;
   const sec = SECTIONS[secIdx];
