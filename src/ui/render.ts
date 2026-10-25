@@ -185,6 +185,37 @@ function fillPlays(
   })
 }
 
+/**
+ * 是否正在拖音量滑条。
+ *
+ * `render()` 是整棵 `root.innerHTML` 重建 —— 拖动时每个 `input` 事件都会 dispatch
+ * 一次音量，paint 一重建，`<input type=range>` 元素就被换掉，拖动立刻中断，
+ * 表现成「只能点某个位置跳过去，拖不动」（用户反馈）。
+ * main.ts 的 `paint()` 会读这个标志，拖动期间只更新音频、不重绘 DOM。
+ */
+let draggingRange = false
+
+export function isDraggingRange(): boolean {
+  return draggingRange
+}
+
+function endRangeDrag(): void {
+  draggingRange = false
+}
+
+/** window 级的 pointerup 兜底只绑一次（render 每帧都会调 bind，不能重复加监听） */
+let windowDragBound = false
+
+/**
+ * 上一次 paint 时弹层面板的滚动位置。
+ *
+ * 必须**在 `root.innerHTML = ...` 之前**量 —— 整棵重建会把 overlay 里的
+ * 旧面板一起销毁，等 `fillOverlay` 执行时已经查不到 `.panel` 了，
+ * 只能读到 0（v1.3.21 踩过：加了恢复逻辑却始终不生效）。
+ */
+let savedOverlayScroll = 0
+let savedOverlayLabel = ''
+
 export function render(root: HTMLElement, s: GameState, act: Actions): void {
   ensureDefs()
   // 体验档位挂在 <html> 上：styles.css 里用的是 :root[...] 选择器，
@@ -202,6 +233,13 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   const shortScreen = window.innerHeight <= 780
   const playedW = Math.round(cardW * (shortScreen ? PLAYED_RATIO_SHORT : PLAYED_RATIO))
   const tinyW = Math.round(cardW * TINY_RATIO)
+
+  // 整棵重建前先记下弹层面板的滚动位置（重建后旧元素就没了）
+  {
+    const oldPanel = root.querySelector<HTMLElement>('.overlay .panel')
+    savedOverlayScroll = oldPanel === null ? 0 : oldPanel.scrollTop
+    savedOverlayLabel = oldPanel === null ? '' : (oldPanel.getAttribute('aria-label') ?? '')
+  }
 
   root.innerHTML = `
     <header class="topbar">
@@ -442,17 +480,32 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   /* ---- 弹层 ---- */
   {
     const ov = q('overlay')
+    /**
+     * 换弹层内容，并把面板的滚动位置恢复回去。
+     *
+     * 设置面板有两屏高，点任意一个开关都会重建 ⇒ 不恢复就会跳回顶端（用户反馈）。
+     * 滚动值在 `root.innerHTML` 之前就量好了（见 render 开头）。
+     */
+    const fillOverlay = (html: string): void => {
+      ov.innerHTML = html
+      if (savedOverlayScroll === 0) return
+      const next = ov.querySelector<HTMLElement>('.panel')
+      // 只在「还是同一个面板」时恢复 —— 从设置切到结算不该带着上一个面板的滚动
+      if (next !== null && (next.getAttribute('aria-label') ?? '') === savedOverlayLabel) {
+        next.scrollTop = savedOverlayScroll
+      }
+    }
     // 发牌暂停提示时把手牌露出来（否则遮罩+模糊让人看不清自己有什么牌）
     ov.dataset.mode = s.phase === 'contract' && s.dealPrompt ? 'deal' : ''
     if (s.replayAt !== null) {
       // 回放时牌桌必须可见 —— 记录/结算面板一律让路
-      ov.innerHTML = ''
+      fillOverlay('')
     } else if (s.confirmNew) {
-      ov.innerHTML = confirmNewPanel(s)
+      fillOverlay(confirmNewPanel(s))
     } else if (s.settingsOpen) {
-      ov.innerHTML = settingsPanel(s)
+      fillOverlay(settingsPanel(s))
     } else if (s.logOpen) {
-      ov.innerHTML = logPanel(s)
+      fillOverlay(logPanel(s))
     } else if (s.phase === 'contract') {
       const totalHand = (s.hands[HUMAN_SEAT] as readonly Card[]).length
       // 全局发牌轮次口径：第 26..33 轮只有庄家得牌，非庄家人类也要等这 8 轮
@@ -460,7 +513,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       const stillDealing = s.revealed < DEAL_TOTAL
       if (stillDealing && !s.dealPrompt) {
         // 正在逐张发牌且还没到该决定的时候 —— 不弹面板，把牌桌让出来
-        ov.innerHTML = ''
+        fillOverlay('')
       } else {
       // 反主阶段看 counterOptions（还持别门级牌的那几门）；
       // 首次亮主阶段看 declareOptions（持该门级牌的那几门 + 无将）。
@@ -510,7 +563,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         const tag = isCurrent ? '<span class="trump-btn__tag">已亮</span>' : ''
         return `<button class="btn trump-btn${cls}${stateCls}" data-trump="${v}"${disabled ? ' disabled' : ''}${a11y}>${label}${tag}</button>`
       }
-      ov.innerHTML = `
+      fillOverlay(`
         <div class="panel">
           <h2>${title}</h2>
           <p class="muted">本局打 <b>${levelLabel(s.levelRank)}</b>${s.forcedNT ? '（打王级强制无将）' : ''}${stateText}</p>
@@ -530,12 +583,12 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
                 ? '<div class="trump-actions"><button class="btn btn--ghost" data-act="passDeal">继续发牌</button></div>'
                 : ''
           }
-        </div>`
+        </div>`)
       }
     } else if (s.phase === 'settle' || s.phase === 'over') {
-      ov.innerHTML = settlePanel(s)
+      fillOverlay(settlePanel(s))
     } else {
-      ov.innerHTML = ''
+      fillOverlay('')
     }
   }
 
@@ -1030,6 +1083,22 @@ function fitSideStack(box: HTMLElement, count: number, cardW: number): void {
 }
 
 function bind(root: HTMLElement, s: GameState, act: Actions): void {
+  /* 拖动音量滑条：置标志让 paint 别重绘，松手再解除。
+     不这么做的话，每个 input 事件 dispatch 一次音量 → paint 整棵重建 →
+     <input type=range> 被换成新元素 → 拖动立刻中断，只剩「点哪跳哪」。 */
+  root.onpointerdown = (ev) => {
+    const t = ev.target
+    if (t instanceof HTMLInputElement && t.type === 'range') draggingRange = true
+  }
+  root.onpointerup = endRangeDrag
+  root.onpointercancel = endRangeDrag
+  // 指针移出窗口后松开时 root 收不到 pointerup，补一个 window 兜底（只绑一次）
+  if (!windowDragBound) {
+    windowDragBound = true
+    window.addEventListener('pointerup', endRangeDrag)
+    window.addEventListener('pointercancel', endRangeDrag)
+  }
+
   root.onclick = (ev) => {
     const target = ev.target as HTMLElement
     const cardNode = target.closest('.card[data-id]') as HTMLElement | null

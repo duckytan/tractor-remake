@@ -14,7 +14,7 @@ import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
 import type { Prefs } from '@app/persist'
 import { ANIM_SPEED_SCALE, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
-import { refitHand, render } from '@ui/render'
+import { isDraggingRange, refitHand, render } from '@ui/render'
 import { captureFx, setAnimScale, trackDealAnimation, trackPlayFx } from '@ui/dealFly'
 import { createAudio } from '@audio/index'
 import type { AudioHandle, AudioSettings } from '@audio/index'
@@ -211,6 +211,14 @@ document.addEventListener('visibilitychange', () => {
 let lastAudioPainted: GameState | null = null
 
 function paint(): void {
+  // 拖音量滑条时**不能重建 DOM**：render 是整棵 root.innerHTML 重建，
+  // <input type=range> 会被换成新元素，拖动立刻中断（只剩点哪跳哪）。
+  // 这期间只把音量推给音频层 —— 所以拖动时能实时听到变化。
+  if (isDraggingRange()) {
+    lastAudioPainted = state
+    audio.applySettings(audioSettingsOf(state))
+    return
+  }
   // 出牌动画只在「出牌阶段 + 动画开」时需要前后帧快照。
   // 发牌阶段每 55ms 一次 paint，每次都量 30+ 个矩形（强制同步布局）纯属浪费。
   const wantFx = state.animation && state.phase === 'play'
