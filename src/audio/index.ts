@@ -137,8 +137,7 @@ export function createAudio(initial: AudioSettings): AudioHandle {
         [buses.padBus, 'pad'],
         [buses.fxBus, 'fx'],
       ])
-      toneRenderer = new ToneRenderer(tone, roleOf)
-      toneRenderer.setVolume(settings.volumeBgm)
+      toneRenderer = new ToneRenderer(tone, roleOf, buses.ctx, buses.musicBus)
       // 热切换：只换 render，调度器不动
       music?.setRenderer(toneRenderer)
     } catch {
@@ -184,7 +183,6 @@ export function createAudio(initial: AudioSettings): AudioHandle {
       settings = next
       if (!buses) return
       applyVolumes(buses, volumes())
-      toneRenderer?.setVolume(next.volumeBgm)
       music?.setOptions({
         theme: isThemeKey(next.musicTheme) ? next.musicTheme : 'spring',
         autoVariation: next.autoVariation,

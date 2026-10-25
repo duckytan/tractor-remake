@@ -168,8 +168,13 @@ export function soundEventsOf(prev: AudioStateLike, next: AudioStateLike): Sound
     return out
   }
 
-  /* ---------- 结算 ---------- */
-  if (prev.phase !== 'settle' && next.phase === 'settle') {
+  /* ---------- 结算 ----------
+     注意：**不能在这里 return**。`play → settle` 是同一步转移 ——
+     这一墩刚打完、同时本局结束。提前返回会把「最后一墩的赢墩/输墩 + lastTrick」
+     整个吞掉，最后一墩就没有任何声音反馈了（这是真实存在过的 bug）。
+     结算音先入列，后面的「一墩结果」照常追加。 */
+  const enteringSettle = prev.phase !== 'settle' && next.phase === 'settle'
+  if (enteringSettle) {
     const st = next.lastSettle
     if (st) {
       if (st.guardLevel !== undefined) push({ type: 'guardStop' })
@@ -178,7 +183,6 @@ export function soundEventsOf(prev: AudioStateLike, next: AudioStateLike): Sound
     } else {
       push({ type: 'settleUp', n: 1 })
     }
-    return out
   }
 
   /* ---------- 回放翻墩 ---------- */

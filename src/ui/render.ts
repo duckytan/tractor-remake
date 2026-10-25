@@ -675,8 +675,8 @@ export function legalityBadgeOf(result: PlayResult): string {
   return `<span class="legality is-ok">✓ 可以出</span>`
 }
 
-/** 设置面板（FR-18） */
-function settingsPanel(s: GameState): string {
+/** 设置面板（FR-18）—— 导出给单测断言内容用 */
+export function settingsPanel(s: GameState): string {
   const c = s.pendingConfig
   /** 规则开关：写 pendingConfig，下一局生效 */
   const sw = (key: string, label: string, desc: string, on: boolean): string => `

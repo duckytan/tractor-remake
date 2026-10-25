@@ -3,7 +3,7 @@ import { DEFAULT_RULE_CONFIG } from '@core'
 import type { SettleResult } from '@core'
 import { newGame } from '@app/game'
 import type { GameState } from '@app/state'
-import { confirmNewPanel, settlePanel } from '@ui/render'
+import { confirmNewPanel, settingsPanel, settlePanel } from '@ui/render'
 
 /**
  * 结算 / 确认面板是纯字符串构建，可以直接断言内容
@@ -75,5 +75,57 @@ describe('settlePanel', () => {
 
   it('没有结算数据时不渲染（防空）', () => {
     expect(settlePanel({ ...base(), lastSettle: null })).toBe('')
+  })
+})
+
+describe('设置面板 · 声音分组', () => {
+  it('音乐主题是下拉框，四个季节都在，默认选中春', () => {
+    const html = settingsPanel(base())
+    expect(html).toContain('音乐主题')
+    expect(html).toContain('data-sound="theme"')
+    for (const name of ['春 · 萌动', '夏 · 灼日', '秋 · 落叶', '冬 · 静雪']) expect(html).toContain(name)
+    // 默认 spring 带 selected
+    expect(html).toMatch(/<option value="spring"[^>]*selected/)
+  })
+
+  it('音量三项默认 75 / 40 / 80', () => {
+    const html = settingsPanel(base())
+    expect(html).toMatch(/data-vol="master"[^>]*value="75"|value="75"[^>]*data-vol="master"/)
+    expect(html).toMatch(/data-vol="bgm"[^>]*value="40"|value="40"[^>]*data-vol="bgm"/)
+    expect(html).toMatch(/data-vol="sfx"[^>]*value="80"|value="80"[^>]*data-vol="sfx"/)
+  })
+
+  /** 取包含 marker 的那个 <button ...> 开标签（属性顺序无关） */
+  const btnTag = (html: string, marker: string): string => {
+    const i = html.indexOf(marker)
+    if (i < 0) return ''
+    return html.slice(html.lastIndexOf('<button', i), html.indexOf('>', i) + 1)
+  }
+
+  it('两个开关默认：增强音效关、自动变奏开', () => {
+    const html = settingsPanel(base())
+    expect(btnTag(html, 'data-act="toggleSoundEnhanced"')).toContain('aria-checked="false"')
+    expect(btnTag(html, 'data-act="toggleAutoVariation"')).toContain('aria-checked="true"')
+  })
+
+  it('声音分组排在规则与体验之前（常用项不该藏在最底下）', () => {
+    const html = settingsPanel(base())
+    const iSound = html.indexOf('<h3>声音</h3>')
+    const iRule = html.indexOf('<h3>规则</h3>')
+    const iExp = html.indexOf('<h3>体验</h3>')
+    expect(iSound).toBeGreaterThan(-1)
+    expect(iRule).toBeGreaterThan(-1)
+    expect(iExp).toBeGreaterThan(-1)
+    expect(iSound).toBeLessThan(iRule)
+    expect(iRule).toBeLessThan(iExp)
+  })
+
+  it('改了 state 后，下拉与滑条跟着变', () => {
+    const s: GameState = { ...base(), musicTheme: 'winter', volumeMaster: 10, volumeBgm: 20, volumeSfx: 30 }
+    const html = settingsPanel(s)
+    expect(html).toMatch(/<option value="winter"[^>]*selected/)
+    expect(html).toContain('value="10"')
+    expect(html).toContain('value="20"')
+    expect(html).toContain('value="30"')
   })
 })

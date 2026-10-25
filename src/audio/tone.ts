@@ -35,6 +35,9 @@ interface TonePoly {
 }
 interface ToneLib {
   start(): Promise<void>
+  /** 把 Tone 的时钟挂到指定的原生 AudioContext 上（关键，见 ToneRenderer 注释） */
+  setContext(c: unknown): void
+  Context: new (ctx?: AudioContext) => unknown
   Gain: new (v: number) => ToneGain
   Filter: new (f: number, type: string) => ToneNode
   Compressor: new (o: Record<string, number>) => ToneNode
@@ -47,7 +50,7 @@ interface ToneLib {
   MonoSynth: unknown
   NoiseSynth: new (o: Record<string, unknown>) => { triggerAttackRelease(d: number, t?: number, v?: number): void; connect(n: unknown): ToneNode; dispose(): void }
   gainToDb(g: number): number
-  getContext(): { state: string; rawContext: AudioContext }
+  getContext(): { state: string; rawContext: AudioContext; currentTime: number; lookAhead: number }
 }
 
 declare global {
@@ -56,10 +59,18 @@ declare global {
   }
 }
 
+/**
+ * 加载顺序：**先 CDN，本地兜底**。
+ *
+ * 反过来（本地优先）会在每个访客的 DevTools 里留一条
+ * `GET /tone.min.js 404` —— 因为我们默认不把 Tone.js 打进仓库。
+ * 一条红字 404 足以让人以为「音效坏了」，而它其实是设计内的探测。
+ * 放到最后一档：联网时根本不会去碰它，离线/内网部署时才轮到它。
+ */
 const CDN_SOURCES = [
-  './tone.min.js',
   'https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js',
   'https://unpkg.com/tone@14.8.49/build/Tone.js',
+  './tone.min.js',
 ]
 
 let loadPromise: Promise<ToneLib> | null = null
@@ -220,9 +231,21 @@ export type ToneRole = 'acc' | 'lead' | 'pad' | 'fx'
 /**
  * Tone 后端。
  *
- * **自带一整条输出链**（Limiter → Compressor → Filter → Gain → Reverb → 4 个 Channel），
- * 与原生总线完全独立 —— 两套引擎互不干扰，切回去时原生图原样还在。
- * 所以 `music.ts` 传进来的原生 `dest` 只用来**识别角色**，不参与发声。
+ * **两个致命细节（都踩过）：**
+ *
+ * 1. **必须寄生在游戏自己的 AudioContext 上**（`setContext(new Context(nativeCtx))`）。
+ *    Tone 默认会自己 `new AudioContext()`，于是有两条互不相干的时间轴：
+ *    调度器传进来的 `when` 是原生上下文的绝对时间（可能已经跑到 300s），
+ *    而 Tone 的时钟才刚起步（0s）⇒ 所有音符都被排到几百秒之后，
+ *    **切过去会静音好几秒甚至一直不响**。实测：切换后前 2~4 秒完全无声。
+ *    共用一个上下文后时间轴天然一致，还省掉一条多余的音频线程。
+ *
+ * 2. **输出接到原生 `musicBus`**，不是 `toDestination()`。
+ *    否则「总音量 / BGM 音量」两个滑条对增强模式完全失效 ——
+ *    因为它们改的是原生 master/musicBus 的 gain，而 Tone 绕过了整条链。
+ *
+ * 自带一整条音色链（Limiter → Compressor → Filter → Gain → Reverb → 4 个 Channel），
+ * 与原生乐器的音色图完全独立，切回原生时原生图原样还在。
  */
 export class ToneRenderer implements MusicRenderer {
   private readonly racks = new Map<string, Rack>()
@@ -235,10 +258,21 @@ export class ToneRenderer implements MusicRenderer {
   constructor(
     private readonly tone: ToneLib,
     roleOf: Map<AudioNode, ToneRole>,
+    nativeCtx: AudioContext,
+    out: AudioNode,
   ) {
     this.roleOf = roleOf
     const t = tone
-    const lim = new t.Limiter(-1).toDestination()
+    // ① 共用时间轴
+    t.setContext(new t.Context(nativeCtx))
+    try {
+      t.getContext().lookAhead = 0 // 让 Tone.now() 就等于原生 currentTime
+    } catch {
+      /* 老版本只读，忽略 */
+    }
+    // ② 输出并入原生 BGM 总线（音量滑条才对它生效）
+    const lim = new t.Limiter(-1)
+    lim.connect(out)
     const comp = new t.Compressor({ threshold: -20, ratio: 2.6, attack: 0.012, release: 0.28 })
     comp.connect(lim)
     const filt = new t.Filter(8500, 'lowpass')
@@ -266,15 +300,6 @@ export class ToneRenderer implements MusicRenderer {
       lead: mk(0.8, 0.06),
       pad: mk(0.2, 0),
       fx: mk(1.0, 0),
-    }
-  }
-
-  /** BGM 总音量（0..1） */
-  setVolume(v: number): void {
-    try {
-      this.master.gain.rampTo(v, 0.05)
-    } catch {
-      /* 忽略 */
     }
   }
 

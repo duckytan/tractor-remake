@@ -49,6 +49,12 @@ export default defineConfig({
         'src/app/**/*.ts',
         'src/ai/**/*.ts',
         'src/ui/**/*.ts',
+        // 声音层：只纳入**纯函数**部分。其余 7 个文件（engine / voices / sfx /
+        // music / tone / index / synth）直接操作 AudioContext，vitest 的 node
+        // 环境里根本跑不起来 —— 与 ui 的 DOM 渲染同理，纳入统计只会得到 0%，
+        // 把全局门槛冲垮而没有约束力。scenes（纯数据）与 observe（纯 diff）已纳入。
+        'src/audio/scenes.ts',
+        'src/audio/observe.ts',
       ],
       exclude: [
         'src/**/*.test.ts',
@@ -98,6 +104,19 @@ export default defineConfig({
           branches: 75,
           functions: 88,
           lines: 84,
+        },
+        // 声音纯函数层：和弦/主题/编排/事件映射，要求高覆盖（与 core 同口径）
+        'src/audio/scenes.ts': {
+          statements: 95,
+          branches: 90,
+          functions: 95,
+          lines: 95,
+        },
+        'src/audio/observe.ts': {
+          statements: 90,
+          branches: 85,
+          functions: 90,
+          lines: 90,
         },
         // 渲染层：低档位，仅防「整个文件一行不跑」的回退
         'src/ui/**/*.ts': {
