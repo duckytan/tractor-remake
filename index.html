@@ -7,7 +7,11 @@
   <!-- PWA：可安装 + 离线（见 public/manifest.webmanifest、public/sw.js） -->
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#0a1410">
-  <!-- iOS：加到主屏后全屏运行 -->
+  <!-- 加到主屏后全屏运行。两个都要写：
+       mobile-web-app-capable 是标准（Chrome/Edge 只认它，且会警告 apple- 前缀已弃用），
+       apple-mobile-web-app-capable 是 iOS Safari 至今仍只认的写法。
+       删掉任何一行都会丢一半平台的「无地址栏全屏」。 -->
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="拖拉机">
