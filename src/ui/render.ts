@@ -689,17 +689,18 @@ const RULE_LABEL: Record<keyof RuleConfig, string> = {
 }
 
 /**
- * 设置面板顶部那句说明。
+ * 设置面板顶部的「规则改动未生效」警告条。
  *
- * 只在「待生效 ≠ 当前生效」时变成醒目的警告条 —— 因为规则开关是**下一局**生效，
- * 玩家改完 `2 为常主` 回头看手牌，发现 2 还排在副牌段末尾，很容易以为功能坏了
+ * 只在「待生效 ≠ 当前生效」时出现 —— 规则开关是**下一局**生效，玩家改完
+ * `2 为常主` 回头看手牌，发现 2 还排在副牌段末尾，很容易以为功能坏了
  * （v1.3.18 用户反馈）。把「改了哪几项、本局仍按旧规则」直接写出来。
+ *
+ * 没有改动时返回空串：每个分组的标题右侧已经写明「立即生效 / 改完下一局生效」，
+ * 再挂一句通栏说明是重复。
  */
 function ruleNote(pending: RuleConfig, live: RuleConfig): string {
   const changed = (Object.keys(RULE_LABEL) as (keyof RuleConfig)[]).filter((k) => pending[k] !== live[k])
-  if (changed.length === 0) {
-    return '<p class="muted">规则开关改动在<b>下一局</b>生效；体验项立即生效。</p>'
-  }
+  if (changed.length === 0) return ''
   return (
     '<p class="set-warn">⚠ 已改 ' +
     changed.map((k) => `<b>${RULE_LABEL[k]}</b>`).join('、') +
@@ -744,54 +745,30 @@ export function settingsPanel(s: GameState): string {
     on: s.cardSize === v,
   }))
 
+  /**
+   * 一个设置分组。
+   *
+   * `hint` 写在组标题右侧，用来说明「这一组什么时候生效」——
+   * 之前全靠顶部一句通栏说明，玩家滚到下面早忘了。
+   */
+  const group = (title: string, hint: string, body: string): string => `
+    <div class="set-group">
+      <h3>${title}<small>${hint}</small></h3>
+      ${body}
+    </div>`
+
+  /** 组内子标题（带分隔线），用于「音量」「升级必打」这类二级分类 */
+  const sub = (title: string, note = ''): string =>
+    `<div class="set-sub">${title}${note ? `<small>${note}</small>` : ''}</div>`
+
   return `<div class="panel panel--wide" role="dialog" aria-label="设置">
     <h2>设置</h2>
     ${ruleNote(c, s.config)}
 
-    <div class="set-group">
-      <h3>声音</h3>
-      <div class="set-row">
-        <span>音乐主题<small class="set-desc">四季各一条旋律，切换后下一小节生效</small></span>
-        <select class="set-select" data-sound="theme" aria-label="音乐主题">
-          ${THEME_ORDER.map(
-            (k) => `<option value="${k}"${s.musicTheme === k ? ' selected' : ''}>${THEMES[k].name}</option>`,
-          ).join('')}
-        </select>
-      </div>
-      ${swAct('toggleSoundEnhanced', '增强音效', 'BGM 改用 Tone.js 引擎（更细腻；首次需联网加载，失败自动退回）', s.soundEnhanced)}
-      ${swAct('toggleAutoVariation', '根据剧情自动变奏', '关闭后永远是同一套编排、不转调', s.autoVariation)}
-      <div class="set-row">
-        <span>总音量</span>
-        <input class="set-range" type="range" min="0" max="100" step="1" value="${s.volumeMaster}" data-vol="master" aria-label="总音量" />
-        <b class="set-num">${s.volumeMaster}</b>
-      </div>
-      <div class="set-row">
-        <span>BGM 音量</span>
-        <input class="set-range" type="range" min="0" max="100" step="1" value="${s.volumeBgm}" data-vol="bgm" aria-label="BGM 音量" />
-        <b class="set-num">${s.volumeBgm}</b>
-      </div>
-      <div class="set-row">
-        <span>音效音量</span>
-        <input class="set-range" type="range" min="0" max="100" step="1" value="${s.volumeSfx}" data-vol="sfx" aria-label="音效音量" />
-        <b class="set-num">${s.volumeSfx}</b>
-      </div>
-    </div>
-
-    <div class="set-group">
-      <h3>规则</h3>
-      ${sw('allowSelfCounter', '允许自反', '同队也可反主', c.allowSelfCounter)}
-      ${sw('twoAsPermanent', '2 为常主', '两张 2 恒为主牌', c.twoAsPermanent)}
-      ${sw('allowPartnerGuard', '允许对家保', '对家可保级', c.allowPartnerGuard)}
-      ${sw('allowCounterNT', '允许反无将', '主动亮无将可被花色反（打王级除外）', c.allowCounterNT)}
-      ${sw('guardScoreLevels', '5,10,K 必打', '升级时不可跳过这些级牌', c.guardScoreLevels)}
-      ${sw('guardJack', 'J 必打', '升级时不可跳过 J', c.guardJack)}
-      ${sw('guardAce', 'A 必打', '升级时不可跳过 A', c.guardAce)}
-      ${sw('guardKingLevel', '打王必打', '升级时不可跳过打王级', c.guardKingLevel)}
-    </div>
-
-    <div class="set-group">
-      <h3>体验</h3>
-      <div class="set-row">
+    ${group(
+      '牌局',
+      '对手强度与节奏 · 立即生效',
+      `<div class="set-row">
         <span>对家 AI<small class="set-desc">座位 2（你的队友）</small></span>
         ${seg(
           'setAiLevelSide',
@@ -810,14 +787,19 @@ export function settingsPanel(s: GameState): string {
         )}
       </div>
       <div class="set-row">
-        <span>AI 速度</span>
-        ${seg('setAiSpeed', 'AI 速度', [
+        <span>AI 出牌速度<small class="set-desc">快一点更好打；想看清每张牌就调慢</small></span>
+        ${seg('setAiSpeed', 'AI 出牌速度', [
           { v: '0', label: '瞬时', on: s.aiSpeedMs === 0 },
           { v: '300', label: '慢', on: s.aiSpeedMs === 300 },
           { v: '800', label: '中', on: s.aiSpeedMs === 800 },
         ])}
-      </div>
-      <div class="set-row">
+      </div>`,
+    )}
+
+    ${group(
+      '桌面',
+      '视觉与操作辅助 · 立即生效',
+      `<div class="set-row">
         <span>牌面尺寸</span>
         ${seg('setCardSize', '牌面尺寸', sizeOpts)}
       </div>
@@ -837,13 +819,54 @@ export function settingsPanel(s: GameState): string {
         ])}
       </div>
       ${swAct('toggleShowHistory', '各家出牌留痕', `各家面前显示最近 ${PAST_DEPTH} 墩的历史小牌`, s.showHistory)}
-      ${swAct('toggleHintSelects', '提示即选中', '点「提示」直接选中提示的牌（会覆盖已选牌，并写入存档）', s.hintSelects)}
       ${swAct('toggleShowCounter', '记牌器', '牌桌上方显示未出的王 / 级牌 / 主牌 / 已出分（辅助工具，默认关）', s.showCounter)}
-    </div>
+      ${swAct('toggleHintSelects', '提示即选中', '点「提示」直接选中提示的牌（会覆盖已选牌，并写入存档）', s.hintSelects)}`,
+    )}
 
-    <div class="set-foot">
-      「必打」是<b>升级时禁止跳级</b>的限制，与出牌无关（见规则书 §10.3）。
-    </div>
+    ${group(
+      '声音',
+      'BGM 与音效 · 立即生效',
+      `<div class="set-row">
+        <span>音乐主题<small class="set-desc">四季各一条旋律，切换后下一小节生效</small></span>
+        <select class="set-select" data-sound="theme" aria-label="音乐主题">
+          ${THEME_ORDER.map(
+            (k) => `<option value="${k}"${s.musicTheme === k ? ' selected' : ''}>${THEMES[k].name}</option>`,
+          ).join('')}
+        </select>
+      </div>
+      ${swAct('toggleAutoVariation', '根据剧情自动变奏', '关闭后永远是同一套编排、不转调', s.autoVariation)}
+      ${swAct('toggleSoundEnhanced', '增强音效', 'BGM 改用 Tone.js 引擎（更细腻；首次需联网加载，失败自动退回）', s.soundEnhanced)}
+      ${sub('音量')}
+      <div class="set-row">
+        <span>总音量</span>
+        <input class="set-range" type="range" min="0" max="100" step="1" value="${s.volumeMaster}" data-vol="master" aria-label="总音量" />
+        <b class="set-num">${s.volumeMaster}</b>
+      </div>
+      <div class="set-row">
+        <span>BGM 音量</span>
+        <input class="set-range" type="range" min="0" max="100" step="1" value="${s.volumeBgm}" data-vol="bgm" aria-label="BGM 音量" />
+        <b class="set-num">${s.volumeBgm}</b>
+      </div>
+      <div class="set-row">
+        <span>音效音量</span>
+        <input class="set-range" type="range" min="0" max="100" step="1" value="${s.volumeSfx}" data-vol="sfx" aria-label="音效音量" />
+        <b class="set-num">${s.volumeSfx}</b>
+      </div>`,
+    )}
+
+    ${group(
+      '规则',
+      '改完下一局生效',
+      `${sw('allowSelfCounter', '允许自反', '同队也可反主', c.allowSelfCounter)}
+      ${sw('twoAsPermanent', '2 为常主', '两张 2 恒为主牌', c.twoAsPermanent)}
+      ${sw('allowPartnerGuard', '允许对家保', '对家可保级', c.allowPartnerGuard)}
+      ${sw('allowCounterNT', '允许反无将', '主动亮无将可被花色反（打王级除外）', c.allowCounterNT)}
+      ${sub('升级必打', '升级时禁止跳级，与出牌无关')}
+      ${sw('guardScoreLevels', '5、10、K 必打', '升级时不可跳过这些级牌', c.guardScoreLevels)}
+      ${sw('guardJack', 'J 必打', '升级时不可跳过 J', c.guardJack)}
+      ${sw('guardAce', 'A 必打', '升级时不可跳过 A', c.guardAce)}
+      ${sw('guardKingLevel', '打王必打', '升级时不可跳过打王级', c.guardKingLevel)}`,
+    )}
 
     <div class="panel-foot"><button class="btn btn--primary" data-act="closeSettings">完成</button></div>
   </div>`

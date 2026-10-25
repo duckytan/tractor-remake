@@ -501,7 +501,7 @@ html, body {
   overscroll-behavior: contain;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
-.panel h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+.panel h2 { margin: 0 0 14px; font-size: 18px; font-weight: 600; }
 .panel .muted { margin: 0 0 16px; color: var(--ink-dim); font-size: 13px; }
 .panel .row {
   display: flex;
@@ -741,16 +741,41 @@ html, body {
 }
 .panel-foot > .btn { width: 100%; }
 
-.set-group { margin-bottom: 18px; }
+.set-group { margin-bottom: 20px; }
 .set-group:last-of-type { margin-bottom: 8px; }
 .set-group h3 {
-  margin: 0 0 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
   font-size: 12px;
   font-weight: 600;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   letter-spacing: 0.6px;
-  text-transform: uppercase;
 }
+/* 组标题右侧的「什么时候生效」说明 */
+.set-group h3 small {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: #b0aca1;
+}
+
+/* 组内二级分类（音量 / 升级必打）：虚线分隔，比组标题低一级 */
+.set-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-dim);
+}
+.set-sub small { font-weight: 400; color: #b0aca1; }
 
 /* 「规则已改但本局未生效」提示条。
    面板是白底（--panel: #ffffff），所以用暖黄底 + 深棕字，别用深色面板的配色。 */
@@ -837,15 +862,6 @@ html, body {
 .seg button:hover { color: var(--ink); }
 .seg button.is-on { background: #fff; color: #1d9e75; font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .seg button:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
-
-.set-foot {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-  font-size: 11.5px;
-  color: var(--ink-faint);
-  line-height: 1.6;
-}
 
 /* 对局记录：按墩分组的卡片，左色条标赢家队伍，得分高亮，牌面按花色着色 */
 .log-list { display: flex; flex-direction: column; gap: 8px; }

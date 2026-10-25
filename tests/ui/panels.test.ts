@@ -108,16 +108,29 @@ describe('设置面板 · 声音分组', () => {
     expect(btnTag(html, 'data-act="toggleAutoVariation"')).toContain('aria-checked="true"')
   })
 
-  it('声音分组排在规则与体验之前（常用项不该藏在最底下）', () => {
+  it('分组顺序：牌局 → 桌面 → 声音 → 规则（按「是否影响牌局」由轻到重）', () => {
     const html = settingsPanel(base())
-    const iSound = html.indexOf('<h3>声音</h3>')
-    const iRule = html.indexOf('<h3>规则</h3>')
-    const iExp = html.indexOf('<h3>体验</h3>')
-    expect(iSound).toBeGreaterThan(-1)
-    expect(iRule).toBeGreaterThan(-1)
-    expect(iExp).toBeGreaterThan(-1)
-    expect(iSound).toBeLessThan(iRule)
-    expect(iRule).toBeLessThan(iExp)
+    const at = (t: string): number => html.indexOf(`<h3>${t}<small>`)
+    const order = ['牌局', '桌面', '声音', '规则'].map(at)
+    expect(order.every((i) => i > -1)).toBe(true)
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+  })
+
+  it('每组标题都写明「什么时候生效」', () => {
+    const html = settingsPanel(base())
+    expect(html).toContain('<h3>牌局<small>对手强度与节奏 · 立即生效</small>')
+    expect(html).toContain('<h3>桌面<small>视觉与操作辅助 · 立即生效</small>')
+    expect(html).toContain('<h3>声音<small>BGM 与音效 · 立即生效</small>')
+    expect(html).toContain('<h3>规则<small>改完下一局生效</small>')
+  })
+
+  it('组内有二级分类：音量 / 升级必打', () => {
+    const html = settingsPanel(base())
+    expect(html).toContain('<div class="set-sub">音量</div>')
+    expect(html).toContain('升级必打')
+    // 「升级必打」的就地说明取代了原来面板底部的 set-foot
+    expect(html).toContain('升级时禁止跳级，与出牌无关')
+    expect(html).not.toContain('class="set-foot"')
   })
 
   it('改了 state 后，下拉与滑条跟着变', () => {
@@ -131,10 +144,11 @@ describe('设置面板 · 声音分组', () => {
 })
 
 describe('设置面板 · 规则改动的「下一局生效」提示', () => {
-  it('没有改动时只显示普通说明，没有警告条', () => {
+  it('没有改动时不显示警告条（生效时机由各分组标题说明）', () => {
     const html = settingsPanel(base())
     expect(html).not.toContain('set-warn')
-    expect(html).toContain('下一局')
+    // 规则分组的标题里已经写了「改完下一局生效」
+    expect(html).toContain('改完下一局生效')
   })
 
   it('改了规则但本局未生效：列出改动项并说明本局仍按旧规则', () => {
