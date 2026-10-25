@@ -443,10 +443,13 @@ html, body {
 /* 发牌飞行（FE-1 的飞行轨迹部分）
    飞行牌挂在 document.body 下的固定层上 —— 必须脱离 #app，否则每次 paint 的
    `root.innerHTML = ...` 会把它连元素一起清掉（见 ui/dealFly.ts 顶部注释）。 */
+/* 飞行层。z-index 必须**低于遮罩(20)**：收墩/发牌的幽灵牌不能穿过
+   正在弹出的面板与遮罩；只要高于牌桌内容(z=1)与牌堆(z=3)就够了。
+   v1.3.18 之前是 25，动画撞上弹窗时牌会浮在遮罩之上。 */
 .deal-fly {
   position: fixed;
   inset: 0;
-  z-index: 25;
+  z-index: 5;
   pointer-events: none;
 }
 /* 权重 0,2,0 压过 .card 的 position: relative 与 transition：
