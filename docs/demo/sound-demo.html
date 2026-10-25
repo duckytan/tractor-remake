@@ -80,10 +80,10 @@
   <header>
     <h1>拖拉机 · 声音系统试听 <span id="verBadge">v6</span></h1>
     <div class="sub">
-      <b>默认「慵懒午后」</b> —— 按「慵懒的下午，一群人在一起打牌」写的：<br>
-      74 BPM · 全部落在正拍 · 长音 · 大量留白 · 音域只跨一个五度 · 每句以下行二度叹气收尾<br>
-      另外五套备选（挨个听，挑一个再往下调）：温柔钢琴 / 和风拨弹 / 跳跃八音盒 / 卡通木琴 / 电子轻快<br>
-      如果角标不是 <b>v8</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开
+      <b>按 design/engine-ab.html 的引擎配置重写</b> —— 钢琴 7 层泛音、确定性力度呼吸、立体声分轨、左手和弦层<br>
+      主旋律是<b>原创的 8 小节「叹息」动机</b>：有动机再现、每小节节奏都不同、结尾停在导音上无缝循环<br>
+      画面：「慵懒的下午，一群人在一起打牌」· 66 BPM · 音域 E4–E5 · 木吉他分解 + 钢琴主奏<br>
+      如果角标不是 <b>v9</b>，说明是旧版：<b>Ctrl+Shift+R 强制刷新</b>，或关掉标签页重新打开
     </div>
   </header>
 
@@ -117,7 +117,7 @@
       <div class="grp" id="secBox"></div>
     </div>
     <div class="info" style="font-size:11.5px;margin-top:4px">
-      48 小节一轮（108 BPM 下约 107 秒）。<b>旋律从头到尾只有一条，不变</b>；变的是配器 ——
+      48 小节一轮（66 BPM 下约 175 秒）。<b>旋律从头到尾只有一条，不变</b>；变的是配器 ——
       起 → 全奏 → 全奏 → 高八度 → 回落 → <b>呼吸（抽掉旋律）</b> → 全奏 →
       <b>转调 +2 半音</b> → 转调高八度 → 回落 → 极简 → 收尾。
     </div>
@@ -178,175 +178,93 @@
    0. 基础
    ============================================================ */
 const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
+/** 确定性伪随机：同一个小节每次生成的抖动完全一致（移植 engine-ab.html）。
+    随机的力度听感是"散"，确定性的才是"呼吸"。 */
+function makeRng(seed) {
+  let s = (seed >>> 0) || 1;
+  return function () {
+    s ^= s << 13; s >>>= 0;
+    s ^= s >> 17;
+    s ^= s << 5;  s >>>= 0;
+    return s / 4294967296;
+  };
+}
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
-/** 音阶（相对主音的半音）；第 6 个音是高八度主音，给旋律的高点用 */
-const SCALE = { minor: [0, 3, 5, 7, 10, 12], major: [0, 2, 4, 7, 9, 12] };
+/* ============================================================
+   1. 音阶 / 和弦 / 旋律 / 编排 / 曲风
+   ------------------------------------------------------------
+   本节按 design/engine-ab.html 的配置重写：
+   · 和弦表用**绝对音高**的 6 声部（不是相对主音的偏移），
+     这样旋律可以直接用完整 C 大调音阶（含 F、B），不必锁在五声里
+   · 旋律用**绝对 MIDI** 记谱（[拍位, MIDI, 时值]），和参考实现一致
+   · 力度呼吸用 phraseAccent() 算，不靠随机
+   ============================================================ */
+
+/** C 大调音阶（音效用；旋律走绝对音高，不需要它） */
+const SCALE = [0, 2, 4, 5, 7, 9, 11, 12];
 
 /**
- * 五条候选旋律 + 五套编曲。
- *
- * 背景：用户连续四轮反馈「不好听」，逐变量盲猜收敛不了。
- * 所以一次给五套**完整不同的听感**让他挑，而不是继续改一条。
- * 五条全部 C 大调五声、和声零冲突（校验见 .tmp/styles-check.mjs），
- * 区别在**节奏密度 / 音区 / 音色 / 速度**这四个最影响"性格"的维度。
- *
- * 音级（大调五声）：0=主音 1=二音 2=大三音 3=五音 4=六音 5=高八主音（C D E G A C'）
- * 格式 [拍位(0..15), 音级, 时值(拍)]
+ * 和弦表。p = 从低到高排好的 6 个声部：
+ *   0 低音(根音下八度) 1 根音 2 三音 3 五音 4 根音高八度 5 三音高八度
+ * 四个和弦同一套结构，所以伴奏网格的纵轴可以按「音级」标，换和弦自动跟着走。
+ * （C - F - Am - G，I-IV-vi-V，温暖不闹）
  */
-const HOOKS = {
-  // A 跳跃：拱形，从大三音起，八分音符为主 —— 通用欢快
-  jump: [
-    [0.5, 2, .5], [1.0, 3, .5], [1.5, 4, .5], [2.0, 3, .5], [2.5, 2, 1.0],
-    [4.5, 1, .5], [5.0, 2, .5], [5.5, 3, .5], [6.0, 1, 1.5],
-    [8.5, 2, .5], [9.0, 4, .5], [9.5, 5, 1.0],
-    [12.5, 4, .5], [13.0, 3, .5], [13.5, 0, 1.5]
-  ],
-  // B 卡通：反复音（G G A A），最"闹"，适合轻松对局
-  toon: [
-    [0.5, 3, .5], [1.0, 3, .5], [1.5, 4, .5], [2.0, 4, .5], [2.5, 3, 1.0],
-    [4.5, 3, .5], [5.0, 3, .5], [5.5, 2, .5], [6.0, 2, 1.0],
-    [8.5, 4, .5], [9.0, 4, .5], [9.5, 5, .5], [10.0, 4, 1.0],
-    [12.5, 4, .5], [13.0, 3, .5], [13.5, 0, 1.5]
-  ],
-  // C 温柔：长音多、跳进大，最"静"，适合定主/埋底
-  soft: [
-    [0.5, 5, 1.0], [1.5, 4, .5], [2.0, 3, 1.0],
-    [4.5, 2, .5], [5.0, 3, .5], [5.5, 4, 1.5],
-    [8.5, 5, .5], [9.0, 3, .5], [9.5, 2, 1.0],
-    [12.5, 4, .5], [13.0, 3, .5], [13.5, 0, 1.5]
-  ],
-  // D 电子：连续八分琶音 + 反复音，最有"推进感"
-  chip: [
-    [0.5, 5, .5], [1.0, 5, .5], [1.5, 3, .5], [2.0, 3, .5],
-    [4.5, 4, .5], [5.0, 4, .5], [5.5, 3, .5], [6.0, 3, .5],
-    [8.5, 2, .5], [9.0, 2, .5], [9.5, 3, .5], [10.0, 3, .5],
-    [12.5, 4, .5], [13.0, 3, .5], [13.5, 0, .5], [14.0, 5, 1.0]
-  ],
-  // ★ 慵懒午后：8 小节，19 个音，几乎全是长音。
-  //   画面是「慵懒的下午，一群人在一起打牌」—— 要的是慢、松、暖、留白，
-  //   不是欢快。所以：全部落在正拍（off-beat 会造成紧迫感）、音域只有 D4-A4、
-  //   级进为主、每句以下行二度"叹气"收尾、句与句之间大量休止。
-  //   结构是「问 - 答」：1-4 小节起，5-8 小节同一形状低一度收束。
-  lazy: [
-    [0.0, 2, 2.5], [2.5, 1, 1.5],              // 1 (C)   E —— D，下行叹气
-    [4.0, 2, 2.0], [6.0, 1, 1.0], [7.0, 3, 1.0], // 2 (G)   E D G，停在五音
-    [8.0, 4, 2.5], [10.5, 3, 1.5],             // 3 (Am)  A —— G，落根音
-    [12.0, 4, 2.0], [14.0, 3, 1.0], [15.0, 4, 1.0], // 4 (F) A G A
-    [16.0, 3, 2.5], [18.5, 2, 1.5],            // 5 (C)   G —— E，比第 1 小节低一度
-    [20.0, 1, 2.0], [22.0, 2, 1.0], [23.0, 3, 1.0], // 6 (G) D E G
-    [24.0, 2, 2.5], [26.5, 3, 1.5],            // 7 (Am)  E —— G
-    [28.0, 4, 3.0], [31.0, 3, 1.0]             // 8 (F)   A(长) —— G，回到循环点
-  ],
-  // E 和风：只有 9 个音、大量留白，最"雅"
-  koto: [
-    [0.5, 3, .5], [1.0, 4, 1.5],
-    [4.5, 3, .5], [5.0, 2, 1.5],
-    [8.5, 2, .5], [9.0, 3, .5], [9.5, 4, 1.0],
-    [12.5, 3, .5], [13.0, 0, 2.0]
-  ]
-};
-
-/** 五套编曲：曲风决定旋律 + 音色 + 音区 + 速度 + 混音 */
-const STYLES = [
-  { id: 'lazy', name: '慵懒午后', hook: 'lazy', mel: 'piano', acc: 'marimba', oct: 24,
-    bpm: 74, bright: 0.58, pad: 0.05, shaker: 0.26, verb: 0.18, bassMul: 0.62,
-    note: '默认 · 长音留白 · 像午后牌桌' },
-  { id: 'soft', name: '温柔钢琴',   hook: 'soft', mel: 'piano', acc: 'pluck', oct: 24,
-    bpm: 96,  bright: 0.58, pad: 0.06, shaker: 0.20, verb: 0.14, note: '最静 · 长音大跳' },
-  { id: 'koto', name: '和风拨弹',   hook: 'koto', mel: 'pluck', acc: 'pluck', oct: 24,
-    bpm: 92,  bright: 0.48, pad: 0.10, shaker: 0.10, verb: 0.20, note: '最雅 · 9 个音大量留白' },
-  { id: 'jump', name: '跳跃八音盒', hook: 'jump', mel: 'bell', acc: 'marimba', oct: 36,
-    bpm: 112, bright: 0.78, pad: 0.04, shaker: 0.32, verb: 0.10, note: '通用欢快 · 钟琴高音' },
-  { id: 'toon', name: '卡通木琴',   hook: 'toon', mel: 'marimba', acc: 'marimba', oct: 36,
-    bpm: 128, bright: 0.86, pad: 0.03, shaker: 0.42, verb: 0.07, note: '最闹 · 反复音跳进' },
-  { id: 'chip', name: '电子轻快',   hook: 'chip', mel: 'pluck', acc: 'bell', oct: 36,
-    bpm: 124, bright: 0.92, pad: 0.02, shaker: 0.34, verb: 0.08, note: '最有推进感 · 连续琶音' },
+const CHORDS = [
+  { name: 'C',  p: [36, 48, 52, 55, 60, 64] },
+  { name: 'F',  p: [41, 53, 57, 60, 65, 69] },
+  { name: 'Am', p: [45, 57, 60, 64, 69, 72] },
+  { name: 'G',  p: [43, 55, 59, 62, 67, 71] }
 ];
-let styleIdx = 0;
-const style = () => STYLES[styleIdx];
-/** 旋律跨几小节（4 或 8）—— 慵懒是 8 小节的，其余是 4 小节 */
-const hookBars = (m) => Math.max.apply(null, m.map(n => Math.floor(n[0] / 4))) + 1;
-
-/**
- * 循环编排：4 小节一段，**12 段一轮 = 48 小节 ≈ 137 秒**（84 BPM）。
- *
- * 这是「听一下午不烦」的真正机制 —— **旋律一段就够，新鲜感全来自配器**。
- * 耳朵记住的是旋律（所以不能变），会觉得"每次都不太一样"的是配器（所以要变）。
- * 反过来做（旋律一直变、配器不变）就变成了"每次都记不住"。
- *
- *   mel  这一轮旋律出不出现（0/1）
- *   oct  旋律八度偏移（12 = 高八度，整个 lift 起来）
- *   rows 伴奏行掩码（bit0 低音 / bit1 根音 / bit2 三音 / bit3 五音 / bit4 高八 / bit5 高三）
- *   pad  和声床开不开
- *   shk  沙锤力度系数
- *   tr   整段移调半音数（转调段用；**音效也跟着移**，否则会和 BGM 打架）
- *
- * 「转调」这一手是从参考曲谱里学的：它在中段整体转到另一个调，同一批材料原样重述，
- * 听感上却像换了一段新的 —— 这是最省力的"延长循环"手段，不用多写一个音。
- */
-const SECTIONS = [
-  // ① 起：旋律照常，但伴奏只留低音 —— 先让人听清骨架
-  { tag: '起',     mel: 1, oct: 0,  rows: 0b000001, pad: 1, shk: 0.7, tr: 0 },
-  // ②③ 全奏（重复本身是记忆点，别怕两段一样）
-  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
-  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
-  // ④ 提亮：抽掉和声床 —— 变薄反而更亮（旋律基频已在 C5–C6，不再靠 +12 八度去顶）
-  { tag: '提亮',   mel: 1, oct: 0,  rows: 0b101001, pad: 0, shk: 1.0, tr: 0 },
-  // ⑤ 回到完整
-  { tag: '回落',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
-  // ⑥ 呼吸：**抽掉旋律**，只留伴奏 + 沙锤减半 —— 最有效的防疲劳手法
-  { tag: '呼吸',   mel: 0, oct: 0,  rows: 0b001001, pad: 1, shk: 0.5, tr: 0 },
-  // ⑦ 旋律回来
-  { tag: '全奏',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
-  // ⑧⑨ 转调：整体 +2 半音（大二度上行），旋律原样重述但"换了个地方"
-  { tag: '转调',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 2 },
-  { tag: '转调',   mel: 1, oct: 0,  rows: 0b101001, pad: 0, shk: 1.0, tr: 2 },
-  // ⑩ 转回原调（落回来那一下很舒服，这是转调最大的收益）
-  { tag: '回落',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 },
-  // ⑪ 极简：只剩低音 + 沙锤，比"呼吸"更空
-  { tag: '极简',   mel: 0, oct: 0,  rows: 0b000001, pad: 1, shk: 0.4, tr: 0 },
-  // ⑫ 收尾，接回 ①
-  { tag: '收尾',   mel: 1, oct: 0,  rows: 0b101001, pad: 1, shk: 1.0, tr: 0 }
-];
-
+const CHORD_NAMES = CHORDS.map(c => c.name);
 /** 当前段位的移调量 —— 音效要读它，才能和 BGM 待在同一个调上 */
 let keyShift = 0;
 
-/** 和弦：每项是 [根音, 三音, 五音] 相对主音的半音偏移（4 小节一轮） */
-const CHORDS = {
-  // i – VI – III – VII  （Am – F – C – G）
-  minor: [[0, 3, 7], [-4, 0, 3], [3, 7, 10], [-2, 2, 5]],
-  // I – V – vi – IV    （C – G – Am – F）
-  major: [[0, 4, 7], [7, 11, 14], [9, 12, 16], [5, 9, 12]]
-};
-const CHORD_NAME = { minor: ['Am', 'F', 'C', 'G'], major: ['C', 'G', 'Am', 'F'] };
+/** 音色名（曲风的 acc / mel / lh 都从这里取） */
+const INST_LABEL = { guitar: '木吉他', epiano: '电钢琴', flute: '长笛', marimba: '马林巴', piano: '钢琴' };
+let accInst = 'guitar';
+let melInst = 'piano';
 
 /**
- * 把三和弦展开成伴奏用的 6 个声部，和网格纵轴一一对应：
- *   0 低音（根音下八度） 1 根音 2 三音 3 五音 4 高八 5 高三
- * 用「音级」而不是绝对音高来算 —— 换和弦 / 换调时每行的实际音高自动跟着走，网格不用重画。
- */
-function chordVoices(triad, root) {
-  const r = triad[0], th = triad[1], f = triad[2];
-  let base = root + r;            // 低音
-  // 把低音收进 root-7 .. root+4 这一带：和弦表里靠后的和弦（G/Am/F）本来是往上排的，
-  // 不收进来就会整体飘高，低音跑到 A3 去、高三冲到 C6，听着又薄又尖。
-  while (base > root + 4) base -= 12;
-  while (base < root - 7) base += 12;
-  const t3 = th - r, t5 = f - r;  // 三音 / 五音相对根音的音程（3 或 4 / 7）
-  return [base, base + 12, base + 12 + t3, base + 12 + t5, base + 24, base + 24 + t3];
-}
-
-/**
- * 伴奏网格：4 小节 × 8 个八分位置，每列一个 6 位掩码。
- * bit0 低音 / bit1 根音 / bit2 三音 / bit3 五音 / bit4 高八 / bit5 高三
- * 同一列叠多位 = 柱式和弦；0 = 休止。
+ * 主旋律（原创，8 小节 32 拍）。格式 [拍位, MIDI, 时值(拍)]。
  *
- * 定稿的这一小节型（马林巴型）：
- *   低音在 0 / 3 / 4（第 1 拍、第 2 拍后半、第 3 拍），五音+高三叠在 2 / 6（第 2、4 拍）当高音点缀。
- *   连起来是「咚 · 嗒 咚 咚 · 嗒」。
+ * 画面：「慵懒的下午，一群人在一起打牌」。写法上学 engine-ab.html 的几条：
+ *  ① **有动机**：第 1、3 小节是同一个「叹息」动机（下行级进 + 长音），
+ *     隔一小节再现一次 —— 这是"记得住"的唯一办法；
+ *  ② **节奏每小节都不同**：1/.5/1.5/.5 → 1/1.5/.5/1 → 2/2 → 1.5/.5/1/1 …
+ *     四小节一个样会像练习曲；
+ *  ③ **稳定句与色彩句交替**：第 2、4、6、8 小节全落和弦音，
+ *     第 1、3、5、7 小节带 9 音 / 大七度 / 6 音做颜色；
+ *  ④ **只有一次高点**（第 5 小节 E5），不冲高、不炫；
+ *  ⑤ **第 7 小节沉到全曲最低 E4** —— 叹气叹到底；
+ *  ⑥ **结尾停在 B4 两拍**（导音），接回第 1 小节的 C5 是半音上行，
+ *     循环点严丝合缝，听不出接缝。
+ *  音域 E4–E5 一个八度，级进为主。
  */
+const MELODY = [
+  // ① C：叹息动机 —— E5 起，级进落到 A4，尾音 G4 是下一句的引子
+  [0,   76, 1], [1,   74, 0.5], [2,   69, 1.5], [3.5, 67, 0.5],
+  // ② F：全和弦音的小波浪，最稳的一句
+  [4,   69, 1], [5,   72, 1.5], [6.5, 69, 0.5], [7,   65, 1],
+  // ③ Am：同一动机移低（C5-B4-A4-G4），情绪更沉
+  [8,   72, 1], [9,   71, 0.5], [10,  69, 1.5], [11.5, 67, 0.5],
+  // ④ G：两个二分长音，大片留白（牌桌上的停顿）
+  [12,  67, 2], [14,  71, 2],
+  // ⑤ C：全曲唯一高点 E5，随后级进回落
+  [16,  76, 1.5], [17.5, 74, 0.5], [18, 72, 1], [19, 71, 1],
+  // ⑥ F：四音级进下行，铺一条落线
+  [20,  72, 1], [21,  69, 1], [22,  65, 1], [23,  69, 1],
+  // ⑦ Am：沉到全曲最低 E4（最暗的一刻），再轻轻抬回 G4
+  [24,  67, 1], [25,  65, 0.5], [25.5, 64, 1.5], [27, 67, 1],
+  // ⑧ G：B4-D5-B4，停在导音上两拍，等下一轮的 C5
+  [28,  71, 1], [29,  74, 1], [30,  71, 2]
+];
+const MELODY_BARS = 8;
+
+/** 伴奏网格：一小节 8 个八分位置，每列一个 6 位掩码。
+    bit0 低音 / bit1 根音 / bit2 三音 / bit3 五音 / bit4 高八 / bit5 高三
+    这一型是试听定稿的「马林巴型」：低音落在第 1 拍、第 2 拍后半、第 3 拍，
+    五音+高三叠在第 2 / 4 拍当高音点缀 —— 读作「咚 · 嗒 咚 咚 · 嗒」。 */
 const ACC_BAR = [
   1 << 0,               // 0  低音
   0,                    // 1  休止
@@ -357,33 +275,58 @@ const ACC_BAR = [
   (1 << 3) | (1 << 5),  // 6  五音 + 高三（柱式）
   0                     // 7  休止
 ];
-/** 铺成 32 列：四小节同型（截图里四小节完全一致） */
 const ACC_GRID = Array.from({ length: 32 }, (_, i) => ACC_BAR[i % 8]);
 
-/**
- * 每一行自己的力度：低音是地基给足，越往上越轻。
- * 高三（三音高八度）在 69–76，正好是"亮片"，旋律抬到 C5–C6 之后它在旋律下面，
- * 可以多给一点而不抢戏。
- */
+/** 每一行自己的力度：低音是地基，越往上越轻；高三只当点缀 */
 const ROW_VEL = [0.80, 0.92, 0.85, 0.82, 0.80, 0.74];
 
-/** 音色（试听时可换，正式版做成设置项） */
-const INST_LABEL = { bell: '钟琴', marimba: '马林巴', pluck: '拨弦', piano: '钢琴' };
-let accInst = 'marimba';   // 伴奏
-let melInst = 'bell';      // 主旋律：钟琴最"欢快"，钢琴偏叙事、马林巴偏暖
-
 /**
- * 场景 = 参数集（不是曲目）。
- * root 用 MIDI：45=A2、48=C3。
+ * 循环编排：8 小节一段，6 段一轮 = **48 小节**。
+ * 旋律从头到尾只有一条（不变），新鲜感全来自配器 ——
+ * 耳朵靠不变的东西建立记忆，靠在变的东西保持新鲜。
+ *
+ *   mel  旋律出不出现（0/1）
+ *   rows 伴奏行掩码
+ *   lh   左手和弦（根音+五音长音）开不开
+ *   pad  和声床开不开
+ *   shk  沙锤力度系数
+ *   tr   整段移调半音数
  */
+const SECTIONS = [
+  // ① 起：旋律照常，但伴奏只留低音 —— 先让人听清骨架
+  { tag: '起',     mel: 1, rows: 0b000001, lh: 0, pad: 1, shk: 0.7, tr: 0 },
+  // ②③ 全奏
+  { tag: '全奏',   mel: 1, rows: 0b101001, lh: 1, pad: 1, shk: 1.0, tr: 0 },
+  { tag: '全奏',   mel: 1, rows: 0b101001, lh: 1, pad: 1, shk: 1.0, tr: 0 },
+  // ④ 呼吸：抽掉旋律，只留伴奏 + 沙锤减半 —— 最有效的防疲劳手法
+  { tag: '呼吸',   mel: 0, rows: 0b001001, lh: 1, pad: 1, shk: 0.5, tr: 0 },
+  // ⑤ 转调：整体 +2 半音，同一批材料原样重述，听感像换了新的
+  { tag: '转调',   mel: 1, rows: 0b101001, lh: 1, pad: 1, shk: 1.0, tr: 2 },
+  // ⑥ 收尾：转回原调，抽掉左手和弦让织体变干净
+  { tag: '收尾',   mel: 1, rows: 0b101001, lh: 0, pad: 1, shk: 0.8, tr: 0 }
+];
+
+/** 三套曲风：同一旋律，不同的音色搭配与混音（都是"午后牌桌"路线） */
+const STYLES = [
+  { id: 'lazy',  name: '慵懒午后', mel: 'piano',  acc: 'guitar', lh: 'piano',
+    bpm: 66, gtr: 0.55, pno: 1.15, melV: 0.85, dens: 0.8,  verb: 0.42, bright: 0.50, pad: 0.28, bassMul: 1.0,
+    note: '默认 · 钢琴主奏 + 木吉他分解 · 66 BPM' },
+  { id: 'piano', name: '纯粹钢琴', mel: 'piano',  acc: 'epiano', lh: 'piano',
+    bpm: 62, gtr: 0.25, pno: 1.30, melV: 0.90, dens: 0.6,  verb: 0.52, bright: 0.42, pad: 0.34, bassMul: 0.85,
+    note: '钢琴独白 · 62 BPM · 最静' },
+  { id: 'pluck', name: '暖木拨弹', mel: 'flute',  acc: 'guitar', lh: 'epiano',
+    bpm: 70, gtr: 0.80, pno: 0.90, melV: 0.95, dens: 0.9,  verb: 0.36, bright: 0.62, pad: 0.20, bassMul: 1.0,
+    note: '长笛主奏 + 木吉他 · 70 BPM · 最暖' }
+];
+let styleIdx = 0;
+const style = () => STYLES[styleIdx];
+
 /** 场景只做「速度 + 亮度」的修饰，叠加在曲风之上 */
 const SCENE_MOD = {
-  calm:   { name: '定主 · 埋底 · 回放', bpmMul: 0.86, dBright: -0.14 },
+  calm:   { name: '定主 · 埋底 · 回放', bpmMul: 0.90, dBright: -0.10 },
   play:   { name: '出牌（平稳）',        bpmMul: 1.00, dBright: 0 },
-  settle: { name: '结算 · 终局',         bpmMul: 1.14, dBright: +0.14 }
+  settle: { name: '结算 · 终局',         bpmMul: 1.12, dBright: +0.12 }
 };
-const BG_ROOT = 48;     // C3
-const BG_KEY = 'major'; // 全部 C 大调
 
 /** 合成后的实际参数：曲风打底，场景做速度和亮度的偏移 */
 function scene() {
@@ -391,12 +334,9 @@ function scene() {
   return {
     name: md.name,
     bpm: st.bpm * md.bpmMul,
-    root: BG_ROOT,
-    key: BG_KEY,
     bright: clamp(st.bright + md.dBright, 0, 1),
-    pad: st.pad,
-    shaker: st.shaker,
-    verb: st.verb
+    gtr: st.gtr, pno: st.pno, melV: st.melV, dens: st.dens,
+    pad: st.pad, shaker: st.shaker, verb: st.verb
   };
 }
 
@@ -412,9 +352,15 @@ let lastStatAt = 0;
 /* ============================================================
    1. 音频引擎
    ============================================================ */
-let ctx = null, master, comp, dry, wet, wetGain, conv, musicBus, sfxBus;
+/* 总线：按乐器分路 + 立体声定位（移植 engine-ab.html 的做法）。
+   分声道之后吉他偏左、钢琴偏右，织体立刻"打开"，不再是糊在一团。 */
+let ctx = null, master, comp, tone, dryBus, wetBus, conv, wetGain;
+let musicBus, sfxBus;
+let gtrBus, pnoBus, accBus, leadBus, padBus, fxBus;
 let noiseBuf = null;
 const pluckCache = new Map();
+const PLUCK_SEC = 2.8;   // Karplus-Strong 缓冲长度（低音弦需要更长）
+
 
 /** 合成混响 IR：指数衰减噪声 + 一阶低通（逐采样递推，避免大量 Math.pow） */
 function makeIR(c, sec, decay, lp) {
@@ -448,29 +394,57 @@ function initAudio() {
   if (ctx) return;
   ctx = new (window.AudioContext || window.webkitAudioContext)();
 
-  master = ctx.createGain(); master.gain.value = 0.72;
+  master = ctx.createGain(); master.gain.value = 0.80;
+  // 音色闸门：压掉 8.5kHz 以上的毛刺，比在每个音色里各加一次低通省事
+  tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 8500; tone.Q.value = 0.5;
   comp = ctx.createDynamicsCompressor();
-  comp.threshold.value = -18; comp.knee.value = 20; comp.ratio.value = 2.8;
-  comp.attack.value = 0.008; comp.release.value = 0.24;
-  master.connect(comp); comp.connect(ctx.destination);
+  comp.threshold.value = -20; comp.knee.value = 22; comp.ratio.value = 2.6;
+  comp.attack.value = 0.012; comp.release.value = 0.28;
+  master.connect(tone); tone.connect(comp); comp.connect(ctx.destination);
 
-  dry = ctx.createGain(); dry.gain.value = 1; dry.connect(master);
-  conv = ctx.createConvolver(); conv.buffer = makeIR(ctx, 1.8, 4.6, 0.24);
-  wetGain = ctx.createGain(); wetGain.gain.value = 0.34;
-  wet = ctx.createGain(); wet.gain.value = 1;
-  wet.connect(conv); conv.connect(wetGain); wetGain.connect(master);
+  dryBus = ctx.createGain(); dryBus.gain.value = 1.0; dryBus.connect(master);
+  conv = ctx.createConvolver(); conv.buffer = makeIR(ctx, 2.0, 5.0, 0.22);
+  wetGain = ctx.createGain(); wetGain.gain.value = 0.36;
+  wetBus = ctx.createGain(); wetBus.gain.value = 1.0;
+  wetBus.connect(conv); conv.connect(wetGain); wetGain.connect(master);
+
+  /* 木吉他（分解和弦）偏左 */
+  gtrBus = ctx.createGain(); gtrBus.gain.value = 0.78;
+  const gp = ctx.createStereoPanner(); gp.pan.value = -0.28;
+  gtrBus.connect(gp); gp.connect(dryBus); gp.connect(wetBus);
+
+  /* 钢琴偏右 */
+  pnoBus = ctx.createGain(); pnoBus.gain.value = 0.80;
+  const pp = ctx.createStereoPanner(); pp.pan.value = 0.22;
+  pnoBus.connect(pp); pp.connect(dryBus); pp.connect(wetBus);
+
+  /* 伴奏总线：网格分解 + 左手和弦都走这里 */
+  accBus = ctx.createGain(); accBus.gain.value = 0.78;
+  const ap = ctx.createStereoPanner(); ap.pan.value = -0.12;
+  accBus.connect(ap); ap.connect(dryBus); ap.connect(wetBus);
+
+  /* 主旋律总线：不论选哪种音色都走这里，跟伴奏分开，音量可独立调 */
+  leadBus = ctx.createGain(); leadBus.gain.value = 0.80;
+  const lp2 = ctx.createStereoPanner(); lp2.pan.value = 0.06;
+  leadBus.connect(lp2); lp2.connect(dryBus); lp2.connect(wetBus);
+
+  /* 和声床：居中，垫厚度 */
+  padBus = ctx.createGain(); padBus.gain.value = 0.20;
+  padBus.connect(dryBus); padBus.connect(wetBus);
+
+  /* 音效总线 */
+  fxBus = ctx.createGain(); fxBus.gain.value = 1.0;
+  fxBus.connect(dryBus); fxBus.connect(wetBus);
 
   musicBus = ctx.createGain(); musicBus.gain.value = volBgm;
-  musicBus.connect(dry); musicBus.connect(wet);
-
+  musicBus.connect(dryBus); musicBus.connect(wetBus);
   sfxBus = ctx.createGain(); sfxBus.gain.value = volSfx;
-  sfxBus.connect(dry); sfxBus.connect(wet);
+  sfxBus.connect(dryBus); sfxBus.connect(wetBus);
 
-  noiseBuf = makeNoise(ctx, 1.5);
+  noiseBuf = makeNoise(ctx, 2.0);
 }
 
-/* ---- 拨弦（Karplus-Strong，按音高缓存） ---- */
-const PLUCK_SEC = 2.2;
+
 function renderPluck(buf, freq) {
   const sr = ctx.sampleRate, out = buf.getChannelData(0);
   const D = sr / freq - 1.35;
@@ -506,115 +480,175 @@ function pluckBuf(midi) {
 }
 
 /* ---- 音色 ---- */
-function vPluck(when, midi, vel, dur, bright) {
+/* ---------- 木吉他：Karplus-Strong（已渲染进 AudioBuffer，见 renderPluck） ---------- */
+function vGuitar(when, midi, vel, dur, bright, bus) {
   const src = ctx.createBufferSource();
   src.buffer = pluckBuf(midi);
   src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.002;
-  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
-  lp.frequency.value = 1400 + bright * 4200; lp.Q.value = 0.6;
-  const body = ctx.createBiquadFilter(); body.type = 'peaking';
-  body.frequency.value = 150; body.Q.value = 1.1; body.gain.value = 3.6;
+
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass'; lp.frequency.value = 1800 + bright * 4200; lp.Q.value = 0.6;
+  // 两处峰值模拟琴身共鸣：128Hz 给厚度，420Hz 给木头的"膛"
+  const body = ctx.createBiquadFilter();
+  body.type = 'peaking'; body.frequency.value = 128; body.Q.value = 1.1; body.gain.value = 4.5;
+  const body2 = ctx.createBiquadFilter();
+  body2.type = 'peaking'; body2.frequency.value = 420; body2.Q.value = 1.4; body2.gain.value = 2.6;
+
   const g = ctx.createGain();
   g.gain.setValueAtTime(0, when);
-  g.gain.linearRampToValueAtTime(vel * 0.30, when + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.0001, when + Math.min(2.2, dur + 1.2));
-  src.connect(lp); lp.connect(body); body.connect(g); g.connect(musicBus);
+  g.gain.linearRampToValueAtTime(vel * 0.34, when + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 2.6);
+
+  src.connect(lp); lp.connect(body); body.connect(body2); body2.connect(g); g.connect(bus || gtrBus);
   src.start(when); src.stop(when + PLUCK_SEC);
 }
 
-function vPiano(when, midi, vel, dur, bright) {
+/* ---------- 钢琴：加法合成，7 层泛音 ----------
+   这是移植 engine-ab.html 最有价值的一条：之前只有 4 层泛音，听感单薄发"电子"。
+   7 层 + 每层独立的衰减倍率，才有真钢琴那种"高音先走、低音拖着"的尾音。 */
+const PIANO_PARTIALS = [
+  [1, 1.00, 1.00], [2, 0.44, 0.74], [3, 0.24, 0.58],
+  [4, 0.13, 0.45], [5, 0.07, 0.35], [6, 0.04, 0.28], [8, 0.02, 0.20]
+];
+
+function vPiano(when, midi, vel, dur, bright, bus, soft) {
   const f = mtof(midi);
   const out = ctx.createGain();
-  // 0.26：主旋律必须比伴奏清楚。旧版 0.17 被马林巴盖住，是「旋律听不清」的主因之一
-  out.gain.value = vel * 0.26; out.connect(musicBus);
-  // **断奏**：实际发声长度只有音符时值的 ~62%，音符之间留出空隙。
-  // 这是从参考曲谱学到的关键一条 —— 它的旋律几乎全是断奏 + 八分休止。
-  // 连起来弹会糊成一片、显不出轻快；留出空隙，伴奏的切分才听得见。
-  const hold = Math.max(0.20, dur * 0.62);
-  // 高次泛音压低、起音 12ms：不再是「敲」出来的，而是「弹」出来的
-  const PARTS = [[1, 1], [2, 0.30], [3, 0.12], [4, 0.05]];
-  for (let i = 0; i < PARTS.length; i++) {
-    const h = PARTS[i][0], amp = PARTS[i][1] * (h > 2 ? 0.55 + bright * 0.6 : 1);
-    const end = when + hold * (1 - i * 0.18);
-    const o = ctx.createOscillator(); o.type = 'sine';
-    o.frequency.value = f * h * (1 + 0.0004 * h * h);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, when);
-    g.gain.linearRampToValueAtTime(amp, when + 0.012);
-    g.gain.exponentialRampToValueAtTime(amp * 0.35, when + hold * 0.45);
-    g.gain.exponentialRampToValueAtTime(0.0001, end);
-    o.connect(g); g.connect(out);
-    o.start(when); o.stop(end + 0.05);
-  }
-  // 击槌噪声（压低到几乎只剩「触键」的空气感）
-  const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
-  const nf = ctx.createBiquadFilter(); nf.type = 'bandpass';
-  nf.frequency.value = 2400; nf.Q.value = 0.8;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(0, when);
-  ng.gain.linearRampToValueAtTime(0.032 * vel, when + 0.004);
-  ng.gain.exponentialRampToValueAtTime(0.0001, when + 0.07);
-  ns.connect(nf); nf.connect(ng); ng.connect(out);
-  ns.start(when); ns.stop(when + 0.1);
-}
-
-/**
- * 钟琴 / 八音盒：泛音比 1 : 2.76 : 5.4（金属棒的振动模态，非整数）——
- * 这是"欢快"最直接的音色，游戏里那些"可爱"的 BGM 基本都是这个路子。
- * 代价是容易刺耳，所以：① 电平只有钢琴的 6 成；② 超过 9kHz 的泛音直接不生成；
- * ③ 越往高走余音越短。
- */
-function vBell(when, midi, vel, dur, bright) {
-  const f = mtof(midi);
-  const out = ctx.createGain();
-  out.gain.value = vel * 0.18;
-  out.connect(musicBus);
-
-  const hold = Math.max(0.16, dur * 0.58);
-  // 5.4 次泛音是"闪"的来源（旋律在 C5–C6 时它落在 2.8–5.6kHz），
-  // 之前只给 0.04~0.12，实测 4kHz 以上能量只占 1% —— 这就是"不亮"的直接原因。
-  const PARTS = [[1, 1, 1.0], [2.76, 0.30 + 0.16 * bright, 0.55], [5.4, 0.07 + 0.11 * bright, 0.34]];
-  for (let i = 0; i < PARTS.length; i++) {
-    const h = PARTS[i][0], amp = PARTS[i][1], dm = PARTS[i][2];
-    if (f * h > 9500) continue;          // 泛音封顶，防止高把位刺耳
-    const end = when + hold * dm;
-    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * h;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, when);
-    g.gain.linearRampToValueAtTime(amp, when + 0.003);
-    g.gain.exponentialRampToValueAtTime(0.0001, end);
-    o.connect(g); g.connect(out);
-    o.start(when); o.stop(end + 0.05);
-  }
-  // 敲击瞬间的一点金属"叮"
-  const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
-  const nf = ctx.createBiquadFilter(); nf.type = 'bandpass';
-  nf.frequency.value = Math.min(9000, f * 4.5); nf.Q.value = 2.4;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(0, when);
-  ng.gain.linearRampToValueAtTime(0.05 * vel, when + 0.002);
-  ng.gain.exponentialRampToValueAtTime(0.0001, when + 0.045);
-  ns.connect(nf); nf.connect(ng); ng.connect(out);
-  ns.start(when); ns.stop(when + 0.06);
-}
-
-/**
- * 马林巴：泛音比例 1 : 4 : 9（木琴类乐器的物理特征），起音带一点木槌闷响。
- * 三根正弦就够 —— 木琴的「木味」全在这个非整数泛音比上，堆多了反而糊。
- */
-function vMarimba(when, midi, vel, dur, bright) {
-  const f = mtof(midi);
-  const out = ctx.createGain();
-  // 0.20 而不是参考实现的 0.26：马林巴是瞬态音，能量集中在起音，
-  // 用 0.26 会盖住主旋律（实测每音 0.24 vs 旋律 0.16，伴奏比旋律还响）
   out.gain.value = vel * 0.20;
-  out.connect(musicBus);
+  out.connect(bus || pnoBus);
 
-  // 越往高走余音越短 —— 木琴的真实行为：高音槌短、衰减快。
-  // v5 之前低音衰减 0.95s，而 108 BPM 下八分只有 0.28s ⇒ 低音三下完全叠在一起，
-  // 中低频糊成一团，这是"沉"的第二大来源。收到 0.60s。
+  // 低音衰减更长：钢琴的低音弦就是这么物理行为的
+  const baseDecay = 1.6 + Math.max(0, (72 - midi)) * 0.10;
+  const br = soft ? 0.55 : 1.0;
+
+  for (let i = 0; i < PIANO_PARTIALS.length; i++) {
+    const h = PIANO_PARTIALS[i][0];
+    if (h > 4 && br < 0.8 && i > 4) break;      // soft 模式直接砍掉最高的几层
+    const amp = PIANO_PARTIALS[i][1] * (h > 2 ? br : 1);
+    const dm = PIANO_PARTIALS[i][2];
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.value = f * h * (1 + 0.0004 * h * h);   // 微微拉伸泛音，非理想弦
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(amp, when + 0.006);
+    g.gain.exponentialRampToValueAtTime(amp * 0.25, when + 0.22);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + baseDecay * dm + dur * 0.35);
+    o.connect(g); g.connect(out);
+    o.start(when);
+    o.stop(when + baseDecay * dm + dur * 0.35 + 0.1);
+  }
+
+  // 击槌噪声
+  const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
+  const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 2400; nf.Q.value = 0.8;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0, when);
+  ng.gain.linearRampToValueAtTime(0.09 * vel * br, when + 0.003);
+  ng.gain.exponentialRampToValueAtTime(0.0001, when + 0.09);
+  ns.connect(nf); nf.connect(ng); ng.connect(out);
+  ns.start(when); ns.stop(when + 0.12);
+}
+
+/* ---------- 电钢琴（Rhodes 风格）：正弦载波 + FM，调制指数快速塌缩 ----------
+   起音有钟声感，之后塌回纯正弦 —— 比加法钢琴"暖"且省算力 */
+function vEPiano(when, midi, vel, dur, bright, bus) {
+  const f = mtof(midi);
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass'; lp.frequency.value = 3600; lp.Q.value = 0.4;
+  lp.connect(bus || accBus);
+
+  const out = ctx.createGain();
+  out.gain.value = vel * 0.26;
+  out.connect(lp);
+
+  const car = ctx.createOscillator(); car.type = 'sine'; car.frequency.value = f;
+  const mod = ctx.createOscillator(); mod.type = 'sine'; mod.frequency.value = f * 2.0;
+  const mg = ctx.createGain();
+  /* 深度必须 < f，否则瞬时频率穿过 0 变负（频谱折叠，听感发浊） */
+  mg.gain.setValueAtTime(f * 0.85, when);
+  mg.gain.exponentialRampToValueAtTime(f * 0.04, when + 0.32);
+  mod.connect(mg); mg.connect(car.frequency);
+
+  const tail = when + Math.max(dur, 0.45) + 0.75;
+  const cg = ctx.createGain();
+  cg.gain.setValueAtTime(0.0001, when);
+  cg.gain.linearRampToValueAtTime(1, when + 0.004);
+  cg.gain.exponentialRampToValueAtTime(0.38, when + 0.28);
+  cg.gain.exponentialRampToValueAtTime(0.0001, tail);
+  car.connect(cg); cg.connect(out);
+
+  /* 音叉那声「叮」：短促高频分音，只负责颗粒感 */
+  const tin = ctx.createOscillator(); tin.type = 'sine'; tin.frequency.value = f * 7.02;
+  const tg = ctx.createGain();
+  tg.gain.setValueAtTime(0.0001, when);
+  tg.gain.linearRampToValueAtTime(0.09 * vel, when + 0.002);
+  tg.gain.exponentialRampToValueAtTime(0.0001, when + 0.13);
+  tin.connect(tg); tg.connect(out);
+
+  car.start(when); mod.start(when); tin.start(when);
+  car.stop(tail + 0.05); mod.stop(tail + 0.05); tin.stop(when + 0.2);
+}
+
+/* ---------- 长笛：奇次谐波偏重的正弦叠加 + 气声 + 渐入的抖音 ---------- */
+function vFlute(when, midi, vel, dur, bright, bus) {
+  const f = mtof(midi);
+  const sus = vel * 0.20;
+
+  const o1 = ctx.createOscillator(); o1.type = 'sine';     o1.frequency.value = f;
+  const o2 = ctx.createOscillator(); o2.type = 'sine';     o2.frequency.value = f * 2.002;
+  const o3 = ctx.createOscillator(); o3.type = 'triangle'; o3.frequency.value = f * 3.004;
+
+  const g1 = ctx.createGain(); g1.gain.value = 1.00;
+  const g2 = ctx.createGain(); g2.gain.value = 0.15;
+  const g3 = ctx.createGain(); g3.gain.value = 0.045;
+
+  const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
+  const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 2300 + f * 0.4; nf.Q.value = 1.4;
+  const ng = ctx.createGain();
+
+  const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 5.1 + Math.random() * 0.5;
+  const lfoG = ctx.createGain();
+  const vibDepth = f * 0.0065;
+
+  const env = ctx.createGain();
+  const body = ctx.createBiquadFilter(); body.type = 'lowpass'; body.frequency.value = Math.min(9000, f * 6 + 1800);
+
+  const attack = Math.min(0.055, dur * 0.35 + 0.012);
+  const rel = Math.min(0.16, dur * 0.5 + 0.03);
+  const endT = when + Math.max(dur, attack + 0.06);
+
+  env.gain.setValueAtTime(0, when);
+  env.gain.linearRampToValueAtTime(sus * 1.18, when + attack);
+  env.gain.linearRampToValueAtTime(sus, when + Math.min(attack + 0.10, dur * 0.7 + 0.02));
+  env.gain.setTargetAtTime(0.0001, when + Math.max(attack + 0.02, dur * 0.94), rel * 0.4);
+
+  ng.gain.setValueAtTime(0, when);
+  ng.gain.linearRampToValueAtTime(sus * 0.42, when + 0.012);
+  ng.gain.exponentialRampToValueAtTime(0.0001, when + Math.max(0.09, dur * 0.85));
+
+  lfoG.gain.setValueAtTime(0, when);
+  lfoG.gain.linearRampToValueAtTime(vibDepth, when + Math.min(0.42, dur * 0.8 + 0.1));
+  lfo.connect(lfoG); lfoG.connect(o1.frequency); lfoG.connect(o2.frequency); lfoG.connect(o3.frequency);
+
+  o1.connect(g1); o2.connect(g2); o3.connect(g3);
+  g1.connect(body); g2.connect(body); g3.connect(body);
+  body.connect(env);
+  ns.connect(nf); nf.connect(ng); ng.connect(env);
+  env.connect(bus || leadBus);
+
+  const stopT = endT + rel + 0.12;
+  o1.start(when); o2.start(when); o3.start(when); lfo.start(when); ns.start(when);
+  o1.stop(stopT); o2.stop(stopT); o3.stop(stopT); lfo.stop(stopT); ns.stop(stopT);
+}
+
+/* ---------- 马林巴：泛音比 1 : 4 : 9，木槌击中感 ---------- */
+function vMarimba(when, midi, vel, dur, bright, bus) {
+  const f = mtof(midi);
+  const out = ctx.createGain();
+  out.gain.value = vel * 0.20;
+  out.connect(bus || accBus);
+
   const decay = Math.max(0.22, 0.46 - Math.max(0, midi - 55) * 0.006);
-  // bright 只调 4 倍频 / 9 倍频的占比：紧张时木头敲得更「脆」
   const PARTS = [[1, 1.00, 1.0], [4, 0.14 + 0.18 * bright, 0.42], [9, 0.02 + 0.07 * bright, 0.22]];
   for (let i = 0; i < PARTS.length; i++) {
     const h = PARTS[i][0], amp = PARTS[i][1], dm = PARTS[i][2];
@@ -629,7 +663,6 @@ function vMarimba(when, midi, vel, dur, bright) {
     o.start(when); o.stop(end + 0.05);
   }
 
-  // 木槌击中：极短、低通、低音量，只给一个「触」的实感
   const ns = ctx.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
   const nf = ctx.createBiquadFilter(); nf.type = 'lowpass';
   nf.frequency.value = 700 + bright * 900; nf.Q.value = 0.7;
@@ -641,23 +674,18 @@ function vMarimba(when, midi, vel, dur, bright) {
   ns.start(when); ns.stop(when + 0.05);
 }
 
-function vPad(when, midi, dur, vel) {
-  const f = mtof(midi);
-  const out = ctx.createGain();
-  out.gain.setValueAtTime(0, when);
-  out.gain.linearRampToValueAtTime(vel, when + 0.5);
-  out.gain.setValueAtTime(vel, when + Math.max(0.6, dur - 0.5));
-  out.gain.linearRampToValueAtTime(0, when + dur + 0.6);
-  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
-  lp.frequency.value = 900; lp.Q.value = 0.5;
-  lp.connect(out); out.connect(musicBus);
-  [[1, 'sine', 1], [1.003, 'triangle', 0.5]].forEach(cfg => {
-    const o = ctx.createOscillator(); o.type = cfg[1];
-    o.frequency.value = f * cfg[0];
-    const g = ctx.createGain(); g.gain.value = cfg[2];
-    o.connect(g); g.connect(lp);
-    o.start(when); o.stop(when + dur + 0.8);
-  });
+/* ---------- 和声床：正弦 + 微失谐三角，慢起慢落 ---------- */
+function vPad(when, midi, dur, vel, bus) {
+  const o1 = ctx.createOscillator(); o1.type = 'sine';     o1.frequency.value = mtof(midi);
+  const o2 = ctx.createOscillator(); o2.type = 'triangle'; o2.frequency.value = mtof(midi) * 1.003;
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1100;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, when);
+  g.gain.linearRampToValueAtTime(vel, when + dur * 0.35);
+  g.gain.linearRampToValueAtTime(vel * 0.7, when + dur * 0.75);
+  g.gain.linearRampToValueAtTime(0, when + dur);
+  o1.connect(lp); o2.connect(lp); lp.connect(g); g.connect(bus || padBus);
+  o1.start(when); o2.start(when); o1.stop(when + dur + 0.1); o2.stop(when + dur + 0.1);
 }
 
 function shaker(when, vel) {
@@ -668,96 +696,120 @@ function shaker(when, vel) {
   g.gain.setValueAtTime(0, when);
   g.gain.linearRampToValueAtTime(vel * 0.095, when + 0.005);
   g.gain.exponentialRampToValueAtTime(0.0001, when + 0.09);
-  s.connect(hp); hp.connect(bp); bp.connect(g); g.connect(musicBus);
+  s.connect(hp); hp.connect(bp); bp.connect(g); g.connect(fxBus);
   s.start(when); s.stop(when + 0.12);
 }
 
-function voice(kind, when, midi, vel, dur, bright) {
-  if (kind === 'bell') vBell(when, midi, vel, dur, bright);
-  else if (kind === 'marimba') vMarimba(when, midi, vel, dur, bright);
-  else if (kind === 'pluck') vPluck(when, midi, vel, dur, bright);
-  else vPiano(when, midi, vel, dur, bright);
+/**
+ * 力度呼吸：不靠随机，按「强拍重 · 弱拍轻 · 反拍再轻 · 句尾收 · 越高越亮」算出来。
+ * 这是移植 engine-ab.html 的一条 —— 随机的力度听感是"散"，算出来的才是"呼吸"。
+ */
+function phraseAccent(beat, midi) {
+  const pos = ((beat % 4) + 4) % 4;
+  let a = pos === 0 ? 1.00 : pos === 2 ? 0.94 : 0.88;
+  if (pos % 1 !== 0) a *= 0.95;                                    // 反拍（半拍位）再让一点
+  const bar = Math.floor(beat / 4) % MELODY_BARS;
+  if (bar === 1 || bar === 7) a *= 0.93;                           // 每句的第 2 / 8 小节收一收
+  a *= 0.90 + 0.10 * Math.min(1, Math.max(0, (midi - 60) / 21));   // 越高越亮（封顶，不削波）
+  return a;
 }
 
-/* ============================================================
-   2. 调度器（40ms 轮询 + 0.45s 前瞻 + 卡顿保护）
-   ============================================================ */
+/* 音色分发：旋律走 leadBus，伴奏走 accBus，两者音量可独立调 */
+function voice(kind, when, midi, vel, dur, bright, bus) {
+  if (kind === 'guitar') vGuitar(when, midi, vel, dur, bright, bus);
+  else if (kind === 'epiano') vEPiano(when, midi, vel, dur, bright, bus);
+  else if (kind === 'flute') vFlute(when, midi, vel, dur, bright, bus);
+  else if (kind === 'marimba') vMarimba(when, midi, vel, dur, bright, bus);
+  else vPiano(when, midi, vel, dur, bright, bus, kind === 'pianoSoft');
+}
+
+
 function scheduleBar(bi, when) {
   const sc = scene();
+  const st = style();
   const t = tensionCur;
   const bpm = sc.bpm * (1 + 0.08 * t);
   const beat = 60 / bpm;
-  // 编排：这一小节属于 48 小节循环里的哪一段
-  const sec = SECTIONS[Math.floor(bi / 4) % SECTIONS.length];
-  // 紧张时整体降 0..2 个半音；转调段再叠 sec.tr
-  const tr = Math.round(-2 * t);
-  const root = sc.root + tr + sec.tr;
-  // 音效要跟着一起移，否则转调段里音效会和 BGM 差两个半音
-  keyShift = sec.tr;
-  const loopBar = bi % 4;
-  const voices = chordVoices(CHORDS[sc.key][loopBar], root);
   const bright = clamp(sc.bright + 0.3 * t, 0, 1);
 
-  // ① 伴奏：网格驱动，4 小节 × 8 个八分位置
-  const base = loopBar * 8;
-  for (let i = 0; i < 8; i++) {
-    let bits = ACC_GRID[base + i] | 0;
-    // 紧张度补空拍（加密而不是加响）：>0.5 补低音，>0.75 再叠五音
-    if (!bits && t > 0.5 && i % 2 === 1) {
-      bits = 1 << 0;
-      if (t > 0.75) bits |= 1 << 3;
-    }
-    bits &= sec.rows;   // 编排决定这一轮哪些行在响（起 / 呼吸 段会变薄）
-    if (!bits) continue;
-    const idxs = [];
-    for (let k = 0; k < 6; k++) if (bits & (1 << k)) idxs.push(k);
-    // 同一列叠了几个音就把每音压一点，免得柱式比单音吵一大截
-    const vel = (i % 2 === 0 ? 0.95 : 0.72) * (0.85 + Math.random() * 0.25)
-              * (idxs.length > 1 ? 1 / Math.sqrt(idxs.length) : 1) * (1 + 0.06 * t);
-    for (const k of idxs) {
-      // 第 5 行（高三）整体再 +12：马林巴是正弦泛音，八度一高，
-      // 它的 4×/9× 次泛音就落进 3.5–5kHz —— 这正是之前完全缺失的「空气」频段
-      // （实测 4kHz 以上原本只占 1%，声音再干净也发闷）。
-      const pitch = voices[k] + (k === 5 ? 12 : 0);
-      // 低音行再按曲风缩放：慵懒要慢要松，低频太厚就会变「沉」
-      const rowMul = (k === 0 ? (style().bassMul || 1) : 1);
-      voice(accInst, when + i * beat * 0.5, pitch, vel * ROW_VEL[k] * rowMul, beat * 0.9, bright);
+  // 编排：这一小节属于 48 小节循环里的哪一段（8 小节一段）
+  const sec = SECTIONS[Math.floor(bi / 8) % SECTIONS.length];
+  // 旋律自身 8 小节一轮；和弦 4 小节一轮
+  const phraseBar = Math.floor(bi / 4) % MELODY_BARS;
+  const ci = phraseBar % 4;
+  const ch = CHORDS[ci];
+  // 紧张时整体降 0..2 个半音；转调段再叠 sec.tr
+  const tr = Math.round(-2 * t) + sec.tr;
+  keyShift = sec.tr;
+  const r = makeRng(20261025 + bi * 7717);
+
+  // ① 伴奏分解：网格驱动，音色由曲风的 acc 决定
+  if (sc.gtr > 0.02) {
+    const gtrAmt = Math.min(1.4, Math.max(0, sc.gtr));
+    const base = ci * 8;
+    for (let i = 0; i < 8; i++) {
+      let bits = ACC_GRID[base + i] | 0;
+      // 紧张度补空拍（加密而不是加响）
+      if (!bits && t > 0.5 && i % 2 === 1) { bits = 1 << 0; if (t > 0.75) bits |= 1 << 3; }
+      bits &= sec.rows;
+      if (!bits) continue;
+      const idxs = [];
+      for (let k = 0; k < 6; k++) if (bits & (1 << k)) idxs.push(k);
+      if (!idxs.length) continue;
+      const w = when + i * beat * 0.5 + (r() - 0.5) * 0.012;
+      const vel = (i % 2 === 0 ? 0.95 : 0.72) * (0.85 + r() * 0.25)
+                * (idxs.length > 1 ? 1 / Math.sqrt(idxs.length) : 1) * gtrAmt;
+      idxs.forEach(function (k) {
+        // 高三行再 +12：马林巴是正弦泛音，八度一高，4×/9× 次泛音就落进 3.5–5kHz 的"空气"频段
+        const pitch = ch.p[k] + tr + (k === 5 ? 12 : 0);
+        const rowMul = (k === 0 ? (st.bassMul || 1) : 1);
+        voice(st.acc, w, pitch, vel * ROW_VEL[k] * rowMul, beat * 0.9, bright, accBus);
+      });
+      // dens 是「密度」不是音量：用它决定加花的概率
+      const densP = Math.max(0, (sc.dens - 0.75) * 0.34);
+      if (r() < densP) voice(st.acc, w + beat * 0.25, ch.p[idxs[0]] + tr + 12, vel * 0.45, beat * 0.5, bright, accBus);
     }
   }
 
-  // ② 和声床：只做低音区的垫底，不抢马林巴（编排里可以抽掉）
-  //    垫在 voices[1]（根音，53–60Hz 往上）而不是 voices[0]（低音 41–48）——
-  //    垫在低音区会把"沉"再叠一层；垫在中音区只增加厚度。
-  if (sec.pad) vPad(when, voices[1], beat * 4, (sc.pad + 0.1 * t) * 0.55);
+  // ② 左手和弦：根音 + 五音的长音，铺厚度（engine-ab.html 的做法，我们原来没有）
+  if (sec.lh && sc.pno > 0.02) {
+    const pnoAmt = Math.min(1.4, Math.max(0, sc.pno));
+    voice(st.lh, when, ch.p[1] + tr, 0.42 * pnoAmt, beat * 1.6, bright, accBus);
+    voice(st.lh, when, ch.p[3] + tr, 0.34 * pnoAmt, beat * 1.6, bright, accBus);
+    if (sc.dens > 0.7 && ci % 2 === 1)
+      voice(st.lh, when + beat * 2, ch.p[2] + tr, 0.28 * pnoAmt, beat * 1.2, bright, accBus);
+  }
 
-  // ③ 主旋律：当前曲风的那一条。音区由曲风的 oct 决定
-  //    （+36 = C6-C7 已实测落在欢快区间；+24 = C5-C6 偏静，给温柔/和风用）
+  // ③ 和声床
+  if (sec.pad && sc.pad > 0.01) {
+    vPad(when, ch.p[0] + 12 + tr, beat * 4, sc.pad * 0.10);
+    vPad(when, ch.p[2] + tr, beat * 4, sc.pad * 0.07);
+  }
+
+  // ④ 主旋律：全曲就这一条。力度用 phraseAccent 算，不随机
   if (sec.mel) {
-    const st = style();
-    const motif = HOOKS[st.hook];
-    // 旋律可能是 4 或 8 小节：按它自己的长度取「乐句内第几小节」，
-    // 否则 8 小节旋律会被 4 小节的 loopBar 切成两半
-    const phraseBar = Math.floor(bi / 4) % hookBars(motif);
-    for (const [b, deg, dur] of motif) {
-      if (Math.floor(b / 4) !== phraseBar) continue;
-      const local = b % 4;
-      const pitch = root + st.oct + sec.oct + SCALE[sc.key][deg];
-      // 轻微人性化：力度 ±6%，起音错开几毫秒，避免听起来像打字机
-      const vel = (0.9 + Math.random() * 0.12) * (1 + 0.06 * t);
-      const jitter = (Math.random() - 0.5) * 0.012;
-      voice(melInst, when + local * beat + jitter, pitch, vel, dur * beat, bright);
-    }
+    const b0 = phraseBar * 4, b1 = b0 + 4;
+    const evs = MELODY.filter(function (e) { return e[0] >= b0 && e[0] < b1; });
+    evs.forEach(function (e, k) {
+      const local = e[0] - b0;
+      const dur = e[2] * beat;
+      const midi = e[1] + tr;
+      const w = when + local * beat + (r() - 0.5) * 0.014;
+      const vel = (0.93 + r() * 0.07) * sc.melV * phraseAccent(e[0], e[1]);
+      voice(st.mel, w, midi, vel, dur, bright, leadBus);
+      // 八度叠音：低八度轻轻垫一下，旋律立刻"厚"
+      if (t > 0.35) voice(st.mel, w, midi - 12, vel * 0.22 * t, dur, bright, leadBus);
+    });
   }
 
-  // ④ 沙锤：八分音符连续，正拍轻、反拍重
-  //    v4 只在反拍打，听感是"顿"的；连续八分的"沙沙"才有往前推的劲 —— 欢快的一半在这里
+  // ⑤ 沙锤：八分音符连续，正拍轻、反拍重
   if (sc.shaker > 0) {
     for (let i = 0; i < 8; i++) {
-      const amp = sc.shaker * sec.shk * (i % 2 ? 1 : 0.5) * (1 + 0.5 * t);
-      shaker(when + i * beat * 0.5, amp);
+      shaker(when + i * beat * 0.5, sc.shaker * sec.shk * (i % 2 ? 1 : 0.5) * (1 + 0.5 * t));
     }
   }
 }
+
 
 function scheduler() {
   if (!playing) return;
@@ -817,7 +869,7 @@ const lastAt = {};    // 上次触发时间（密度抑制）
 function sfxPitch(name, degreeOverride) {
   const sc = scene();
   const deg = degreeOverride !== undefined ? degreeOverride : (rr[name] = ((rr[name] || 0) + 1) % 5);
-  return sc.root + 24 + SCALE[sc.key][deg] + Math.round(-2 * tensionCur) + keyShift;
+  return 72 + SCALE[deg % SCALE.length] + Math.round(-2 * tensionCur) + keyShift;
 }
 
 function now() { return ctx.currentTime + 0.004; }
@@ -908,7 +960,7 @@ const SFX = {
     label: '加固',
     play: (w) => {
       noiseHit(w, 5200, 3, 0.06, 0.16);
-      ping(w, scene().root + 12, 0.18, 0.12, 0.2, 'sine');
+      ping(w, 60, 0.18, 0.12, 0.2, 'sine');          // C4
       noiseHit(w + 0.01, 900, 1, 0.1, 0.08);
     }
   },
@@ -917,7 +969,7 @@ const SFX = {
   bury: {
     label: '埋底',
     play: (w) => {
-      ping(w, scene().root - 12, 0.18, 0.16, 0.15, 'sine');
+      ping(w, 48, 0.18, 0.16, 0.15, 'sine');         // C3
       noiseHit(w, 500, 0.8, 0.12, 0.08, 'lowpass');
     }
   },
@@ -931,7 +983,7 @@ const SFX = {
   },
 
   /* 按钮 / 弹层：极轻（注意 ping 收的是 MIDI 音高，不是频率） */
-  ui: { label: '按钮', play: (w) => ping(w, scene().root + 36, 0.012, 0.05, 0.5, 'square') }
+  ui: { label: '按钮', play: (w) => ping(w, 84, 0.012, 0.05, 0.5, 'square') }   // C6
 };
 
 /** 触发一个音效（带密度抑制：同事件 70ms 内不重复） */
@@ -984,15 +1036,13 @@ function buildStyleBox() {
       accInst = st.acc; melInst = st.mel;
       Array.prototype.forEach.call($('instBox').children, c => c.classList.toggle('on', c.dataset.inst === st.acc));
       Array.prototype.forEach.call($('melBox').children, c => c.classList.toggle('on', c.dataset.inst === st.mel));
-      $('styleNote').textContent = st.name + '：' + st.note + ' · ' + st.bpm + ' BPM · 旋律音区 '
-        + (st.oct === 36 ? 'C6–C7（亮）' : 'C5–C6（柔）');
+      $('styleNote').textContent = st.name + '：' + st.note + ' · 旋律音域 E4–E5';
       updateStat();
     };
     $(`styleBox`).appendChild(b);
   });
   const st = style();
-  $('styleNote').textContent = st.name + '：' + st.note + ' · ' + st.bpm + ' BPM · 旋律音区 '
-    + (st.oct === 36 ? 'C6–C7（亮）' : 'C5–C6（柔）');
+  $('styleNote').textContent = st.name + '：' + st.note + ' · 旋律音域 E4–E5';
 }
 // 初始化时也按当前曲风同步一次音色，否则默认曲风（慵懒 = 钢琴）和
 // 音色选择器的高亮（模块默认 bell）会不一致
@@ -1011,7 +1061,7 @@ function buildInstPicker(boxId, get, set) {
       set(k);
       Array.prototype.forEach.call($(boxId).children, c => c.classList.toggle('on', c.dataset.inst === k));
       // 立刻听一下这个音色（只有启动后才出声）
-      if (playing) voice(k, ctx.currentTime + 0.02, scene().root + 12, 0.9, 0.4, 0.6);
+      if (playing) voice(k, ctx.currentTime + 0.02, 72, 0.9, 0.4, scene().bright, null);
       updateStat();
     };
     $(boxId).appendChild(b);
@@ -1030,7 +1080,7 @@ SECTIONS.forEach((s, i) => {
 
 /* 伴奏网格：4 小节 × 8 列 × 6 行，点格子切换（纵轴从上到下 = bit5 → bit0） */
 function renderAccGrid() {
-  const names = CHORD_NAME[scene().key];
+  const names = CHORD_NAMES;
   let html = '';
   for (let bar = 0; bar < 4; bar++) {
     html += '<div class="accbar"><div class="cap">' + names[bar] + '</div><div class="cells">';
@@ -1056,8 +1106,9 @@ $('accGrid').onclick = e => {
   // 点完立刻试听这一格（只有启动后才出声）
   if (playing && ((ACC_GRID[col] >> row) & 1)) {
     const bar = Math.floor(col / 8);
-    const v = chordVoices(CHORDS[scene().key][bar], scene().root + Math.round(-2 * tensionCur));
-    voice(accInst, ctx.currentTime + 0.02, v[row], 0.9, 0.4, 0.6);
+    const ch = CHORDS[bar % 4];
+    const pitch = ch.p[row] + Math.round(-2 * tensionCur) + (row === 5 ? 12 : 0);
+    voice(accInst, ctx.currentTime + 0.02, pitch, 0.9, 0.4, scene().bright, accBus);
   }
 };
 
@@ -1150,10 +1201,10 @@ $('btnStart').onclick = () => {
 function updateStat() {
   const sc = scene();
   const bpm = Math.round(sc.bpm * (1 + 0.08 * tensionCur));
-  const keyName = sc.key === 'minor' ? 'A 小调' : 'C 大调';
+  const keyName = 'C 大调';
   // 版本角标实时反映当前状态 —— 用户三次反馈「阴沉」但实测频谱已完全不同，
   // 怀疑是浏览器标签页缓存了旧版。角标一换就能立刻确认自己在听哪一版。
-  $('verBadge').textContent = 'v8 · ' + style().name + ' · ' + bpm + ' BPM';
+  $('verBadge').textContent = 'v9 · ' + style().name + ' · ' + bpm + ' BPM';
   const tr = Math.round(-2 * tensionCur);
   const secIdx = Math.floor(barIndex / 4) % SECTIONS.length;
   const sec = SECTIONS[secIdx];
@@ -1178,7 +1229,7 @@ function updateStat() {
     .map(([n, on]) => `<span class="tag${on ? ' act' : ''}">${n}</span>`).join('');
 
   $('stat2').innerHTML = playing
-    ? `运行中 · 伴奏 ${INST_LABEL[accInst]} / 主旋律 ${INST_LABEL[melInst]} · 音效根音 <b>${sc.root + 24 + tr + keyShift}</b>${keyShift ? '（转调 ' + (keyShift > 0 ? '+' : '') + keyShift + '）' : ''} · 采样率 ${ctx.sampleRate} Hz`
+    ? `运行中 · 伴奏 ${INST_LABEL[accInst]} / 主旋律 ${INST_LABEL[melInst]} · 音效根音 <b>${72 + tr + keyShift}</b>${keyShift ? '（转调 ' + (keyShift > 0 ? '+' : '') + keyShift + '）' : ''} · 采样率 ${ctx.sampleRate} Hz`
     : '未启动 —— 点上面的「启动」（浏览器要求先有用户手势才能出声）';
 }
 
