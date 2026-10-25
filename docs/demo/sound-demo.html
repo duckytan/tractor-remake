@@ -487,36 +487,40 @@ function initAudio() {
   wetBus = ctx.createGain(); wetBus.gain.value = 1.0;
   wetBus.connect(conv); conv.connect(wetGain); wetGain.connect(master);
 
+  /* BGM 总音量：所有乐器总线必须**经过它**再进 dry/wet，
+     否则 musicBus.gain 调的是一个空节点 —— BGM 滑杆会完全失效。
+     （曾经就踩过：乐器总线直接接了 dryBus，滑杆形同虚设。） */
+  musicBus = ctx.createGain(); musicBus.gain.value = volBgm;
+  musicBus.connect(dryBus); musicBus.connect(wetBus);
+
   /* 木吉他（分解和弦）偏左 */
   gtrBus = ctx.createGain(); gtrBus.gain.value = 0.78;
   const gp = ctx.createStereoPanner(); gp.pan.value = -0.28;
-  gtrBus.connect(gp); gp.connect(dryBus); gp.connect(wetBus);
+  gtrBus.connect(gp); gp.connect(musicBus);
 
   /* 钢琴偏右 */
   pnoBus = ctx.createGain(); pnoBus.gain.value = 0.80;
   const pp = ctx.createStereoPanner(); pp.pan.value = 0.22;
-  pnoBus.connect(pp); pp.connect(dryBus); pp.connect(wetBus);
+  pnoBus.connect(pp); pp.connect(musicBus);
 
   /* 伴奏总线：网格分解 + 左手和弦都走这里 */
   accBus = ctx.createGain(); accBus.gain.value = 0.78;
   const ap = ctx.createStereoPanner(); ap.pan.value = -0.12;
-  accBus.connect(ap); ap.connect(dryBus); ap.connect(wetBus);
+  accBus.connect(ap); ap.connect(musicBus);
 
   /* 主旋律总线：不论选哪种音色都走这里，跟伴奏分开，音量可独立调 */
   leadBus = ctx.createGain(); leadBus.gain.value = 0.80;
   const lp2 = ctx.createStereoPanner(); lp2.pan.value = 0.06;
-  leadBus.connect(lp2); lp2.connect(dryBus); lp2.connect(wetBus);
+  leadBus.connect(lp2); lp2.connect(musicBus);
 
   /* 和声床：居中，垫厚度 */
   padBus = ctx.createGain(); padBus.gain.value = 0.20;
-  padBus.connect(dryBus); padBus.connect(wetBus);
+  padBus.connect(musicBus);
 
-  /* 音效总线 */
+  /* BGM 效果层（沙锤等）：**要经过 musicBus** —— 它是 BGM 的一部分，
+     BGM 滑杆拉到 0 时它也必须静下来。 */
   fxBus = ctx.createGain(); fxBus.gain.value = 1.0;
-  fxBus.connect(dryBus); fxBus.connect(wetBus);
-
-  musicBus = ctx.createGain(); musicBus.gain.value = volBgm;
-  musicBus.connect(dryBus); musicBus.connect(wetBus);
+  fxBus.connect(musicBus);
   sfxBus = ctx.createGain(); sfxBus.gain.value = volSfx;
   sfxBus.connect(dryBus); sfxBus.connect(wetBus);
 
@@ -918,7 +922,7 @@ let engineMode = 'native';      // 'native' | 'tone'
 let toneReady = false, toneLoading = null, toneLibFrom = '';
 let tInited = false;
 let tMaster, tTone, tComp, tLim, tDry, tWet, tWetGain, tRev;
-let tLead, tAcc, tPad, tFx, tShaker, tPadSynth;
+let tLead, tAcc, tPad, tFx, tMusic, tShaker, tPadSynth;
 const toneRacks = new Map();
 let toneQueue = [], toneQueueOn = false;
 let tPadLast = -1, tShakerLast = -1;
@@ -1156,7 +1160,10 @@ async function toneInit() {
   tAcc = new Tone.Channel({ volume: Tone.gainToDb(0.78), pan: -0.12 });
   tPad = new Tone.Channel({ volume: Tone.gainToDb(0.20), pan: 0 });
   tFx = new Tone.Channel({ volume: Tone.gainToDb(1.00), pan: 0 });
-  [tLead, tAcc, tPad, tFx].forEach(function (c) { c.connect(tDry); c.connect(tWet); });
+  // 和原生侧对齐：四个通道统一经过 tMusic，BGM 滑杆才有东西可调
+  tMusic = new Tone.Gain(volBgm);
+  [tLead, tAcc, tPad, tFx].forEach(function (c) { c.connect(tMusic); });
+  tMusic.connect(tDry); tMusic.connect(tWet);
 
   tPadSynth = new Tone.PolySynth(Tone.Synth, {
     oscillator: { type: 'sine' },
@@ -1181,11 +1188,11 @@ async function toneInit() {
 function toneTeardown() {
   toneRacks.forEach(function (r) { try { if (r && r.dispose) r.dispose(); } catch (e) {} });
   toneRacks.clear();
-  [tPadSynth, tShaker, tLead, tAcc, tPad, tFx,
+  [tPadSynth, tShaker, tLead, tAcc, tPad, tFx, tMusic,
    tWet, tRev, tWetGain, tDry, tMaster, tTone, tComp, tLim].forEach(function (n) {
     try { if (n && n.dispose) n.dispose(); } catch (e) {}
   });
-  tPadSynth = tShaker = tLead = tAcc = tPad = tFx = null;
+  tPadSynth = tShaker = tLead = tAcc = tPad = tFx = tMusic = null;
   tWet = tRev = tWetGain = tDry = tMaster = tTone = tComp = tLim = null;
   tInited = false; toneReady = false;
   tPadLast = -1; tShakerLast = -1;
@@ -1945,8 +1952,18 @@ const bindVol = (id, vid, fn) => {
   const el = $(id), v = $(vid);
   el.oninput = () => { v.textContent = el.value; fn(+el.value / 100); };
 };
+/** 应用 BGM 音量 —— 原生与 Tone 两套总线都要照顾到 */
+function applyBgmVol(x) {
+  volBgm = x;
+  if (engineMode === 'tone') {
+    if (tMusic) { try { tMusic.gain.rampTo(x, 0.05); } catch (e) {} }
+  } else if (musicBus && ctx) {
+    musicBus.gain.setTargetAtTime(x, ctx.currentTime, 0.05);
+  }
+}
+
 bindVol('vol', 'volV', x => { if (master) master.gain.setTargetAtTime(x, ctx.currentTime, 0.05); savePrefs(); });
-bindVol('bgm', 'bgmV', x => { volBgm = x; if (musicBus) musicBus.gain.setTargetAtTime(x, ctx.currentTime, 0.05); savePrefs(); });
+bindVol('bgm', 'bgmV', x => { applyBgmVol(x); savePrefs(); });
 bindVol('sfx', 'sfxV', x => { volSfx = x; if (sfxBus) sfxBus.gain.setTargetAtTime(x, ctx.currentTime, 0.05); savePrefs(); });
 
 /* 紧张度 */
