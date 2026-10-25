@@ -305,9 +305,9 @@ const THEMES = {
 };
 // 顺序与 engine-ab.html 的 SEASON_ORDER 一致（春 → 夏 → 秋 → 冬），不擅自重排
 const THEME_ORDER = ['spring', 'summer', 'autumn', 'winter'];
-// 默认停在「秋 · 落叶」：叹息动机 + 音区最低 + 长音最多，最贴「慵懒的下午打牌」。
-// 注意这只是「初始选中项」，不是排序主张 —— 要开屏就是春，把下面这行改成 'spring' 即可。
-let themeKey = 'autumn';
+// 默认「春 · 萌动」—— 与参考实现一致：DEFAULT_SEASON = SEASON_ORDER[0] = 'spring'。
+// （之前我为了"开屏就听到最贴慵懒的那条"擅自设成 autumn，已改回。）
+let themeKey = 'spring';
 const theme = () => THEMES[themeKey];
 
 /* ============================================================
@@ -2085,7 +2085,7 @@ document.addEventListener('visibilitychange', function () {
   }
 });
 
-/** 音量/开关持久化（正式版应该并进 persist.ts，这里先用 localStorage 对齐） */
+/** 音量 / 引擎持久化（主题不记，见 savePrefs 注释）。正式版应该并进 persist.ts。 */
 const PREF_KEY = 'tractor-sound-demo-prefs';
 function loadPrefs() {
   try {
@@ -2096,14 +2096,15 @@ function loadPrefs() {
     if (typeof o.bgm === 'number') { volBgm = o.bgm; $('bgm').value = o.bgm * 100; $('bgmV').textContent = Math.round(o.bgm * 100); }
     if (typeof o.sfx === 'number') { volSfx = o.sfx; $('sfx').value = o.sfx * 100; $('sfxV').textContent = Math.round(o.sfx * 100); }
     if (o.engine && ENGINES[o.engine]) engineMode = o.engine;
-    if (o.theme && THEMES[o.theme]) themeKey = o.theme;
   } catch (e) { /* 隐私模式下 localStorage 会抛，忽略即可 */ }
 }
 function savePrefs() {
   try {
     localStorage.setItem(PREF_KEY, JSON.stringify({
       vol: +$('vol').value / 100, bgm: +$('bgm').value / 100, sfx: +$('sfx').value / 100,
-      engine: engineMode, theme: themeKey
+      engine: engineMode
+      // 注意：**主题不持久化** —— 否则上次点过哪个季，下次开屏就变成那个季，
+      // 「默认值」就名存实亡了。音量/引擎是用户偏好，可以记；主题是内容选择，不记。
     }));
   } catch (e) {}
 }
