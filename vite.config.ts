@@ -15,6 +15,7 @@ export default defineConfig({
       '@ai': r('./src/ai'),
       '@app': r('./src/app'),
       '@ui': r('./src/ui'),
+      '@audio': r('./src/audio'),
     },
   },
   build: {

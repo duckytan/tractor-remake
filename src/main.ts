@@ -16,6 +16,8 @@ import type { Prefs } from '@app/persist'
 import { ANIM_SPEED_SCALE, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { refitHand, render } from '@ui/render'
 import { captureFx, setAnimScale, trackDealAnimation, trackPlayFx } from '@ui/dealFly'
+import { createAudio } from '@audio/index'
+import type { AudioHandle, AudioSettings } from '@audio/index'
 
 const root = document.getElementById('app')
 if (!root) throw new Error('#app 未找到')
@@ -138,6 +140,12 @@ function afterChange(): void {
     showHistory: state.showHistory,
     hintSelects: state.hintSelects,
     showCounter: state.showCounter,
+    musicTheme: state.musicTheme,
+    soundEnhanced: state.soundEnhanced,
+    autoVariation: state.autoVariation,
+    volumeMaster: state.volumeMaster,
+    volumeBgm: state.volumeBgm,
+    volumeSfx: state.volumeSfx,
   })
   paint()
 
@@ -165,6 +173,43 @@ if (import.meta.env.PROD && !isLocalHost && 'serviceWorker' in navigator) {
 /** 上一次 paint 用的状态：captureFx 要用它读「上一帧的本墩出牌」（见 ui/dealFly.ts） */
 let lastPainted: GameState | null = null
 
+/* ============================================================
+   音频
+   ------------------------------------------------------------
+   纯观察者：`core` / `app` 一行都不改，靠 paint() 里的前后帧 diff 推断发生了什么。
+   浏览器要求用户手势后才能出声 ⇒ 首次交互时 start()。
+   ============================================================ */
+
+const audioSettingsOf = (s: GameState): AudioSettings => ({
+  volumeMaster: s.volumeMaster / 100,
+  volumeBgm: s.volumeBgm / 100,
+  volumeSfx: s.volumeSfx / 100,
+  musicTheme: s.musicTheme,
+  soundEnhanced: s.soundEnhanced,
+  autoVariation: s.autoVariation,
+})
+
+const audio: AudioHandle = createAudio(audioSettingsOf(state))
+
+/** 首次用户手势起播（浏览器自动播放策略） */
+let audioStarted = false
+function ensureAudioStarted(): void {
+  if (audioStarted) return
+  audioStarted = true
+  audio.start()
+  audio.applySettings(audioSettingsOf(state))
+}
+window.addEventListener('pointerdown', ensureAudioStarted, { once: true })
+window.addEventListener('keydown', ensureAudioStarted, { once: true })
+
+/** 切后台就 suspend，回来再 resume —— 省电，也避免锁屏还在响 */
+document.addEventListener('visibilitychange', () => {
+  audio.setPageVisible(!document.hidden)
+})
+
+/** 上一次 paint 给音频用的状态（与 lastPainted 同源，单独存一份避免动画关掉时失效） */
+let lastAudioPainted: GameState | null = null
+
 function paint(): void {
   // 出牌动画只在「出牌阶段 + 动画开」时需要前后帧快照。
   // 发牌阶段每 55ms 一次 paint，每次都量 30+ 个矩形（强制同步布局）纯属浪费。
@@ -181,6 +226,14 @@ function paint(): void {
   })
   trackDealAnimation(root as HTMLElement, state)
   if (before !== null) trackPlayFx(root as HTMLElement, state, before)
+
+  // 音频：跟动画用同一套「前后帧」思路（prev 必须是上一帧的状态）
+  const prevForAudio = lastAudioPainted
+  lastAudioPainted = state
+  if (prevForAudio !== null && prevForAudio !== state) {
+    audio.observe(prevForAudio, state)
+  }
+  audio.applySettings(audioSettingsOf(state))
 }
 
 function dispatch(a: Action): void {

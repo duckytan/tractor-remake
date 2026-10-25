@@ -11,6 +11,7 @@
 import type { Card, LevelRank, Play, PlayResult, RuleConfig, Seat, Trump } from '@core'
 import { DEAL_TOTAL, DECK_SIZE, GUARD_NEED, checkPlay, dealtCount, teamOf } from '@core'
 import type { AiLevel } from '@ai/policy'
+import { THEMES, THEME_ORDER, isThemeKey } from '@audio/scenes'
 import type { Action, CardSize, GameState } from '@app/state'
 import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
@@ -717,6 +718,35 @@ function settingsPanel(s: GameState): string {
     <p class="muted">规则开关改动在<b>下一局</b>生效；体验项立即生效。</p>
 
     <div class="set-group">
+      <h3>声音</h3>
+      <div class="set-row">
+        <span>音乐主题<small class="set-desc">四季各一条旋律，切换后下一小节生效</small></span>
+        <select class="set-select" data-sound="theme" aria-label="音乐主题">
+          ${THEME_ORDER.map(
+            (k) => `<option value="${k}"${s.musicTheme === k ? ' selected' : ''}>${THEMES[k].name}</option>`,
+          ).join('')}
+        </select>
+      </div>
+      ${swAct('toggleSoundEnhanced', '增强音效', 'BGM 改用 Tone.js 引擎（更细腻；首次需联网加载，失败自动退回）', s.soundEnhanced)}
+      ${swAct('toggleAutoVariation', '根据剧情自动变奏', '关闭后永远是同一套编排、不转调', s.autoVariation)}
+      <div class="set-row">
+        <span>总音量</span>
+        <input class="set-range" type="range" min="0" max="100" step="1" value="${s.volumeMaster}" data-vol="master" aria-label="总音量" />
+        <b class="set-num">${s.volumeMaster}</b>
+      </div>
+      <div class="set-row">
+        <span>BGM 音量</span>
+        <input class="set-range" type="range" min="0" max="100" step="1" value="${s.volumeBgm}" data-vol="bgm" aria-label="BGM 音量" />
+        <b class="set-num">${s.volumeBgm}</b>
+      </div>
+      <div class="set-row">
+        <span>音效音量</span>
+        <input class="set-range" type="range" min="0" max="100" step="1" value="${s.volumeSfx}" data-vol="sfx" aria-label="音效音量" />
+        <b class="set-num">${s.volumeSfx}</b>
+      </div>
+    </div>
+
+    <div class="set-group">
       <h3>规则</h3>
       ${sw('allowSelfCounter', '允许自反', '同队也可反主', c.allowSelfCounter)}
       ${sw('twoAsPermanent', '2 为常主', '两张 2 恒为主牌', c.twoAsPermanent)}
@@ -1038,6 +1068,12 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
       case 'toggleShowCounter':
         act.dispatch({ type: 'toggleShowCounter' })
         break
+      case 'toggleSoundEnhanced':
+        act.dispatch({ type: 'toggleSoundEnhanced' })
+        break
+      case 'toggleAutoVariation':
+        act.dispatch({ type: 'toggleAutoVariation' })
+        break
       case 'replayStart':
         if (val !== undefined) act.dispatch({ type: 'replayStart', index: Number(val) })
         break
@@ -1073,5 +1109,24 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
       default:
         break
     }
+  }
+
+  /* 声音：下拉与滑条用 change / input，不用 click */
+  root.onchange = (ev) => {
+    const el = ev.target as HTMLElement
+    if (!(el instanceof HTMLSelectElement)) return
+    if (el.dataset.sound !== 'theme') return
+    if (isThemeKey(el.value)) act.dispatch({ type: 'setMusicTheme', theme: el.value })
+  }
+
+  root.oninput = (ev) => {
+    const el = ev.target as HTMLElement
+    if (!(el instanceof HTMLInputElement)) return
+    const which = el.dataset.vol
+    if (which !== 'master' && which !== 'bgm' && which !== 'sfx') return
+    act.dispatch({ type: 'setVolume', which, value: Number(el.value) })
+    // 滑条旁边的数字就地更新，不等整页重绘（拖动时不闪）
+    const num = el.parentElement?.querySelector('.set-num')
+    if (num) num.textContent = el.value
   }
 }

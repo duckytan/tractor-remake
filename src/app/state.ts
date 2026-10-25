@@ -6,6 +6,7 @@
  */
 
 import type { AiLevel } from '@ai/policy'
+import type { ThemeKey } from '@audio/scenes'
 import type {
   Card,
   LevelRank,
@@ -175,6 +176,22 @@ export interface GameState {
    * ① 覆盖用户已选好的牌；② `selected` 会随存档一起持久化。
    */
   readonly hintSelects: boolean
+  /* ---------------- 声音（v1.4） ----------------
+     全部是纯偏好，不参与任何规则判定。音频模块只读它们。 */
+
+  /** 音乐主题：四季之一（默认春） */
+  readonly musicTheme: ThemeKey
+  /** 增强音效：BGM 改用 Tone.js 引擎（需要联网或本地 tone.min.js） */
+  readonly soundEnhanced: boolean
+  /** 根据剧情自动变奏：关掉就永远同一套编排、不转调 */
+  readonly autoVariation: boolean
+  /** 总音量 0..100 */
+  readonly volumeMaster: number
+  /** BGM 音量 0..100 */
+  readonly volumeBgm: number
+  /** 音效音量 0..100 */
+  readonly volumeSfx: number
+
   /** 设置弹层是否打开 */
   readonly settingsOpen: boolean
   /** 对局记录弹层是否打开 */
@@ -225,6 +242,10 @@ export type Action =
   | { readonly type: 'toggleShowHistory' }
   | { readonly type: 'toggleHintSelects' }
   | { readonly type: 'toggleShowCounter' }
+  | { readonly type: 'setMusicTheme'; readonly theme: ThemeKey }
+  | { readonly type: 'toggleSoundEnhanced' }
+  | { readonly type: 'toggleAutoVariation' }
+  | { readonly type: 'setVolume'; readonly which: 'master' | 'bgm' | 'sfx'; readonly value: number }
   | { readonly type: 'replayStart'; readonly index: number }
   | { readonly type: 'replayStep'; readonly delta: number }
   | { readonly type: 'replayExit' }
@@ -307,6 +328,12 @@ export const emptyState = (): GameState => ({
   animSpeed: 'normal',
   confirmNew: false,
   showCounter: false,
+  musicTheme: 'spring',
+  soundEnhanced: false,
+  autoVariation: true,
+  volumeMaster: 75,
+  volumeBgm: 40,
+  volumeSfx: 80,
   replayAt: null,
   showHistory: true,
   hintSelects: false,

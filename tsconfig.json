@@ -25,7 +25,8 @@
       "@core/*": ["./src/core/*"],
       "@ai/*": ["./src/ai/*"],
       "@app/*": ["./src/app/*"],
-      "@ui/*": ["./src/ui/*"]
+      "@ui/*": ["./src/ui/*"],
+      "@audio/*": ["./src/audio/*"]
     }
   },
   "include": ["src", "tests", "vite.config.ts", "vitest.config.ts"]

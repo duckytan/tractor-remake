@@ -8,6 +8,8 @@
 import type { GameState } from './state'
 import { STATE_VERSION } from './state'
 import type { AnimSpeed, CardSize } from './state'
+import { isThemeKey } from '@audio/scenes'
+import type { ThemeKey } from '@audio/scenes'
 import { DEFAULT_RULE_CONFIG, HAND_SIZE } from '@core'
 import type { Card } from '@core'
 import type { RuleConfig } from '@core'
@@ -59,6 +61,13 @@ export interface Prefs {
   readonly hintSelects: boolean
   /** 记牌器 */
   readonly showCounter: boolean
+  /* ---------------- 声音 ---------------- */
+  readonly musicTheme: ThemeKey
+  readonly soundEnhanced: boolean
+  readonly autoVariation: boolean
+  readonly volumeMaster: number
+  readonly volumeBgm: number
+  readonly volumeSfx: number
 }
 
 const DEFAULT_PREFS: Prefs = {
@@ -73,6 +82,12 @@ const DEFAULT_PREFS: Prefs = {
   showHistory: true,
   hintSelects: false,
   showCounter: false,
+  musicTheme: 'spring',
+  soundEnhanced: false,
+  autoVariation: true,
+  volumeMaster: 75,
+  volumeBgm: 40,
+  volumeSfx: 80,
 }
 
 /**
@@ -122,6 +137,9 @@ export function loadPrefs(): Prefs {
     const level = (v: unknown): AiLevel => (v === 0 || v === 2 || v === 3 ? v : 1)
     // 旧存档只有单档 aiLevel ⇒ 两侧都继承它
     const legacy = o.aiLevel
+    /** 音量：0..100 整数，非法值回落默认 */
+    const vol = (v: unknown, d: number): number =>
+      typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : d
     return {
       aiLevelPartner: o.aiLevelPartner === undefined ? level(legacy) : level(o.aiLevelPartner),
       aiLevelOpponent: o.aiLevelOpponent === undefined ? level(legacy) : level(o.aiLevelOpponent),
@@ -142,6 +160,13 @@ export function loadPrefs(): Prefs {
       showHistory: o.showHistory !== false,
       hintSelects: o.hintSelects === true,
       showCounter: o.showCounter === true,
+      // 声音：主题非法值回落默认（春），音量夹到 0..100
+      musicTheme: isThemeKey(o.musicTheme) ? o.musicTheme : DEFAULT_PREFS.musicTheme,
+      soundEnhanced: o.soundEnhanced === true,
+      autoVariation: o.autoVariation !== false,
+      volumeMaster: vol(o.volumeMaster, DEFAULT_PREFS.volumeMaster),
+      volumeBgm: vol(o.volumeBgm, DEFAULT_PREFS.volumeBgm),
+      volumeSfx: vol(o.volumeSfx, DEFAULT_PREFS.volumeSfx),
     }
   } catch {
     return DEFAULT_PREFS

@@ -519,6 +519,12 @@ function emptyBase(): GameState {
     replayAt: null,
     showHistory: true,
     hintSelects: false,
+    musicTheme: 'spring',
+    soundEnhanced: false,
+    autoVariation: true,
+    volumeMaster: 75,
+    volumeBgm: 40,
+    volumeSfx: 80,
     settingsOpen: false,
     logOpen: false,
     hintIds: [],
@@ -1210,6 +1216,22 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'toggleShowCounter':
       return { ...s, showCounter: !s.showCounter }
+
+    case 'setMusicTheme':
+      return { ...s, musicTheme: action.theme }
+
+    case 'toggleSoundEnhanced':
+      return { ...s, soundEnhanced: !s.soundEnhanced }
+
+    case 'toggleAutoVariation':
+      return { ...s, autoVariation: !s.autoVariation }
+
+    case 'setVolume': {
+      const v = Math.max(0, Math.min(100, Math.round(action.value)))
+      if (action.which === 'master') return { ...s, volumeMaster: v }
+      if (action.which === 'bgm') return { ...s, volumeBgm: v }
+      return { ...s, volumeSfx: v }
+    }
 
     case 'replayStart': {
       if (s.history.length === 0) return s
