@@ -301,8 +301,10 @@ const THEMES = {
     ]
   }
 };
-const THEME_ORDER = ['autumn', 'spring', 'summer', 'winter'];
-// 默认「秋 · 落叶」：叹息动机 + 音区最低 + 长音最多，最贴「慵懒的下午打牌」
+// 顺序与 engine-ab.html 的 SEASON_ORDER 一致（春 → 夏 → 秋 → 冬），不擅自重排
+const THEME_ORDER = ['spring', 'summer', 'autumn', 'winter'];
+// 默认停在「秋 · 落叶」：叹息动机 + 音区最低 + 长音最多，最贴「慵懒的下午打牌」。
+// 注意这只是「初始选中项」，不是排序主张 —— 要开屏就是春，把下面这行改成 'spring' 即可。
 let themeKey = 'autumn';
 const theme = () => THEMES[themeKey];
 
