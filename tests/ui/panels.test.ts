@@ -129,3 +129,42 @@ describe('设置面板 · 声音分组', () => {
     expect(html).toContain('value="30"')
   })
 })
+
+describe('设置面板 · 规则改动的「下一局生效」提示', () => {
+  it('没有改动时只显示普通说明，没有警告条', () => {
+    const html = settingsPanel(base())
+    expect(html).not.toContain('set-warn')
+    expect(html).toContain('下一局')
+  })
+
+  it('改了规则但本局未生效：列出改动项并说明本局仍按旧规则', () => {
+    const s = base()
+    const html = settingsPanel({
+      ...s,
+      pendingConfig: { ...s.pendingConfig, twoAsPermanent: !s.config.twoAsPermanent },
+    })
+    expect(html).toContain('set-warn')
+    expect(html).toContain('2 为常主')
+    expect(html).toContain('本局仍按旧规则')
+  })
+
+  it('多项改动会逐条列出', () => {
+    const s = base()
+    const html = settingsPanel({
+      ...s,
+      pendingConfig: {
+        ...s.pendingConfig,
+        twoAsPermanent: !s.config.twoAsPermanent,
+        guardJack: !s.config.guardJack,
+      },
+    })
+    expect(html).toContain('2 为常主')
+    expect(html).toContain('J 必打')
+  })
+
+  it('只有体验项改动（声音/动画）不算规则改动', () => {
+    const s = base()
+    const html = settingsPanel({ ...s, volumeBgm: 10, animSpeed: 'fast' })
+    expect(html).not.toContain('set-warn')
+  })
+})

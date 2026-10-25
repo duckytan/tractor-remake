@@ -138,7 +138,10 @@ export interface BuildPowerOptions {
  */
 export function buildPowerTable(o: BuildPowerOptions): PowerTable {
   const { mode, trump } = o
-  const forcedNT = o.forcedNT === true
+  // 打王级（levelRank 18）本身就是强制无将 + 级牌不提升。
+  // 这里必须由函数自己兜底：调用方漏传 `forcedNT` 时，下面
+  // `lvRank !== 0` 会因为 lvRank 是 null 而判成 true，把 2 错误提升成主牌。
+  const forcedNT = o.forcedNT === true || o.levelRank === 18
   const power = new Array<number>(CARD_VALUE_COUNT).fill(0)
 
   const lvRank = forcedNT ? null : levelRankToRankIndex(o.levelRank)

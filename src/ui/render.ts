@@ -676,6 +676,37 @@ export function legalityBadgeOf(result: PlayResult): string {
 }
 
 /** 设置面板（FR-18）—— 导出给单测断言内容用 */
+/** 规则项的中文名（「改动未生效」提示要逐条列出来） */
+const RULE_LABEL: Record<keyof RuleConfig, string> = {
+  allowSelfCounter: '允许自反',
+  twoAsPermanent: '2 为常主',
+  allowPartnerGuard: '允许对家保',
+  allowCounterNT: '允许反无将',
+  guardScoreLevels: '5,10,K 必打',
+  guardJack: 'J 必打',
+  guardAce: 'A 必打',
+  guardKingLevel: '打王必打',
+}
+
+/**
+ * 设置面板顶部那句说明。
+ *
+ * 只在「待生效 ≠ 当前生效」时变成醒目的警告条 —— 因为规则开关是**下一局**生效，
+ * 玩家改完 `2 为常主` 回头看手牌，发现 2 还排在副牌段末尾，很容易以为功能坏了
+ * （v1.3.18 用户反馈）。把「改了哪几项、本局仍按旧规则」直接写出来。
+ */
+function ruleNote(pending: RuleConfig, live: RuleConfig): string {
+  const changed = (Object.keys(RULE_LABEL) as (keyof RuleConfig)[]).filter((k) => pending[k] !== live[k])
+  if (changed.length === 0) {
+    return '<p class="muted">规则开关改动在<b>下一局</b>生效；体验项立即生效。</p>'
+  }
+  return (
+    '<p class="set-warn">⚠ 已改 ' +
+    changed.map((k) => `<b>${RULE_LABEL[k]}</b>`).join('、') +
+    ' —— <b>本局仍按旧规则</b>进行，点「下一局」或「新游戏」后才生效。</p>'
+  )
+}
+
 export function settingsPanel(s: GameState): string {
   const c = s.pendingConfig
   /** 规则开关：写 pendingConfig，下一局生效 */
@@ -715,7 +746,7 @@ export function settingsPanel(s: GameState): string {
 
   return `<div class="panel panel--wide" role="dialog" aria-label="设置">
     <h2>设置</h2>
-    <p class="muted">规则开关改动在<b>下一局</b>生效；体验项立即生效。</p>
+    ${ruleNote(c, s.config)}
 
     <div class="set-group">
       <h3>声音</h3>
@@ -814,7 +845,7 @@ export function settingsPanel(s: GameState): string {
       「必打」是<b>升级时禁止跳级</b>的限制，与出牌无关（见规则书 §10.3）。
     </div>
 
-    <button class="btn btn--primary" data-act="closeSettings">完成</button>
+    <div class="panel-foot"><button class="btn btn--primary" data-act="closeSettings">完成</button></div>
   </div>`
 }
 
@@ -855,7 +886,7 @@ function logPanel(s: GameState): string {
     <h2>对局记录</h2>
     <p class="muted">已打完 ${s.history.length} 墩（仅内存，不写存档）</p>
     ${items ? `<div class="log-list">${items}</div>` : '<div class="log-empty">还没有打完的墩</div>'}
-    <button class="btn btn--primary" data-act="toggleLog">关闭</button>
+    <div class="panel-foot"><button class="btn btn--primary" data-act="toggleLog">关闭</button></div>
   </div>`
 }
 

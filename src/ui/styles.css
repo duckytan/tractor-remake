@@ -494,6 +494,11 @@ html, body {
   padding: 24px 26px;
   min-width: 320px;
   max-width: 460px;
+  /* 设置面板加了两组内容（声音 + 规则改动提示）后，矮屏上会顶出视口，
+     「完成」按钮压住最后两行规则。给个高度上限自己滚。 */
+  max-height: 86vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
 }
 .panel h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
@@ -717,13 +722,24 @@ html, body {
   max-width: 520px;
   max-height: 86vh;
   overflow-y: auto;
+  /* 底部间距交给 .panel-foot 自己，面板这一侧必须为 0 ——
+     否则滚动内容会画进这圈 padding，从按钮下面露出来 */
+  padding-bottom: 0;
 }
-/* 面板内容变长后「完成 / 关闭」会被推到滚动区外，钉在底部保证随时可点 */
-.panel--wide > .btn:last-child {
+/* 面板内容变长后「完成 / 关闭」会被推到滚动区外，钉在底部保证随时可点。
+   必须用**实心底 + 负边距铺满**：`overflow: auto` 的裁剪边界是 padding box，
+   滚动内容会画到面板底部那圈 padding 里，按钮只盖住自己那 30px，
+   下面的字就从缝里露出来了（v1.3.18 实测）。 */
+.panel-foot {
   position: sticky;
   bottom: 0;
-  box-shadow: 0 -8px 12px rgba(255, 255, 255, 0.92);
+  margin: 18px -26px 0;
+  padding: 12px 26px 18px;
+  background: var(--panel);
+  border-radius: 0 0 16px 16px;
+  box-shadow: 0 -10px 14px rgba(255, 255, 255, 0.96);
 }
+.panel-foot > .btn { width: 100%; }
 
 .set-group { margin-bottom: 18px; }
 .set-group:last-of-type { margin-bottom: 8px; }
@@ -735,6 +751,20 @@ html, body {
   letter-spacing: 0.6px;
   text-transform: uppercase;
 }
+
+/* 「规则已改但本局未生效」提示条。
+   面板是白底（--panel: #ffffff），所以用暖黄底 + 深棕字，别用深色面板的配色。 */
+.set-warn {
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: #fff6e0;
+  border: 1px solid #f0c674;
+  color: #7a4a00;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.set-warn b { color: #8a3d00; }
 
 .set-row {
   display: flex;
