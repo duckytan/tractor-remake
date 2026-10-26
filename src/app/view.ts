@@ -17,6 +17,7 @@ import {
   suitOfValue,
   teamOf,
 } from '@core'
+import { trickStanding } from '@core'
 import type { GameState, TrickRecord } from './state'
 import { ctxOf } from './state'
 
@@ -276,4 +277,20 @@ export function counterView(s: GameState): CounterView {
     pointsPlayed: played.reduce((n, c) => n + cardScore(c.value), 0),
     pointsTotal: deck.reduce((n, c) => n + cardScore(c.value), 0),
   }
+}
+
+/**
+ * 本墩「当前谁最大」—— 用于出牌区的领先光晕与座位标签的赢家高亮。
+ *
+ * **别用 `state.trick.winner`**：那个字段在出牌途中恒为 `null`（只有结算时
+ * `resolveTrick` 算出的赢家才会写进 `history`）。v1.3.24 之前座位标签的
+ * `.is-win` 高亮一直没生效，就是因为它比的是这个永远为 null 的字段。
+ *
+ * 判定必须走 `trickStanding()` —— 全项目唯一的一墩判定入口，
+ * 能把「垫牌（混花色）」和「结构不符」正确排除掉，不是简单比 keyCard。
+ */
+export function leadingSeat(s: GameState): Seat | null {
+  if (s.phase !== 'play' || s.replayAt !== null) return null
+  if (s.trick.plays.length === 0) return null
+  return trickStanding(s.trick.plays, ctxOf(s))?.winner.seat ?? null
 }

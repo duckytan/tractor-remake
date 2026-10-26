@@ -1095,6 +1095,9 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'toggleSelect': {
       if (s.phase !== 'play' && s.phase !== 'bury') return s
+      // 防御：只有手牌里的牌能被选中。UI 已经挡住了非手牌的点击，
+      // 但这里再挡一层 —— 选中一张不在手上的牌会让「出牌」亮着却永远出不去。
+      if (!(s.hands[HUMAN_SEAT] as readonly Card[]).some((c) => c.id === action.id)) return s
       const has = s.selected.includes(action.id)
       return {
         ...s,

@@ -313,6 +313,29 @@ html, body {
 .plays__past { display: flex; align-items: center; gap: var(--play-gap); }
 .plays__past:empty { display: none; }
 .past__trick { display: flex; gap: 0; }
+
+/* 当前这墩「最大」的那一组牌：金色呼吸光晕，一眼看出现在要压谁。
+   用 outline 而不是 box-shadow —— 侧家的牌 rotate(±90deg)，outline 会跟着转，
+   而且不占布局、不会挤动邻居。颜色选暖金，和手牌提示的蓝色区分开。 */
+@keyframes leadPulse {
+  0%, 100% { outline-color: rgba(255, 208, 88, 0.3); }
+  50% { outline-color: rgba(255, 208, 88, 0.95); }
+}
+.plays__now--lead .card {
+  outline: 3px solid rgba(255, 208, 88, 0.8);
+  outline-offset: 2px;
+  border-radius: 7px;
+  animation: leadPulse 1.4s ease-in-out infinite;
+}
+/* 关掉动画时保留静态描边：提示还在，但不闪 */
+:root[data-anim='off'] .plays__now--lead .card {
+  animation: none;
+  outline-color: rgba(255, 208, 88, 0.8);
+}
+/* 系统层面要求减少动态效果时同理 */
+@media (prefers-reduced-motion: reduce) {
+  .plays__now--lead .card { animation: none; outline-color: rgba(255, 208, 88, 0.8); }
+}
 .past__trick + .past__trick { border-left: 1px solid rgba(255, 255, 255, 0.12); padding-left: var(--play-gap); }
 
 .cards { display: flex; gap: 0; }

@@ -23,6 +23,7 @@ import {
   replaySummary,
   trickLogView,
 } from '@app/view'
+import { leadingSeat } from '@app/view'
 import type { CounterSlot } from '@app/view'
 import { backEl, cardEl, ensureDefs } from './card'
 import { isBackInFlight, isInFlight } from './dealFly'
@@ -165,6 +166,7 @@ function fillPlays(
   seat: Seat,
   playedW: number,
   tinyW: number,
+  leadSeat: Seat | null,
 ): void {
   // 侧家的竖向堆叠步长要用到本墩牌的宽度
   box.style.setProperty('--played-w', `${playedW}px`)
@@ -177,6 +179,9 @@ function fillPlays(
   // 回放时出牌区显示的是「那一墩」的历史出牌，不是当前墩（见 app/view.ts displayPlays）
   const play = displayPlays(s).find((p) => p.seat === seat)
   if (play) now.appendChild(cardWrap(play.cards, { width: playedW }))
+  // 当前这墩谁最大：给那一组牌加金色呼吸光晕，一眼看出「现在要压谁」。
+  // leadSeat 由 view 层的 leadingSeat() 算（走 trickStanding，能排除垫牌）。
+  now.classList.toggle('plays__now--lead', leadSeat === seat && play !== undefined)
   if (!s.showHistory) return
   const { nos, tricks } = pastPlaysView(s, seat, PAST_DEPTH)
   tricks.forEach((cards, i) => {
@@ -298,6 +303,9 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
           ? SIDE_RATIO_SHORT
           : SIDE_RATIO),
   )
+  // 本墩当前谁最大（走 trickStanding，能排除垫牌）。每帧算一次，四个出牌区共用。
+  // 不能用 s.trick.winner —— 那个字段在出牌途中恒为 null。
+  const leadSeat = leadingSeat(s)
   for (const seat of [1, 2, 3] as Seat[]) {
     const box = q(SEAT_CLASS[seat])
     // 侧家牌背要旋转 90°，旋转后包围盒宽 = 牌高 = sideW×1.4。
@@ -305,7 +313,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     // 否则牌会左右各溢出 0.2×sideW，压到旁边的出牌区上（v1.3.22 实测）。
     box.style.setProperty('--side-w', `${sideW}px`)
     const hand = s.hands[seat] as readonly Card[]
-    const isWinner = s.trick.winner === seat
+    const isWinner = leadSeat === seat
     // 西（1）/ 东（3）竖向堆叠，北（2）保持横向
     const side = seat === 1 || seat === 3
 
@@ -327,6 +335,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       seat,
       playedW,
       tinyW,
+      leadSeat,
     )
   }
   // 填牌背的顺序必须是「北家先、侧家后」：北家那一行是 auto 高，
@@ -363,7 +372,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   /* ---- 中央：牌堆 + 人类座位信息（本墩的牌已挪到南家自己的出牌区） ---- */
   {
     const box = q('center')
-    const isWinner = s.trick.winner === HUMAN_SEAT
+    const isWinner = leadSeat === HUMAN_SEAT
     const full = (s.hands[HUMAN_SEAT] as readonly Card[]).length
     // 逐张发牌期间「手上几张」按已发到的算，别一上来就写 25
     const held = s.phase === 'contract' ? Math.min(full, s.revealed) : full
@@ -384,7 +393,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
 
   /* ---- 南家（你）：自己的出牌区在手牌正前方 ---- */
   {
-    fillPlays(q('plays-mine'), s, HUMAN_SEAT, playedW, tinyW)
+    fillPlays(q('plays-mine'), s, HUMAN_SEAT, playedW, tinyW, leadSeat)
     // 提示条浮在手牌区之上 ⇒ 实测出牌区高度后回写变量
     const box = q('plays-mine')
     root.style.setProperty('--plays-h', box.offsetHeight ? `${box.offsetHeight + 6}px` : '0px')
@@ -1118,7 +1127,10 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
   root.onclick = (ev) => {
     const target = ev.target as HTMLElement
     const cardNode = target.closest('.card[data-id]') as HTMLElement | null
-    if (cardNode?.dataset.id) {
+    // **只认手牌**：出牌区/历史小牌也带 data-id（动画要靠它定位），
+    // 但点它们不该被选中 —— 否则选完「出牌」按钮亮了、点下去又没反应
+    // （v1.3.24 用户反馈：点对方已出的牌能选中）。
+    if (cardNode?.dataset.id && cardNode.closest('.hand') !== null) {
       act.dispatch({ type: 'toggleSelect', id: Number(cardNode.dataset.id) })
       return
     }

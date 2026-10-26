@@ -122,6 +122,13 @@ export interface GameState {
   readonly trick: {
     readonly leader: Seat
     readonly plays: readonly Play[]
+    /**
+     * @deprecated 出牌途中恒为 null，别拿它做高亮。
+     *
+     * 一墩的赢家只在结算时由 `resolveTrick` 算出并写进 `history`，
+     * 这个字段从没被赋过值 —— v1.3.24 之前座位标签的 `.is-win` 因此一直没生效。
+     * 要「当前谁最大」请用 `app/view.ts` 的 `leadingSeat()`（走 `trickStanding`）。
+     */
     readonly winner: Seat | null
   }
   readonly tricksDone: number
