@@ -338,9 +338,9 @@ describe('M5 · AI 四档难度', () => {
     it('L2 强于 L1', () => {
       const m = pairedMeasure(2, 1, ROUNDS)
       console.log(`[标定] L2 vs L1 = ${(m.winRate * 100).toFixed(1)}%（净分 ${m.avgMargin.toFixed(1)}）`)
-      // v1.3.26：队友领先垫分牌加分后 55.0% → 56.3%。
-      // 规划目标 62%（要靠候选集扩充，见 docs/28），先把阈值卡到实测下浮 2% 防退化。
-      expect(m.winRate, `L2 应强于 L1（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.54)
+      // v1.3.26：垫分牌加分 55.0% → 56.3%
+      // v1.3.27：候选广度分档后 56.3% → 61.3%（接近规划目标 62%）
+      expect(m.winRate, `L2 应强于 L1（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.59)
     })
 
     /**
@@ -361,9 +361,10 @@ describe('M5 · AI 四档难度', () => {
     it('L3 强于 L2', () => {
       const m = pairedMeasure(3, 2, ROUNDS)
       console.log(`[标定] L3 vs L2 = ${(m.winRate * 100).toFixed(1)}%（净分 ${m.avgMargin.toFixed(1)}）`)
-      // v1.3.26：56.3% → 60.3%（+4.0）。L3 的精确前瞻能判断「队友守不守得住」，
-      // 所以垫分牌更安全；L1 没有前瞻会盲目垫 —— 档间差距因此被拉开。
-      expect(m.winRate, `L3 应强于 L2（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.58)
+      // v1.3.26：垫分牌加分 56.3% → 60.3%
+      // v1.3.27：候选广度分档后 60.3% → 75.7%（+15.4）。宽候选把 L3 精确判定
+      // （看结构、看出牌顺序）的价值彻底解放了 —— 候选只有 2 个时它无处发挥。
+      expect(m.winRate, `L3 应强于 L2（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.73)
     })
   })
 

@@ -101,8 +101,9 @@ function legalOnly(
   play: PlayContext,
   limit: number,
   opponents: readonly (readonly Card[])[],
+  wide: boolean,
 ): Card[][] {
-  const raw = enumeratePlays(hand, ctx, play, limit)
+  const raw = enumeratePlays(hand, ctx, play, limit, wide)
   const out: Card[][] = []
   for (const cards of raw) {
     const r = checkPlay({
@@ -385,7 +386,10 @@ const DECISION_REASONS: readonly string[] = ['随机', '启发式', '评估', '�
 
 export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDecision {
   const { hand, ctx, play, opponents } = input
-  const candidates = legalOnly(hand, ctx, play, 60, opponents)
+  // 候选广度按档位：L0/L1 用窄集（等价旧行为），L2+ 用宽集。
+  // 这是「算力分档」最直接的体现 —— 低档不是打得更差，而是**看得更少**。
+  const wide = level >= 2
+  const candidates = legalOnly(hand, ctx, play, 60, opponents, wide)
   if (candidates.length === 0) {
     // 兜底：优先出首出花色的牌，再按牌力从小到大
     const slot = play.kind === 'follow' ? play.leadAnalysis.suitSlot : -1
