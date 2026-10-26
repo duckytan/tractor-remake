@@ -291,9 +291,10 @@ html, body {
 }
 .plays--side .plays__now { flex-direction: column; align-items: center; }
 .plays--side .plays__now .card + .card { margin-top: calc(var(--played-w) * -1.05); }
-/* 侧家历史小牌同样要竖向压叠：每张牌各自带 --card-w(=卡宽×TINY_RATIO)，所以直接用 var(--card-w) 即可。
-   不压叠的话，一墩出 4 张就是 4 倍高度，历史区会顶出牌桌被裁掉。 */
-.plays--side .plays__past .card + .card { margin-top: calc(var(--card-w) * -1.05); }
+/* 侧家历史小牌竖向压叠。压叠量必须按**小牌自己**的宽度（--tiny-w）算：
+   以前用全局 --card-w，小牌只有 0.32×卡宽，每张却上移 1.05×卡宽，
+   第三张就冲出容器、压到旁边的牌背区上（v1.3.22 实测东家重叠 3785px²）。 */
+.plays--side .plays__past .card + .card { margin-top: calc(var(--tiny-w, 48px) * 1.4 * -1.05); }
 .plays--side .plays__past { flex-direction: column; align-items: center; gap: var(--play-gap); }
 .plays--side .past__trick { flex-direction: column; }
 .plays--side .past__trick + .past__trick { border-left: none; padding-left: 0; }

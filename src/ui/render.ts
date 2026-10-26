@@ -168,6 +168,10 @@ function fillPlays(
 ): void {
   // 侧家的竖向堆叠步长要用到本墩牌的宽度
   box.style.setProperty('--played-w', `${playedW}px`)
+  // 历史小牌的实际宽度也要暴露给 CSS：侧家小牌是竖向压叠的，
+  // 压叠量必须按**小牌自己**的尺寸算（v1.3.22 踩过：用全局 --card-w 算，
+  // 每张上移 157px 而小牌只有 48 宽，第三张就冲出容器压到牌背上了）。
+  box.style.setProperty('--tiny-w', `${tinyW}px`)
   const now = box.querySelector('.plays__now') as HTMLElement
   const past = box.querySelector('.plays__past') as HTMLElement
   // 回放时出牌区显示的是「那一墩」的历史出牌，不是当前墩（见 app/view.ts displayPlays）
