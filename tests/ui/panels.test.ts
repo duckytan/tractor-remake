@@ -108,10 +108,10 @@ describe('设置面板 · 声音分组', () => {
     expect(btnTag(html, 'data-act="toggleAutoVariation"')).toContain('aria-checked="true"')
   })
 
-  it('分组顺序：牌局 → 桌面 → 声音 → 规则（按「是否影响牌局」由轻到重）', () => {
+  it('分组顺序：牌局 → 画面 → 声音 → 规则（顺序按改动频率）', () => {
     const html = settingsPanel(base())
     const at = (t: string): number => html.indexOf(`<h3>${t}<small>`)
-    const order = ['牌局', '桌面', '声音', '规则'].map(at)
+    const order = ['牌局', '画面', '声音', '规则'].map(at)
     expect(order.every((i) => i > -1)).toBe(true)
     expect(order).toEqual([...order].sort((a, b) => a - b))
   })
@@ -119,9 +119,28 @@ describe('设置面板 · 声音分组', () => {
   it('每组标题都写明「什么时候生效」', () => {
     const html = settingsPanel(base())
     expect(html).toContain('<h3>牌局<small>对手强度与节奏 · 立即生效</small>')
-    expect(html).toContain('<h3>桌面<small>视觉与操作辅助 · 立即生效</small>')
+    expect(html).toContain('<h3>画面<small>视觉与操作辅助 · 立即生效</small>')
     expect(html).toContain('<h3>声音<small>BGM 与音效 · 立即生效</small>')
     expect(html).toContain('<h3>规则<small>改完下一局生效</small>')
+  })
+
+  it('标签页：4 个 tab，默认选中「牌局」，每组挂在对应 tab 下', () => {
+    const html = settingsPanel(base())
+    expect(html).toContain('role="tablist"')
+    for (const [key, label] of [
+      ['game', '牌局'],
+      ['view', '画面'],
+      ['sound', '声音'],
+      ['rule', '规则'],
+    ]) {
+      expect(html).toContain(`data-act="settingsTab" data-val="${key}"`)
+      expect(html).toContain(`>${label}</button>`)
+      expect(html).toContain(`data-tab="${key}"`)
+    }
+    // 默认停在第一个 tab
+    expect(html).toContain('data-settings-tab="game"')
+    expect(html).toMatch(/data-val="game" aria-selected="true"/)
+    expect(html).toMatch(/data-val="view" aria-selected="false"/)
   })
 
   it('组内有二级分类：音量 / 升级必打', () => {

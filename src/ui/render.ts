@@ -225,6 +225,26 @@ let windowDragBound = false
 let savedOverlayScroll = 0
 let savedOverlayLabel = ''
 
+/** 设置面板的标签页键 */
+export type SettingsTab = 'game' | 'view' | 'sound' | 'rule'
+
+/**
+ * 设置面板当前选中的标签页。
+ *
+ * 放在模块级而不是 state 里：切标签纯属 UI 视图状态，写进 state 会连带
+ * 触发存档写入与「规则改动」比较，得不偿失。render 重建时读它，
+ * 点击时同步改 DOM（不 dispatch，所以切换是瞬时的、不丢滚动位置）。
+ */
+let settingsTab: SettingsTab = 'game'
+
+/** 标签页定义（顺序 = 展示顺序） */
+const SETTINGS_TABS: readonly { key: SettingsTab; label: string }[] = [
+  { key: 'game', label: '牌局' },
+  { key: 'view', label: '画面' },
+  { key: 'sound', label: '声音' },
+  { key: 'rule', label: '规则' },
+]
+
 export function render(root: HTMLElement, s: GameState, act: Actions): void {
   ensureDefs()
   // 体验档位挂在 <html> 上：styles.css 里用的是 :root[...] 选择器，
@@ -754,6 +774,32 @@ export function legalityBadgeOf(result: PlayResult): string {
 }
 
 /** 设置面板（FR-18）—— 导出给单测断言内容用 */
+/**
+ * AI 出牌速度档位（毫秒 = 出牌前等多久，所以**数字越大越慢**）。
+ *
+ * 早先写成「0 瞬时 / 300 慢 / 800 中」—— 标签和数值是反的（中比慢还慢），
+ * 而且默认值 420 根本不在选项里，三个按钮一个都不高亮。
+ */
+const AI_SPEED_OPTS = [
+  { v: '0', label: '瞬时' },
+  { v: '300', label: '中' },
+  { v: '800', label: '慢' },
+] as const
+
+/** 把任意历史值吸附到最近的档位（老存档里可能存着 420 这种不在选项里的值） */
+function nearestSpeed(ms: number): string {
+  let best = AI_SPEED_OPTS[0].v as string
+  let dist = Infinity
+  for (const o of AI_SPEED_OPTS) {
+    const d = Math.abs(Number(o.v) - ms)
+    if (d < dist) {
+      dist = d
+      best = o.v
+    }
+  }
+  return best
+}
+
 /** 规则项的中文名（「改动未生效」提示要逐条列出来） */
 const RULE_LABEL: Record<keyof RuleConfig, string> = {
   allowSelfCounter: '允许自反',
@@ -829,8 +875,8 @@ export function settingsPanel(s: GameState): string {
    * `hint` 写在组标题右侧，用来说明「这一组什么时候生效」——
    * 之前全靠顶部一句通栏说明，玩家滚到下面早忘了。
    */
-  const group = (title: string, hint: string, body: string): string => `
-    <div class="set-group">
+  const group = (tab: SettingsTab, title: string, hint: string, body: string): string => `
+    <div class="set-group" data-tab="${tab}">
       <h3>${title}<small>${hint}</small></h3>
       ${body}
     </div>`
@@ -839,11 +885,18 @@ export function settingsPanel(s: GameState): string {
   const sub = (title: string, note = ''): string =>
     `<div class="set-sub">${title}${note ? `<small>${note}</small>` : ''}</div>`
 
-  return `<div class="panel panel--wide" role="dialog" aria-label="设置">
+  return `<div class="panel panel--wide" role="dialog" aria-label="设置" data-settings-tab="${settingsTab}">
     <h2>设置</h2>
+    <div class="set-tabs" role="tablist" aria-label="设置分类">
+      ${SETTINGS_TABS.map(
+        (t) =>
+          `<button role="tab" data-act="settingsTab" data-val="${t.key}" aria-selected="${settingsTab === t.key}" class="${settingsTab === t.key ? 'is-on' : ''}">${t.label}</button>`,
+      ).join('')}
+    </div>
     ${ruleNote(c, s.config)}
 
     ${group(
+      'game',
       '牌局',
       '对手强度与节奏 · 立即生效',
       `<div class="set-row">
@@ -866,16 +919,13 @@ export function settingsPanel(s: GameState): string {
       </div>
       <div class="set-row">
         <span>AI 出牌速度<small class="set-desc">快一点更好打；想看清每张牌就调慢</small></span>
-        ${seg('setAiSpeed', 'AI 出牌速度', [
-          { v: '0', label: '瞬时', on: s.aiSpeedMs === 0 },
-          { v: '300', label: '慢', on: s.aiSpeedMs === 300 },
-          { v: '800', label: '中', on: s.aiSpeedMs === 800 },
-        ])}
+        ${seg('setAiSpeed', 'AI 出牌速度', AI_SPEED_OPTS.map((o) => ({ ...o, on: o.v === nearestSpeed(s.aiSpeedMs) })))}
       </div>`,
     )}
 
     ${group(
-      '桌面',
+      'view',
+      '画面',
       '视觉与操作辅助 · 立即生效',
       `<div class="set-row">
         <span>牌面尺寸</span>
@@ -902,6 +952,7 @@ export function settingsPanel(s: GameState): string {
     )}
 
     ${group(
+      'sound',
       '声音',
       'BGM 与音效 · 立即生效',
       `<div class="set-row">
@@ -933,6 +984,7 @@ export function settingsPanel(s: GameState): string {
     )}
 
     ${group(
+      'rule',
       '规则',
       '改完下一局生效',
       `${sw('allowSelfCounter', '允许自反', '同队也可反主', c.allowSelfCounter)}
@@ -1126,6 +1178,24 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
 
   root.onclick = (ev) => {
     const target = ev.target as HTMLElement
+    // 设置标签页：只改 DOM、不 dispatch。
+    // dispatch 会触发整棵重建 —— 切换标签这种纯视图动作没必要付这个代价，
+    // 而且重建会把面板的滚动位置（虽然现在会恢复）和焦点都打断。
+    const tabBtn = target.closest('[data-act="settingsTab"]') as HTMLElement | null
+    if (tabBtn?.dataset.val) {
+      const key = tabBtn.dataset.val as SettingsTab
+      settingsTab = key
+      const panel = tabBtn.closest('.panel') as HTMLElement | null
+      if (panel !== null) {
+        panel.dataset.settingsTab = key
+        for (const b of panel.querySelectorAll<HTMLElement>('[data-act="settingsTab"]')) {
+          const on = b.dataset.val === key
+          b.classList.toggle('is-on', on)
+          b.setAttribute('aria-selected', on ? 'true' : 'false')
+        }
+      }
+      return
+    }
     const cardNode = target.closest('.card[data-id]') as HTMLElement | null
     // **只认手牌**：出牌区/历史小牌也带 data-id（动画要靠它定位），
     // 但点它们不该被选中 —— 否则选完「出牌」按钮亮了、点下去又没反应

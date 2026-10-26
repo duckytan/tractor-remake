@@ -777,6 +777,79 @@ html, body {
 }
 .panel-foot > .btn { width: 100%; }
 
+/* ---------- 设置：标签页 ---------- */
+/* 分段控件样式的 tab 条。切 tab 只改 .panel 的 data-settings-tab，
+   纯 CSS 控制显隐 —— 不 dispatch、不重建 DOM，所以瞬时且不丢滚动位置。 */
+.set-tabs {
+  display: flex;
+  gap: 3px;
+  margin: 0 0 14px;
+  padding: 3px;
+  background: #f2efe7;
+  border-radius: 10px;
+}
+.set-tabs button {
+  flex: 1 1 0;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.set-tabs button:hover { color: var(--ink); }
+.set-tabs button.is-on {
+  background: #fff;
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.set-tabs button:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
+
+/* 声音设置里的下拉 / 滑条 / 数值。
+   这几个类在 v1.3.17 加设置项时漏写了样式，一直吃浏览器默认外观
+   （滑条是默认蓝，和整体绿白配色不搭）。 */
+.set-select {
+  min-width: 118px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.set-select:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
+
+/* 滑条占满标签与数值之间的空档，不再挤在中间留一大片空白 */
+.set-range {
+  flex: 1 1 auto;
+  min-width: 80px;
+  max-width: 220px;
+  margin: 0;
+  accent-color: #1d9e75;
+  cursor: pointer;
+}
+.set-num {
+  min-width: 26px;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+
+/* 只显示当前 tab 对应的那一组 */
+.panel[data-settings-tab='game'] .set-group:not([data-tab='game']),
+.panel[data-settings-tab='view'] .set-group:not([data-tab='view']),
+.panel[data-settings-tab='sound'] .set-group:not([data-tab='sound']),
+.panel[data-settings-tab='rule'] .set-group:not([data-tab='rule']) {
+  display: none;
+}
+
 .set-group { margin-bottom: 20px; }
 .set-group:last-of-type { margin-bottom: 8px; }
 .set-group h3 {
