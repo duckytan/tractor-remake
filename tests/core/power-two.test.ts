@@ -30,11 +30,22 @@ describe('buildPowerTable · 2 为常主', () => {
     expect(on.get(D2)).toBe(off.get(D2))
   })
 
-  it('打王级（levelRank 18）强制无将，2 不提升 —— 即使调用方漏传 forcedNT', () => {
-    // 这里刻意不传 forcedNT：`lvRank` 会是 null，旧实现 `null !== 0` 判成 true
-    // 于是把 2 错误提升成主牌。函数必须自己兜住。
-    const t = buildPowerTable({ mode: 1, levelRank: 18, trump: 'NT' })
-    expect(t.get(D2)).toBeLessThan(TRUMP_POWER_BASE)
-    expect(t.get(S2)).toBeLessThan(TRUMP_POWER_BASE)
+  it('打王级（levelRank 18）：级牌不提升，但「2 为常主」仍生效', () => {
+    // 逆向报告 §755：`0x12` + mode=1 ⇒ 四门 rank0 = 0x40、小王 0x41、大王 0x42。
+    // **「级牌不提升」和「2 不提升」是两件事** —— v1.3.19 混为一谈修反了，v1.3.28 改回。
+    const on = buildPowerTable({ mode: 1, levelRank: 18, trump: 'NT' })
+    expect(on.get(D2)).toBeGreaterThanOrEqual(TRUMP_POWER_BASE)
+    expect(on.get(S2)).toBeGreaterThanOrEqual(TRUMP_POWER_BASE)
+
+    // mode=0（不开 2 为常主）时，打王级只剩王是主牌（逆向报告 §745）
+    const off = buildPowerTable({ mode: 0, levelRank: 18, trump: 'NT' })
+    expect(off.get(D2)).toBeLessThan(TRUMP_POWER_BASE)
+    expect(off.get(S2)).toBeLessThan(TRUMP_POWER_BASE)
+
+    // 顺序：四门2 < 小王 < 大王
+    const small = on.get(52)
+    const big = on.get(53)
+    expect(on.get(D2)).toBeLessThan(small)
+    expect(small).toBeLessThan(big)
   })
 })

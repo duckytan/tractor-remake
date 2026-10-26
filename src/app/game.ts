@@ -11,7 +11,6 @@ import { decide } from '@ai/policy'
 import type { AiLevel } from '@ai/policy'
 import type { PlayContext } from '@ai/enumerate'
 import {
-  DEFAULT_RULE_CONFIG,
   DEAL_TOTAL,
   HAND_SIZE,
   RANKS_PER_SUIT,
@@ -41,7 +40,7 @@ import {
 } from '@core'
 import type { Card, LevelRank, Play, PlayRejectReason, Rng, RuleContext, Seat, Suit, Trump } from '@core'
 import type { Action, GameState, TrickRecord } from './state'
-import { HUMAN_SEAT, STATE_VERSION, ctxOf, seatToPlay } from './state'
+import { HUMAN_SEAT, STATE_VERSION, ctxOf, emptyState, seatToPlay } from './state'
 
 /* ---------- 工具 ---------- */
 
@@ -433,15 +432,40 @@ export function passDeal(s: GameState): GameState {
  * 体验项（与对局无关的显示偏好）。新游戏 / 换局都要原样带过去，
  * 否则「新游戏」会把四色、牌面尺寸、动画、历史牌条悄悄重置成默认值。
  */
+/**
+ * 重开时必须继承的「玩家偏好」字段。
+ *
+ * 这些既不是规则（不走 pendingConfig），也不是局内状态（不该归零）——
+ * 它们是玩家的长期选择。**加字段时只改这一处**，两处重开路径都自动跟上。
+ *
+ * v1.3.28 之前是手写搬运，只搬了 5 项，导致「切到冬主题 / 调好音量 / 开记牌器，
+ * 点一次新游戏全部回默认」，而且 afterChange 会把默认值回写 localStorage，刷新也救不回。
+ */
+const PREF_FIELDS = [
+  'fourColor',
+  'cardSize',
+  'animation',
+  'animSpeed',
+  'showHistory',
+  'showCounter',
+  'hintSelects',
+  'musicTheme',
+  'soundEnhanced',
+  'autoVariation',
+  'volumeMaster',
+  'volumeBgm',
+  'volumeSfx',
+] as const
+
+type PrefField = (typeof PREF_FIELDS)[number]
+
+/** 从 `src` 里取出全部偏好字段（`GameState` 的字段是 readonly，只能整体构造） */
+function pickPrefs(src: GameState): Pick<GameState, PrefField> {
+  return Object.fromEntries(PREF_FIELDS.map((k) => [k, src[k]])) as Pick<GameState, PrefField>
+}
+
 function withExperience(base: GameState, src: GameState): GameState {
-  return {
-    ...base,
-    fourColor: src.fourColor,
-    cardSize: src.cardSize,
-    animation: src.animation,
-    showHistory: src.showHistory,
-    hintSelects: src.hintSelects,
-  }
+  return { ...base, ...pickPrefs(src) }
 }
 
 /**
@@ -469,68 +493,16 @@ export function newGame(
   return startRound(src ? withExperience(base, src) : base, seed ?? (Date.now() % 1e9))
 }
 
-function emptyBase(): GameState {
-  return {
-    version: STATE_VERSION,
-    phase: 'contract',
-    // 直接引用默认配置：以前这里手抄了一份字面量，加规则开关时必漏改
-    config: DEFAULT_RULE_CONFIG,
-    seed: 1,
-    step: 0,
-    round: 1,
-    levels: { a: 2, b: 2 },
-    dealer: 0,
-    trump: 'NT',
-    forcedNT: false,
-    trumpDeclarer: null,
-    trumpCount: 0,
-    guardBy: null,
-    askedTrumps: [],
-    usedTrumps: [],
-    counterPending: false,
-    counterOptions: [],
-    declareOptions: [],
-    guardOption: false,
-    // 空状态：发牌进度视为已满（DEAL_TOTAL 轮），避免任何「还在发牌」的残留判断
-    revealed: DEAL_TOTAL,
-    declarePrompted: true,
-    dealPrompt: false,
-    levelRank: 2,
-    hands: [[], [], [], []],
-    bottom: [],
-    bottomScore: 0,
-    trick: { leader: 0, plays: [], winner: null },
-    tricksDone: 0,
-    defenderScore: 0,
-    history: [],
-    selected: [],
-    lastReject: null,
-    notice: null,
-    lastSettle: null,
-    aiLevelPartner: 1,
-    aiLevelOpponent: 1,
-    aiSpeedMs: 420,
-    fourColor: false,
-    cardSize: 'M',
-    animation: true,
-    animSpeed: 'normal',
-    confirmNew: false,
-    showCounter: false,
-    replayAt: null,
-    showHistory: true,
-    hintSelects: false,
-    musicTheme: 'spring',
-    soundEnhanced: false,
-    autoVariation: true,
-    volumeMaster: 75,
-    volumeBgm: 40,
-    volumeSfx: 80,
-    settingsOpen: false,
-    logOpen: false,
-    hintIds: [],
-    pendingConfig: DEFAULT_RULE_CONFIG,
-  }
-}
+/**
+ * 空状态模板。
+ *
+ * **只有一份**：直接复用 `state.ts` 的 `emptyState()`。
+ * v1.3.28 之前这里手抄了第二份 56 字段的字面量（与 `emptyState` 逐字段等价，
+ * 只是书写顺序不同），后果是：
+ *   - 加字段时改一处不会报错，另一处悄悄漏掉（v1.3.28 就漏了 8 个偏好字段）
+ *   - 4 个测试文件用 `emptyState()` 搭基线，**测试覆盖的是另一条构造路径**
+ */
+const emptyBase = emptyState
 
 /* ---------- 亮主 / 反主 / 加固 ---------- */
 
@@ -1136,15 +1108,10 @@ export function reduce(s: GameState, action: Action): GameState {
             aiLevelPartner: s.aiLevelPartner,
             aiLevelOpponent: s.aiLevelOpponent,
             aiSpeedMs: s.aiSpeedMs,
-            fourColor: s.fourColor,
-            cardSize: s.cardSize,
-            animation: s.animation,
-            animSpeed: s.animSpeed,
-            // 体验项也要带过去：之前漏了这三项，「游戏结束 → 再来一局」会把
-            // 玩家关掉的历史牌条/提示即选中/记牌器悄悄重置成默认值
-            showHistory: s.showHistory,
-            hintSelects: s.hintSelects,
-            showCounter: s.showCounter,
+            // 偏好项统一走清单（见 PREF_FIELDS）——
+            // 以前这里手写搬运，漏了音乐主题/增强音效/自动变奏/三个音量，
+            // 「游戏结束 → 再来一局」会把这些悄悄重置成默认值
+            ...pickPrefs(s),
           },
           s.seed + 1,
         )

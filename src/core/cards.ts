@@ -138,14 +138,17 @@ export interface BuildPowerOptions {
  */
 export function buildPowerTable(o: BuildPowerOptions): PowerTable {
   const { mode, trump } = o
-  // 打王级（levelRank 18）本身就是强制无将 + 级牌不提升。
-  // 这里必须由函数自己兜底：调用方漏传 `forcedNT` 时，下面
-  // `lvRank !== 0` 会因为 lvRank 是 null 而判成 true，把 2 错误提升成主牌。
+  // 打王级（levelRank 18）= 强制无将 + **级牌**不提升。
+  // 函数自己兜底：调用方漏传 `forcedNT` 时也能识别。
   const forcedNT = o.forcedNT === true || o.levelRank === 18
   const power = new Array<number>(CARD_VALUE_COUNT).fill(0)
 
   const lvRank = forcedNT ? null : levelRankToRankIndex(o.levelRank)
-  const promoteTwo = !forcedNT && mode === 1 && lvRank !== 0
+  // 「2 为常主」是**独立规则**，与「打王级级牌不提升」无关 ——
+  // 逆向报告 §745/§755 明确：`0x12`（打王级）在 mode=1 时「四门 rank0 = 0x40」（2 仍提升），
+  // 只是级牌那一档不存在。v1.3.19 把这两件事混为一谈，误把 `!forcedNT` 加进来，
+  // 导致打王级时四门 2 被当成副牌（v1.3.28 修回）。
+  const promoteTwo = mode === 1 && lvRank !== 0
   const trumpSuit: Suit | null = forcedNT || trump === 'NT' ? null : trump
 
   // 被提升为「主」的点数
@@ -195,8 +198,13 @@ export function buildPowerTable(o: BuildPowerOptions): PowerTable {
     }
     for (let s = 0; s < 4; s++) power[s * RANKS_PER_SUIT + lvRank] = next
     next++
+  } else if (promoteTwo) {
+    // 打王级强制无将：**级牌不提升，但「2 为常主」仍生效**
+    // （逆向报告 §755：`0x12` + mode=1 ⇒ 四门 rank0 = 0x40、小王 0x41、大王 0x42）
+    for (let s = 0; s < 4; s++) power[s * RANKS_PER_SUIT] = next
+    next++
   }
-  // forcedNT 走不到这里：lvRank 为 null、promoteTwo 为 false，主牌只剩王
+  // 打王级 + mode=0：主牌只剩王（逆向报告 §745）
 
   power[SMALL_JOKER] = next++
   power[BIG_JOKER] = next++
