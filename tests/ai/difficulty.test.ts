@@ -325,7 +325,9 @@ describe('M5 · AI 四档难度', () => {
 
     it('L1 强于 L0', () => {
       const m = pairedMeasure(1, 0, ROUNDS)
-      expect(m.winRate, `L1 应强于 L0（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.55)
+      console.log(`[标定] L1 vs L0 = ${(m.winRate * 100).toFixed(1)}%（净分 ${m.avgMargin.toFixed(1)}）`)
+      // 阈值 = 实测值下浮 2%（种子固定，结果确定性，留 2% 防微小抖动）
+      expect(m.winRate, `L1 应强于 L0（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.8)
     })
 
     it('L2 强于 L0', () => {
@@ -335,7 +337,10 @@ describe('M5 · AI 四档难度', () => {
 
     it('L2 强于 L1', () => {
       const m = pairedMeasure(2, 1, ROUNDS)
-      expect(m.winRate, `L2 应强于 L1（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.5)
+      console.log(`[标定] L2 vs L1 = ${(m.winRate * 100).toFixed(1)}%（净分 ${m.avgMargin.toFixed(1)}）`)
+      // v1.3.26：队友领先垫分牌加分后 55.0% → 56.3%。
+      // 规划目标 62%（要靠候选集扩充，见 docs/28），先把阈值卡到实测下浮 2% 防退化。
+      expect(m.winRate, `L2 应强于 L1（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.54)
     })
 
     /**
@@ -355,7 +360,10 @@ describe('M5 · AI 四档难度', () => {
 
     it('L3 强于 L2', () => {
       const m = pairedMeasure(3, 2, ROUNDS)
-      expect(m.winRate, `L3 应强于 L2（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.52)
+      console.log(`[标定] L3 vs L2 = ${(m.winRate * 100).toFixed(1)}%（净分 ${m.avgMargin.toFixed(1)}）`)
+      // v1.3.26：56.3% → 60.3%（+4.0）。L3 的精确前瞻能判断「队友守不守得住」，
+      // 所以垫分牌更安全；L1 没有前瞻会盲目垫 —— 档间差距因此被拉开。
+      expect(m.winRate, `L3 应强于 L2（实测 ${(m.winRate * 100).toFixed(1)}%）`).toBeGreaterThan(0.58)
     })
   })
 

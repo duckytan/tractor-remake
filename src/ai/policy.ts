@@ -462,8 +462,21 @@ function scoreCandidate(
     const rival = currentWinner ? currentWinner.analysis : play.leadAnalysis
     const iAmWinning = canIWin(a, rival, ctx)
     if (partnerLeading) {
-      // 队友已经赢着：尽量出小牌、别抢
-      score += iAmWinning ? -0.5 : 0.4
+      // 队友已经赢着：尽量出小牌、别抢。
+      //
+      // 但「垫分牌」要额外加分 —— 一墩只比一次大小，队友最大就等于我方赢，
+      // 所以垫出去的 5/10/K 仍然是我方的分（docs/27 §4 F1）。
+      // 人类经验：「队友上手了，有分就往里垫」。
+      //
+      // 风险：如果对手还能压过队友，这些分会被对手抢走。
+      // 这个风险由 L2/L3 的前瞻（canBeOverturned / exactBeatable）扣分兜住；
+      // L1 没有前瞻，会盲目垫 —— 这正是 L2 应该比 L1 强的地方。
+      //
+      // 标定（600 次配对）：这个系数从 0.05 扫到 0.2 结果**完全一样**
+      // （L2vsL1 56.3% / L3vsL2 60.3%）。因为决策只取最高分，
+      // 只要「垫分牌 > 垫废牌」的序关系成立，具体数值不影响选择。
+      // 所以这类「单调偏好」参数不必精调，方向对就行。
+      score += iAmWinning ? -0.5 : 0.4 + points * 0.1
     } else if (iAmWinning) {
       // 我能压过当前最大：吃分是好事
       score += 0.6 + points * 0.08
