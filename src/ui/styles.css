@@ -161,6 +161,10 @@ html, body {
   position: relative;
   display: grid;
   min-height: 0;
+  /* 钉在第 4 行（#app 的 grid-template-rows: 顶栏 / 积分栏 / 记牌器 / 牌桌）。
+     不写的话，记牌器关闭时它不渲染元素，牌桌就上移落到「记牌器」那一行（auto），
+     而第 4 行的 1fr 空着 —— 实测底部留白 95px（桌面）/ 130px（手机竖屏）。 */
+  grid-row: 4;
   grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
@@ -259,6 +263,8 @@ html, body {
   align-items: center;
   flex: 1 1 auto;
   min-height: 0;
+  /* 牌转 90° 后视觉宽度 = 牌高，容器要按这个留位（--side-w 由 render 写入） */
+  min-width: calc(var(--side-w, 52px) * 1.4);
   --side-step: 0.34;
 }
 .back-row--side .card + .card {
@@ -277,7 +283,11 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: var(--play-gap);
-  width: var(--played-w);
+  /* 宽度 = **旋转后**的牌宽。牌本身是 `--played-w` 宽、1.4 倍高，
+     转 90° 之后包围盒变成「高 × 宽」—— 容器若还按 --played-w 定宽，
+     牌会左右各溢出 0.2×played-w，正好压到旁边的牌背区上
+     （v1.3.22 实测：东家出牌整张盖住一张牌背，重叠 3744px²）。 */
+  width: calc(var(--played-w) * 1.4);
 }
 .plays--side .plays__now { flex-direction: column; align-items: center; }
 .plays--side .plays__now .card + .card { margin-top: calc(var(--played-w) * -1.05); }
@@ -418,7 +428,9 @@ html, body {
   50% { box-shadow: 0 0 0 9px rgba(var(--hint-rgb), 0.5); }
 }
 .card--hint {
-  z-index: 2;
+  /* **不要加 z-index**：手牌是重叠排布（每张只露出几十像素），
+     置顶会把左右邻牌压掉一大半 —— 和 v1.2.1 修掉的 `.card:hover` 是同一个坑。
+     outline 用 -1px 画在牌内，本来就不需要压在上面。 */
   outline: 2px solid var(--hint);
   outline-offset: -1px;
   animation: hintPulse 1s ease-in-out infinite;

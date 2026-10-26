@@ -296,6 +296,10 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   )
   for (const seat of [1, 2, 3] as Seat[]) {
     const box = q(SEAT_CLASS[seat])
+    // 侧家牌背要旋转 90°，旋转后包围盒宽 = 牌高 = sideW×1.4。
+    // 布局尺寸仍是 sideW，所以容器必须按旋转后的宽度留位，
+    // 否则牌会左右各溢出 0.2×sideW，压到旁边的出牌区上（v1.3.22 实测）。
+    box.style.setProperty('--side-w', `${sideW}px`)
     const hand = s.hands[seat] as readonly Card[]
     const isWinner = s.trick.winner === seat
     // 西（1）/ 东（3）竖向堆叠，北（2）保持横向
@@ -391,7 +395,13 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       <span>${teamA}</span><i></i>
       <span>${teamB}</span><i></i>
       <span>闲家得分 <b>${s.defenderScore}</b> / 200</span><i></i>
-      <span>第 ${s.tricksDone + (s.phase === 'play' ? 1 : 0)} / 25 墩</span>
+      <span>${
+        s.phase === 'settle' || s.phase === 'over'
+          ? // 一墩出对子/拖拉机时一次耗多张牌，实际墩数会少于 25。
+            // 结算时还写「第 23 / 25 墩」会让人以为没打完。
+            `共 ${s.history.length} 墩`
+          : `第 ${s.tricksDone + (s.phase === 'play' ? 1 : 0)} / 25 墩`
+      }</span>
       ${s.bottomScore > 0 ? `<i></i><span>底分 <b>${s.bottomScore}</b></span>` : ''}
     `
   }
@@ -595,7 +605,9 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   /* ---- 提示条 ---- */
   {
     const t = q('toast')
-    const msg = s.lastReject?.detail ?? s.notice
+    // 拒绝原因只走底部操作条里的 legalityBadge —— 那里紧挨着「出牌」按钮，
+    // 而 toast 浮在手牌上方会挡住牌。两处都写等于同一句话说两遍（v1.3.22 实测）。
+    const msg = s.notice
     // 弹层（定主/反主/结算/设置/记录）打开时 toast 让路：
     // 否则它会盖住面板底部的按钮（「过」「扣底」），把点击吃掉。
     const modalOpen = (q('overlay') as HTMLElement).innerHTML !== ''
