@@ -111,17 +111,20 @@ describe('悔牌 undo', () => {
 
   it('本墩已有 3 家出牌时撤销 ⇒ 三家 AI 的牌一起回退（用户反馈场景）', () => {
     const h = harness(15)
-    // 推进到某一墩的第 3 张牌（前三家已出，人类是第 4 家）
+    // 推进到某一墩的第 3 家出完（人类是第 4 家）
     let guard = 0
     while (h.state.phase === 'play' && h.state.trick.plays.length !== 3 && guard++ < 400) playOne(h)
     expect(h.state.trick.plays.length).toBe(3)
     const totalBefore = h.state.hands.reduce((n, x) => n + x.length, 0)
+    // **一手可能不止一张**（对子 / 拖拉机 / 甩牌），不能写死 +3。
+    // v1.3.29 调了首出权重后 AI 出对子的比例上升，旧断言「+3 张」直接踩空。
+    const cardsInTrick = h.state.trick.plays.reduce((n, p) => n + p.cards.length, 0)
 
     expect(undo(h)).toBe(true)
-    // 本墩清空，且**三家 AI 已出的牌也回到各自手里**（+3 张），不是只撤回人类那一手
+    // 本墩清空，且**三家 AI 已出的牌也回到各自手里**，不是只撤回人类那一手
     expect(h.state.trick.plays.length).toBe(0)
     const totalAfter = h.state.hands.reduce((n, x) => n + x.length, 0)
-    expect(totalAfter).toBe(totalBefore + 3)
+    expect(totalAfter).toBe(totalBefore + cardsInTrick)
   })
 
   it('栈空时撤销是 no-op', () => {

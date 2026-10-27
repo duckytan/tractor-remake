@@ -23,6 +23,37 @@ export type AiLevel = 0 | 1 | 2 | 3
  * 标定方法见 docs/08 ADR-014：用「座位互换配对测量」对比 L2 与 L1 的净胜率，
  * 消掉座位偏差后再取较优值。改动必须重跑标定。
  */
+/**
+ * 王（大小王）的**留存溢价**。
+ *
+ * 旧实现只用 `powerCost / (cards.length * 80)` 给牌定价：大王牌力约 60，
+ * 摊到单张只有 0.75 —— 而 L3 判「会被压」要扣 `exactOver = 1.15`。
+ * 于是「首出大王保墩」(−0.75+0.35=−0.40) 比「出小牌被压」(−0.04−1.15=−1.19) 便宜，
+ * L3 反复烧王（docs/32 B-1 实测：首出王 11.8%，L2 只有 1.6%）。
+ *
+ * 取值 1.0：大王单张的首出成本 ≈ 60/80 + 1.0 = 1.75，明显高于 `exactOver = 1.15`，
+ * 于是「首出大王保墩」不再比「出小牌被压」便宜。
+ *
+ * **只作用于首出**（见 `scoreCandidate` 里的 `avgLeadCost`）：跟牌时王的价值
+ * 由「这墩多少分」决定，加溢价会让 AI 该毙不毙 —— 实测把溢价也加到跟牌上，
+ * L2 的「该毙不毙」从 0 涨到 12 处。
+ * 改这个值必须重跑 `tests/ai/difficulty.test.ts` 的座位互换配对测量。
+ */
+const JOKER_KEEP_COST = 1.0
+
+/**
+ * 单张牌的「出牌成本」（越大越舍不得出）。
+ *
+ * ① 牌力归一化到 0..1：保留「省牌」语义，但不再让一张大王只值 0.75
+ * ② 王单独加留存溢价：它是「必胜一张」的稀缺资源，价值不随牌力线性增长
+ */
+function cardCost(c: Card, ctx: RuleContext): number {
+  // 与旧口径同单位（牌力 ÷ 80），这样「省牌」项的绝对量级不变，
+  // 只是王多了一份溢价。
+  const base = ctx.power.get(c.value) / 80
+  return c.value >= 52 ? base + JOKER_KEEP_COST : base
+}
+
 export const L2_WEIGHTS = {
   /** 跟牌：这一手会被对手反压时扣分（避免白打大牌） */
   over: 0.9,
@@ -44,8 +75,28 @@ export const L2_WEIGHTS = {
  * 标定方法同 L2（座位互换配对测量，消座位偏差），改动必须重跑标定。
  */
 export const L3_WEIGHTS = {
-  /** 精确压牌判定为「会被压」时的扣分（比 L2 的 0.9 更重） */
-  exactOver: 1.15,
+  /**
+   * 跟牌：精确判定「这手会被压」时的扣分。
+   *
+   * **从 1.15 降到 0.1**（v1.3.29 重标定）。原因不是「调低好看」，而是这条惩罚
+   * 在**全信息**下系统性偏保守：`exactBeatable` 看到的是「对手手里有没有更大的牌」，
+   * 而不是「对手会不会真的压」—— 有牌 ≠ 会出。于是 AI 一味留着大牌不敢兑现。
+   *
+   * 扫描记录（L3 vs L2，300 副 × 2 配对）：
+   *   1.15 → 59.7%   0.9 → 60.7%   0.5 → 63.0%   0.3 → 63.7%
+   *   0.15 → 68.7%   0.05 → 69.0%   0.0 → 70.3%
+   * 取 0.1：留一个「被压不是免费的」小惩罚，又不至于压过「赢墩吃分」。
+   */
+  exactOver: 0.1,
+  /**
+   * 首出：精确判定「这手会被压」时的扣分。
+   *
+   * **必须比 `exactOver` 小得多，且与 L2 的 `overLead` 同量级**。
+   * 旧实现首出也复用 `exactOver = 1.15`，于是 L3 的首出变成「只要能保证不被压，
+   * 烧王也认」—— 实测首出王 11.8%，而 L2 只有 1.6%（docs/32 B-1）。
+   * 首出时墩里还没有分，被压的代价本来就比跟牌小，两者不该共用一个权重。
+   */
+  exactOverLead: 0.6,
   /** 本墩分值的期望溢价（比 L2 的 0.06 更敏感） */
   trickEv: 0.09,
   /**
@@ -450,14 +501,19 @@ function scoreCandidate(
 ): number {
   const { ctx, play, currentWinner, partnerLeading, hand, opponents } = input
   const a = analyze(cards, ctx)
-  const powerCost = cards.reduce((s, c) => s + ctx.power.get(c.value), 0)
+  /** 跟牌口径：纯牌力均值（与旧实现完全一致） */
+  const avgPower = cards.reduce((s, c) => s + ctx.power.get(c.value), 0) / (cards.length * 80)
+  /** 首出口径：牌力均值 + 王的留存溢价 */
+  const avgLeadCost = cards.reduce((s, c) => s + cardCost(c, ctx), 0) / cards.length
   const points = cardsScore(cards)
   const isL3 = level === 3
   const isL2Plus = level >= 2
 
   let score = 0
   // ---- 基础：省牌（牌力越低越好）----
-  score -= powerCost / (cards.length * 80)
+  // **首出和跟牌用不同口径**：首出时王是「白花」（墩里还没有分），要计留存溢价；
+  // 跟牌时王是「用来赢这墩的分」的，溢价会让 AI 该毙不毙。
+  score -= play.kind === 'follow' ? avgPower : avgLeadCost
 
   if (play.kind === 'follow') {
     // 比较对象必须是**本墩当前最大牌**，不是首出牌。
@@ -520,7 +576,12 @@ function scoreCandidate(
       // 同槽张数 —— 必须按花色槽统计。
       // 早先用「同为主/副」的粗略计数，把四种副牌混在一起，
       // 结果 AI 永远选不出真正的长套（黑桃 3 张 vs 红桃 6 张被算成一样）。
-      score += Math.min(slotCount(hand, slot, ctx), 10) * 0.05
+      // 长套权重 0.05 → 0.07（v1.3.29）：
+      // 旧值最多只能贡献 0.5，而 `-powerCost` 单张就能到 1.0 ⇒ 首出排序几乎完全由
+      // 「省牌」决定，L1 于是有 53.2% 的首出是「手里最小的那张」（docs/32 B-3）。
+      // 提到 0.07 后长套最多贡献 0.7，能与省牌项抗衡，又不至于把「主牌多」变成
+      // 「永远出主牌」—— 试过 0.10，L2 的首出王从 1.6% 涨到 4.2%。
+      score += Math.min(slotCount(hand, slot, ctx), 10) * 0.07
     }
     score -= points * 0.02 // 首出别急着甩分
 
@@ -538,7 +599,7 @@ function scoreCandidate(
             memo,
           )
         : canBeOverturned(cards, ctx, opponents)
-      if (beaten) score -= isL3 ? L3_WEIGHTS.exactOver : L2_WEIGHTS.overLead
+      if (beaten) score -= isL3 ? L3_WEIGHTS.exactOverLead : L2_WEIGHTS.overLead
       // ⑤ 有连对的长套优先 —— 把拖拉机先兑现
       if (slot !== -1 && hasTractor(hand, slot, ctx)) score += L2_WEIGHTS.tractor
     }
@@ -573,6 +634,14 @@ function canIWin(mine: PlayAnalysis, rival: PlayAnalysis, ctx: RuleContext): boo
   // 主牌压副牌；副牌只能压同花色
   if (rivalTrump) {
     if (!myTrump) return false
+  } else if (myTrump) {
+    // **主牌毙副牌是合法的，而且是必胜**（v1.3.29 修正）。
+    //
+    // 旧实现这里直接走 `mine.suitSlot !== rival.suitSlot ⇒ return false`，
+    // 于是「我毙这墩」永远被判成「我赢不了」⇒ 跟牌分支走「压不过：垫牌时别送分」，
+    // 毙牌被当成垫牌扣分 ⇒ **该毙不毙**（docs/32 B-4 实测 L3 有 12 处，
+    // L2 只有 1 处）。同一处错误还让「队友赢着时我毙过去」被判成「我在垫分」，
+    // 反过来鼓励了内耗。
   } else if (mine.suitSlot !== rival.suitSlot) {
     return false
   }

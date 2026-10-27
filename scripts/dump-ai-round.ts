@@ -324,27 +324,36 @@ function driveRound(seed: number, level = 3): RoundDump {
       let missWin = false
       let missRuff = false
       if (lead !== null && trickPoints >= 10 && !becameBest) {
-        // B2：最后一手 + 分 ≥10 + 存在能赢的合法出法，却没赢
-        if (isLast) {
-          const cands = enumeratePlays(
-            hand,
-            ctx,
-            { kind: 'follow', leadCards: lead.cards, leadAnalysis: lead.analysis },
-            ALT_LIMIT,
-            true,
-          ).filter((cs) => cs.length > 0)
-          missWin = cands.some((cs) => {
-            const st = trickStanding([...before.trick.plays, { seat, cards: cs, analysis: analyze(cs, ctx) }], ctx)
-            return st !== null && st.winner.seat === seat
-          })
+        // 同一批候选给 B2 / B3 共用：枚举一次，避免重复计算
+        const cands = enumeratePlays(
+          hand,
+          ctx,
+          { kind: 'follow', leadCards: lead.cards, leadAnalysis: lead.analysis },
+          ALT_LIMIT,
+          true,
+        ).filter((cs) => cs.length > 0)
+        /** 这一手出完能不能成为本墩当前最大 */
+        const wins = (cs: readonly Card[]): boolean => {
+          const st = trickStanding([...before.trick.plays, { seat, cards: cs, analysis: analyze(cs, ctx) }], ctx)
+          return st !== null && st.winner.seat === seat
         }
+
+        // B2：最后一手 + 分 ≥10 + 存在能赢的合法出法，却没赢
+        if (isLast) missWin = cands.some(wins)
+
         // B3：缺门 + 有主牌能毙 + 分 ≥10 + 却出了非主牌
+        //
+        // **必须同时验证「毙了真能赢」**：只要手里有主牌就算失误会产生大量假阳性 ——
+        // 手里只剩小主牌、对手还有更大的主时，「不毙」是**正确**判断。
+        // 第一版判据没加这一条，把 L3 的 6 处「聪明弃牌」误判成失误。
         const slot = lead.analysis.suitSlot
         if (slot !== -1) {
           const ha = analyzeHand(hand, ctx)
           const voidInLead = ha.slots[slot]!.cards.length === 0
           const hasTrump = ha.slots[4]!.cards.length > 0
-          missRuff = voidInLead && hasTrump && played.analysis.suitSlot !== 4
+          if (voidInLead && hasTrump && played.analysis.suitSlot !== 4) {
+            missRuff = cands.some((cs) => analyze(cs, ctx).suitSlot === 4 && wins(cs))
+          }
         }
       }
 
