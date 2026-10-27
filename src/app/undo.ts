@@ -49,7 +49,13 @@ export function shouldPush(prev: GameState, next: GameState): boolean {
   return next.phase === 'play' && prev.trick.plays.length === 0 && next.trick.plays.length === 1
 }
 
-/** 现在能不能悔牌（出牌阶段 + 栈非空） */
+/**
+ * 现在能不能悔牌（出牌阶段 + 栈非空 + 不在回放中）。
+ *
+ * `replayAt` 这一条是补的（docs/33 C5-02）：回放期间悔牌会让 `undoMove()` 把
+ * `state` 整个换掉，而快照里的 `replayAt` 是 null ⇒ **静默退出回放**，
+ * 用户以为自己只是在看历史墩。回放中要退出应该走「退出回放」按钮或 Esc。
+ */
 export function canUndo(s: GameState, u: UndoStore): boolean {
-  return s.phase === 'play' && u.frames.length > 0
+  return s.phase === 'play' && s.replayAt === null && u.frames.length > 0
 }

@@ -459,8 +459,14 @@ const PREF_FIELDS = [
 
 type PrefField = (typeof PREF_FIELDS)[number]
 
-/** 从 `src` 里取出全部偏好字段（`GameState` 的字段是 readonly，只能整体构造） */
-function pickPrefs(src: GameState): Pick<GameState, PrefField> {
+/**
+ * 从 `src` 里取出全部偏好字段（`GameState` 的字段是 readonly，只能整体构造）。
+ *
+ * 导出给 `main.ts` 的悔牌用（docs/33 C5-01）：悔牌快照是整个 `GameState`，
+ * 如果直接恢复，会把「出牌 → 改设置 → 悔牌」之间改的设置一起退回，
+ * 而且 `afterChange()` 还会把回滚后的值写回 localStorage ⇒ 用户的设置被永久抹掉。
+ */
+export function pickPrefs(src: GameState): Pick<GameState, PrefField> {
   return Object.fromEntries(PREF_FIELDS.map((k) => [k, src[k]])) as Pick<GameState, PrefField>
 }
 

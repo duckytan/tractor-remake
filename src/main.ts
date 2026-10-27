@@ -8,7 +8,7 @@ import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
 import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
-import { aiCanAct, newGame, reduce } from '@app/game'
+import { aiCanAct, newGame, pickPrefs, reduce } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
@@ -330,9 +330,15 @@ function undoMove(): void {
   const { store, target } = popUndo(undoStore)
   if (!target) return
   undoStore = store
-  // 快照自带的 selected / hintIds / lastReject 一并清掉，避免「回来就预选着牌」
+  // 快照自带的 selected / hintIds / lastReject 一并清掉，避免「回来就预选着牌」。
+  //
+  // **偏好字段必须用「当前值」覆盖快照里的旧值**（docs/33 C5-01）：
+  // 快照是整个 GameState，所以「出牌 → 改设置（四色/音量/主题/AI 档位/规则）→ 悔牌」
+  // 会把刚改的设置一起退回，而紧接着 `afterChange()` 还会把回退后的值写回
+  // localStorage ⇒ 用户的设置被永久抹掉。用 `pickPrefs(state)` 覆盖即可。
   state = {
     ...target,
+    ...pickPrefs(state),
     selected: [],
     hintIds: [],
     lastReject: null,
