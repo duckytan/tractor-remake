@@ -209,6 +209,16 @@ export interface GameState {
    * ① 覆盖用户已选好的牌；② `selected` 会随存档一起持久化。
    */
   readonly hintSelects: boolean
+  /**
+   * 提示用哪套策略：
+   * - `'safe'`（默认）= **稳妥人类风格**（`ai/safeHint.ts`）：不首出带分牌、能赢才抢、
+   *   队友赢着就垫最小的。一眼能懂，强度低一档。
+   * - `'ai'` = **最强 AI 的判断**（`choosePlay`，L3 + 残局搜索）：胜率更高，
+   *   但会走「先跑小副牌、主牌留到最后控场」这类人类不会打的线路。
+   *
+   * 纯偏好，不影响规则与 AI 自己的出牌。
+   */
+  readonly hintStyle: HintStyle
   /* ---------------- 声音（v1.4） ----------------
      全部是纯偏好，不参与任何规则判定。音频模块只读它们。 */
 
@@ -275,6 +285,7 @@ export type Action =
   | { readonly type: 'toggleShowHistory' }
   | { readonly type: 'toggleShowOppHands' }
   | { readonly type: 'toggleHintSelects' }
+  | { readonly type: 'setHintStyle'; readonly style: HintStyle }
   | { readonly type: 'toggleShowCounter' }
   | { readonly type: 'toggleAiPeek' }
   | { readonly type: 'setMusicTheme'; readonly theme: ThemeKey }
@@ -288,6 +299,9 @@ export type Action =
   | { readonly type: 'showHint'; readonly ids: readonly number[] }
   | { readonly type: 'hintSelect'; readonly ids: readonly number[] }
   | { readonly type: 'clearHint' }
+
+/** 提示策略（见 `GameState.hintStyle`） */
+export type HintStyle = 'safe' | 'ai'
 
 /** 由状态推导规则上下文（牌力表现算） */
 export function ctxOf(state: GameState): RuleContext {
@@ -374,6 +388,7 @@ export const emptyState = (): GameState => ({
   showHistory: true,
   showOppHands: false,
   hintSelects: false,
+  hintStyle: 'safe',
   settingsOpen: false,
   logOpen: false,
   hintIds: [],

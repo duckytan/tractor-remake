@@ -7,7 +7,7 @@
 
 import type { GameState } from './state'
 import { STATE_VERSION, ctxOf } from './state'
-import type { AnimSpeed, CardSize } from './state'
+import type { AnimSpeed, CardSize, HintStyle } from './state'
 import { isThemeKey } from '@audio/scenes'
 import type { ThemeKey } from '@audio/scenes'
 import {
@@ -68,6 +68,8 @@ export interface Prefs {
   readonly showOppHands: boolean
   /** 提示即选中 */
   readonly hintSelects: boolean
+  /** 提示策略：稳妥人类风格 / 最强 AI */
+  readonly hintStyle: HintStyle
   /** 记牌器 */
   readonly showCounter: boolean
   /** AI 是否读牌（关掉后 AI 只用公开信息推断，更公平但更弱） */
@@ -93,6 +95,7 @@ const DEFAULT_PREFS: Prefs = {
   showHistory: true,
   showOppHands: false,
   hintSelects: false,
+  hintStyle: 'safe',
   showCounter: false,
   aiPeekHands: true,
   musicTheme: 'spring',
@@ -197,6 +200,8 @@ export function loadPrefs(): Prefs {
       // 作弊开关默认关：老存档没有这个字段 ⇒ 不能突然把三家手牌摊开
       showOppHands: o.showOppHands === true,
       hintSelects: o.hintSelects === true,
+      // 提示风格：只有显式存了 'ai' 才认，其余（含老档）一律稳妥风格
+      hintStyle: o.hintStyle === 'ai' ? 'ai' : 'safe',
       showCounter: o.showCounter === true,
       // 缺字段按「读牌」处理：旧存档没有这个字段，默认行为不能变
       aiPeekHands: o.aiPeekHands !== false,
@@ -459,6 +464,7 @@ export function loadStateDetailed(): LoadResult {
     showHistory: o.showHistory !== false,
     showOppHands: o.showOppHands === true,
     hintSelects: o.hintSelects === true,
+    hintStyle: o.hintStyle === 'ai' ? 'ai' : 'safe',
     showCounter: o.showCounter === true,
     animation: o.animation !== false,
   }

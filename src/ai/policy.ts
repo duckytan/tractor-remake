@@ -387,6 +387,22 @@ function exactBeatable(
 }
 
 /**
+ * 「这一手甩出去，对手压得住吗」—— `exactBeatable` 的对外薄封装。
+ *
+ * 只给「稳妥提示」（`ai/safeHint.ts`）用：那套策略要判断「有没有稳赢的牌可以兑现」，
+ * 需要的就是这个判定。**不要拿它当通用工具** —— 它假设能看到 `opponents` 的手牌。
+ */
+export function isSureToHold(
+  cards: readonly Card[],
+  ctx: RuleContext,
+  opponents: readonly (readonly Card[])[],
+  remaining: readonly Seat[] | undefined,
+  seat: Seat,
+): boolean {
+  return !exactBeatable(cards, ctx, opponents, remaining, false, seat)
+}
+
+/**
  * 手牌控制力：**主牌张数**（一张 0.30）。
  *
  * 只看自己的手牌与牌力表（不偷看对手），与 L2 的信息假设一致。

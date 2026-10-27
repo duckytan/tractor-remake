@@ -8,7 +8,7 @@ import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
 import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
-import { aiCanAct, choosePlay, newGame, pickPrefs, reduce } from '@app/game'
+import { aiCanAct, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
@@ -41,6 +41,7 @@ state = {
   showHistory: prefs.showHistory,
   showOppHands: prefs.showOppHands,
   hintSelects: prefs.hintSelects,
+  hintStyle: prefs.hintStyle,
   showCounter: prefs.showCounter,
   aiPeekHands: prefs.aiPeekHands,
   pendingConfig: prefs.ruleConfig,
@@ -157,6 +158,7 @@ function afterChange(): void {
     showHistory: state.showHistory,
     showOppHands: state.showOppHands,
     hintSelects: state.hintSelects,
+    hintStyle: state.hintStyle,
     showCounter: state.showCounter,
     aiPeekHands: state.aiPeekHands,
     musicTheme: state.musicTheme,
@@ -417,8 +419,12 @@ function hintIdsFor(s: GameState): number[] {
     return r.ok ? r.cards.map((c) => c.id) : null
   }
 
-  // ① 与 AI 同一个大脑（L3 = 超强 + 残局搜索；读牌与否跟玩家设置走）
-  const best = verify(choosePlay(s, HUMAN_SEAT, 3))
+  // ① 主路径：按设置选策略
+  //    'safe'（默认）= 稳妥人类风格：不首出带分牌、能赢才抢、队友赢着垫最小
+  //    'ai'          = 最强 AI（L3 + 残局搜索），胜率更高但线路更像机器
+  const best = verify(
+    s.hintStyle === 'ai' ? choosePlay(s, HUMAN_SEAT, 3) : chooseSafePlay(s, HUMAN_SEAT),
+  )
   if (best !== null) return best
 
   // ② 兜底：枚举候选里第一个合法的

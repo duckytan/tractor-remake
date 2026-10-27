@@ -1057,6 +1057,13 @@ export function settingsPanel(s: GameState): string {
       </div>
       ${swAct('toggleShowHistory', '各家出牌留痕', `各家面前显示最近 ${PAST_DEPTH} 墩的历史小牌`, s.showHistory)}
       ${swAct('toggleShowCounter', '记牌器', '牌桌上方显示未出的王 / 级牌 / 主牌 / 已出分（辅助工具，默认关）', s.showCounter)}
+      <div class="set-row">
+        <span>提示风格<small class="set-desc">稳妥 = 像人一样打（不首出带分牌、能赢才抢）；最强 = AI 的判断，胜率更高但线路更像机器</small></span>
+        ${seg('setHintStyle', '提示风格', [
+          { v: 'safe', label: '稳妥', on: s.hintStyle === 'safe' },
+          { v: 'ai', label: '最强', on: s.hintStyle === 'ai' },
+        ])}
+      </div>
       ${swAct('toggleHintSelects', '提示即选中', '点「提示」直接选中提示的牌（会覆盖已选牌，并写入存档）', s.hintSelects)}`,
     )}
 
@@ -1588,6 +1595,9 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
         break
       case 'toggleHintSelects':
         act.dispatch({ type: 'toggleHintSelects' })
+        break
+      case 'setHintStyle':
+        if (val === 'safe' || val === 'ai') act.dispatch({ type: 'setHintStyle', style: val })
         break
       case 'toggleShowCounter':
         act.dispatch({ type: 'toggleShowCounter' })

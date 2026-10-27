@@ -11,6 +11,7 @@ import { decide } from '@ai/policy'
 import type { AiLevel } from '@ai/policy'
 import { buildBelief } from '@ai/belief'
 import { enumeratePlays } from '@ai/enumerate'
+import { safeHint } from '@ai/safeHint'
 import type { PlayContext } from '@ai/enumerate'
 import { isSameTeam,
   DEAL_TOTAL,
@@ -481,6 +482,7 @@ const PREF_FIELDS = [
   'showOppHands',
   'showCounter',
   'hintSelects',
+  'hintStyle',
   'aiPeekHands',
   'musicTheme',
   'soundEnhanced',
@@ -1129,6 +1131,35 @@ export function aiPlayFor(
   return playCards(s, seat, choosePlay(s, seat, level, opts))
 }
 
+/**
+ * 「稳妥提示」：一套像人的保守打法（`ai/safeHint.ts`）。
+ *
+ * 与 `choosePlay`（L3）并列，由设置项 `hintStyle` 选择用哪套。
+ * 这里只负责**把 GameState 翻译成 SafeHintInput** —— 决策逻辑全在 ai 层，
+ * 与 `choosePlay` 同一套分层（ui → app → ai → core）。
+ */
+export function chooseSafePlay(s: GameState, seat: Seat): readonly Card[] {
+  const ctx = ctxOf(s)
+  const leadPlay = s.trick.plays[0]
+  const play: PlayContext = leadPlay
+    ? { kind: 'follow', leadCards: leadPlay.cards, leadAnalysis: leadPlay.analysis }
+    : { kind: 'lead' }
+  const winner = currentWinnerOf(s)
+  return safeHint({
+    hand: s.hands[seat] as readonly Card[],
+    ctx,
+    play,
+    currentWinner: winner === null ? null : winner.analysis,
+    partnerLeading: winner !== null && isSameTeam(winner.seat, seat),
+    opponents: [0, 1, 2, 3].filter((x) => x !== seat).map((x) => s.hands[x] as readonly Card[]),
+    seat,
+    remainingSeats: [0, 1, 2, 3].filter(
+      (x) => x !== seat && !s.trick.plays.some((p) => p.seat === x),
+    ) as Seat[],
+    trickPoints: s.trick.plays.reduce((sum, p) => sum + cardsScore(p.cards as readonly Card[]), 0),
+  })
+}
+
 /* ---------- AI ---------- */
 
 /**
@@ -1311,6 +1342,8 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'toggleHintSelects':
       return { ...s, hintSelects: !s.hintSelects }
+    case 'setHintStyle':
+      return { ...s, hintStyle: action.style }
 
     case 'toggleShowCounter':
       return { ...s, showCounter: !s.showCounter }
