@@ -793,6 +793,12 @@ html, body {
   padding: 3px;
   background: #f2efe7;
   border-radius: 10px;
+  /* 吸顶（v1.3.29 · docs/15 KN-11）：面板可滚动，标签栏原来会跟着滚出视野，
+     想换标签必须先滚回顶部。sticky 需要不透明背景，否则内容会透过来。 */
+  position: sticky;
+  /* 贴住滚动容器的 padding box 顶边。用负值（如 -24px）会把它推到可视区之外被裁掉。 */
+  top: 0;
+  z-index: 2;
 }
 .set-tabs button {
   flex: 1 1 0;
@@ -988,6 +994,23 @@ html, body {
    #137a57 是 5.32:1（docs/37 E-6）。背景保持白色以维持选中感。 */
 .seg button.is-on { background: #fff; color: #137a57; font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .seg button:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
+
+/* 矮屏（横屏手机 / 小窗）：设置面板的可视高度只有 300 多 px，
+   声音页的「总音量」滑条会被裁在面板下沿之外，必须滚动才能操作
+   （v1.3.29 · docs/15 KN-12）。这里把纵向间距整体收紧，让首屏多放两行。 */
+@media (max-height: 460px) {
+  .panel { padding: 12px 18px; max-height: 92vh; }
+  .panel h2 { margin: 0 0 8px; font-size: 16px; }
+  .panel .muted { margin: 0 0 8px; font-size: 12px; }
+  .set-tabs { margin: 0 0 8px; }
+  .set-tabs button { padding: 5px 4px; font-size: 12px; }
+  .set-group { margin-bottom: 10px; }
+  .set-group h3 { margin: 0 0 4px; padding-bottom: 4px; }
+  .set-row { padding: 4px 0; font-size: 12.5px; }
+  .set-row .set-desc { margin-top: 1px; font-size: 10.5px; }
+  .set-sub { margin: 6px 0 0; padding-top: 6px; font-size: 11px; }
+  .set-range { height: 14px; }
+}
 
 /* 对局记录：按墩分组的卡片，左色条标赢家队伍，得分高亮，牌面按花色着色 */
 .log-list { display: flex; flex-direction: column; gap: 8px; }
