@@ -180,9 +180,13 @@ describe('TC-513/514/515 对子跟随', () => {
   })
 
   it('首出 2 对，手里只有 1 对 → 只需跟 1 对', () => {
-    const lead = leadOf([...P(1, 3), ...P(1, 4)]) // 2 对
-    const hand = [...P(1, 7), H.r9, H.r10]
-    const r = checkPlay({ hand, cards: [...P(1, 7), H.r9, H.r10], ctx: c, lead })
+    const lead = leadOf([...P(1, 3), ...P(1, 4)]) // 2 对（♥4、♥5）
+    // 手里：♥9 一对 + ♥10 + ♥J（4 张，只有 1 对）
+    // 注意别写成 `[...P(1,7), H.r9, ...]` —— `P(1,7)` 已经是两张 ♥9，
+    // 再加一张 `H.r9`（copy 0）就变成「同一张物理牌出现两次」，
+    // v1.3.29 起 `checkPlay` 会以 id 重复为由拒绝（docs/33 C6-07）。
+    const hand = [...P(1, 7), H.r10, H.rJ]
+    const r = checkPlay({ hand, cards: [...hand], ctx: c, lead })
     expect(r.ok).toBe(true)
   })
 })

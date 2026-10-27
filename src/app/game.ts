@@ -53,6 +53,30 @@ const reject = (s: GameState, reason: PlayRejectReason, detail: string): GameSta
   lastReject: { reason, detail },
 })
 
+/**
+ * 把「外部传进来的牌 id 列表」收敛成「人类手牌里真实存在的 id（去重）」。
+ *
+ * 返回 null = 当前阶段不该有选中态（出牌/埋底之外），调用方直接返回原状态。
+ *
+ * 为什么需要它（docs/33 C1-02）：`setSelection` / `showHint` / `hintSelect`
+ * 原来把 `action.ids` 原样写进 state，不校验、不限阶段。后果是
+ * ① 不存在的 id 会留在 `selected` 里，`playSelected` 过滤后变成「先选牌」；
+ * ② 定主/结算阶段也能写进 `selected`，被 `saveState` 带进存档。
+ */
+function validHandIds(s: GameState, ids: readonly number[]): number[] | null {
+  if (s.phase !== 'play' && s.phase !== 'bury') return null
+  const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+  const own = new Set(hand.map((c) => c.id))
+  const out: number[] = []
+  const seen = new Set<number>()
+  for (const id of ids) {
+    if (!own.has(id) || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
 const buildPower = (mode: 0 | 1, levelRank: LevelRank, trump: Trump) =>
   buildPowerTable({ mode, levelRank, trump })
 
@@ -397,7 +421,12 @@ export function revealTick(s: GameState): GameState {
   const total = DEAL_TOTAL
   if (s.revealed >= total) return s
 
-  const next: GameState = { ...s, revealed: s.revealed + 1 }
+  // **发牌期也要推进 `step`**（docs/33 C1-04）：`aiGrabPick` 用
+  // `rngFor(s.seed, s.step + 2000)` 掷骰，而 `revealTick` 原来不走 `withStep`
+  // ⇒ 整段发牌期 step 恒为 0 ⇒ 每个种子只有一次掷骰结果。
+  // 当前 `AI_GRAB_PCT = 100`（掷骰恒通过）所以无害，但一旦调低就会退化成
+  // 「要么四家全抢、要么全不抢」。
+  const next: GameState = { ...withStep(s), revealed: s.revealed + 1 }
   if (next.revealed >= total) {
     // 发完 ⇒ 直接进定主面板，不再仲裁。
     // 最后一 tick 必须给「完整清单」：中途面板只列级牌花色、没有「继续发牌」按钮，
@@ -770,6 +799,12 @@ function proceedAfterContract(s: GameState): GameState {
  */
 export function declareTrump(s: GameState, trump: Trump): GameState {
   if (s.phase !== 'contract') return s
+  // **运行时守卫**（docs/33 P2）：`Trump` 类型是 `0|1|2|3|'NT'`，但 JS 调用方
+  // 传个 4 也能进来。`buildPowerTable({trump: 4})` 会让 `s === trumpSuit` 永不成立
+  // ⇒ 四门全当副牌、整张牌力表失去主牌段，后面全乱。
+  if (!(trump === 'NT' || trump === 0 || trump === 1 || trump === 2 || trump === 3)) {
+    return reject(s, 'cannot-counter', '主牌标识非法')
+  }
   const finalTrump: Trump = s.forcedNT ? 'NT' : trump
 
   if (s.trumpCount === 0) {
@@ -1101,8 +1136,14 @@ export function reduce(s: GameState, action: Action): GameState {
     case 'clearSelect':
       return { ...s, selected: [], hintIds: [] }
 
-    case 'setSelection':
-      return { ...s, selected: [...action.ids], hintIds: [] }
+    case 'setSelection': {
+      // **id 必须真的在手里**（docs/33 C1-02）：原来原样写入，UI 侧一点 bug
+      // 就能把不存在的 id 塞进 selected，然后 `playSelected` 会静默变成「先选牌」。
+      // 顺带限制阶段：只有出牌/埋底需要选中态。
+      const ids = validHandIds(s, action.ids)
+      if (ids === null) return s
+      return { ...s, selected: ids, hintIds: [] }
+    }
 
     case 'playSelected': {
       if (s.phase !== 'play') return s
@@ -1188,13 +1229,19 @@ export function reduce(s: GameState, action: Action): GameState {
     case 'cancelNewGame':
       return { ...s, confirmNew: false }
 
-    case 'showHint':
+    case 'showHint': {
       // 纯视觉提示，不碰 selected / 不推进局面（FR-19 ③）
-      return { ...s, hintIds: [...action.ids] }
+      const ids = validHandIds(s, action.ids)
+      if (ids === null) return s
+      return { ...s, hintIds: ids }
+    }
 
-    case 'hintSelect':
+    case 'hintSelect': {
       // 「提示即选中」模式：一次 dispatch 同时写 selected 与 hintIds（避免两次 save）
-      return { ...s, selected: [...action.ids], hintIds: [...action.ids] }
+      const ids = validHandIds(s, action.ids)
+      if (ids === null) return s
+      return { ...s, selected: ids, hintIds: ids }
+    }
 
     case 'clearHint':
       return { ...s, hintIds: [] }

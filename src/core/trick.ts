@@ -86,8 +86,15 @@ export function trickStanding(plays: readonly Play[], ctx: RuleContext): TrickSt
  *   ④ 同类型比 keyCard 牌力，最大者赢；牌力相同则先出者赢
  */
 export function resolveTrick(plays: readonly Play[], ctx: RuleContext): TrickResult {
+  if (plays.length === 0) throw new Error('resolveTrick: 没有出牌')
+  // 首出是混花色时 `trickStanding` 也返回 null（`canBeat` 对 suitSlot === -1 恒 false，
+  // 竞争池为空），旧实现于是报「没有出牌」—— 明明有牌，只是首出牌型非法（docs/33 C6-05）。
+  const lead = plays[0] as Play
+  if (lead.analysis.suitSlot === -1) {
+    throw new Error('resolveTrick: 首出牌型非法（混花色不能首出）')
+  }
   const standing = trickStanding(plays, ctx)
-  if (standing === null) throw new Error('resolveTrick: 没有出牌')
+  if (standing === null) throw new Error('resolveTrick: 没有可比较的牌')
   const best = standing.winner
 
   let score = 0

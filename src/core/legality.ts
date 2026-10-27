@@ -37,8 +37,15 @@ const reject = (reason: PlayRejectReason, detail: string): PlayResult => ({
   detail,
 })
 
-/** cards 是否全部来自 hand（按 id 判定，重复牌也能正确处理） */
+/**
+ * cards 是否全部来自 hand。
+ *
+ * **先要求 cards 内部 id 互不相同**（docs/33 C6-07）：下面用的是「多重集池」计数，
+ * 手牌里同一 id 出现 3 次、出牌也出 3 张时会校验通过并全部打出 —— 物理上不可能，
+ * 但数据损坏（或篡改存档）时真会发生。id 重复直接判不合法。
+ */
 function allFromHand(hand: readonly Card[], cards: readonly Card[]): boolean {
+  if (new Set(cards.map((c) => c.id)).size !== cards.length) return false
   const pool = new Map<number, number>()
   for (const c of hand) pool.set(c.id, (pool.get(c.id) ?? 0) + 1)
   for (const c of cards) {

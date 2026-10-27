@@ -461,7 +461,11 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
           ? // 一墩出对子/拖拉机时一次耗多张牌，实际墩数会少于 25。
             // 结算时还写「第 23 / 25 墩」会让人以为没打完。
             `共 ${esc(s.history.length)} 墩`
-          : `第 ${esc(s.tricksDone + (s.phase === 'play' ? 1 : 0))} / 25 墩`
+          : // **出牌中不写分母**（v1.3.29 · docs/37 E-8）：
+            // 一局实际只打 19~25 墩（对子/拖拉机/甩牌一墩吃多张），
+            // 写「第 3 / 25 墩」会让人以为还有 22 墩，结算时突然变成「共 24 墩」。
+            // 分母写死 25 是**上限**不是实际值，干脆不写。
+            `第 ${esc(s.tricksDone + (s.phase === 'play' ? 1 : 0))} 墩`
       }</span>
       ${s.bottomScore > 0 ? `<i></i><span>底分 <b>${esc(s.bottomScore)}</b></span>` : ''}
     `
@@ -718,7 +722,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
  * 定主阶段（还没开打）不弹，直接重开。
  */
 export function confirmNewPanel(s: GameState): string {
-  const progress = s.phase === 'bury' ? '还没扣底' : `第 ${esc(Math.min(s.tricksDone + 1, 25))} 墩`
+  const progress = s.phase === 'bury' ? '还没扣底' : `第 ${esc(s.tricksDone + 1)} 墩`
   return `<div class="panel" role="dialog" aria-label="重新开局确认">
     <h2>重新开局？</h2>
     <p class="muted">第 ${esc(s.round)} 局 · ${esc(progress)} · 当前进度会丢失（存档一并清掉）。</p>

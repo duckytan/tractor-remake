@@ -43,9 +43,15 @@ export interface AdvanceResult {
  * 例：9 升 3 级，J 受保护 → 9→10→J，停在 J，实际升 2 级。
  */
 export function advanceLevel(from: LevelRank, levels: number, config: RuleConfig, mode: 0 | 1 = 0): AdvanceResult {
+  if (!Number.isFinite(levels)) throw new Error(`advanceLevel: levels 非有限值 ${levels}`)
+  // **循环次数必须夹紧**（docs/33 C6-08）：`levels` 来自 `floor((score-80)/40)`，
+  // 正常上限约 38（200 分 × 8 倍抠底）；但存档里的 defenderScore 一旦异常，
+  // 循环次数就跟着失控 —— 实测「必打全关 + defenderScore=1e9」会跑 2500 万次 / 78ms。
+  // 从 2 升到打王级最多 14 级，给 20 已经足够宽松。
+  const n = Math.max(0, Math.min(Math.trunc(levels), 20))
   let cur = from
   let done = 0
-  for (let i = 0; i < levels; i++) {
+  for (let i = 0; i < n; i++) {
     const next = nextLevel(cur, mode)
     cur = next
     done += 1
@@ -75,6 +81,12 @@ export interface LevelGain {
  *              （80–119 只上台不升级；120–159 升 1 级；…）
  */
 export function levelsFor(score: number): LevelGain {
+  // `NaN` 会让下面三个分支**全部为 false**，静默落到「40–79 → 庄家方升 1 级」
+  // （docs/33 C6-04）。core 是纯函数，遇到非法入参应该抛错而不是猜一个结果；
+  // app 层的入口校验（loadState / playCards）负责保证不会传进来。
+  if (!Number.isFinite(score) || score < 0) {
+    throw new Error(`levelsFor: defenderScore 非法 ${score}`)
+  }
   if (score >= 80) return { team: 'defender', levels: Math.floor((score - 80) / 40) }
   if (score === 0) return { team: 'dealer', levels: 3 }
   return { team: 'dealer', levels: score < 40 ? 2 : 1 }

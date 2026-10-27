@@ -123,11 +123,15 @@ export interface GameState {
     readonly leader: Seat
     readonly plays: readonly Play[]
     /**
-     * @deprecated 出牌途中恒为 null，别拿它做高亮。
+     * @deprecated **不要拿它做高亮**。它不是「本墩当前最大」，也不是「本墩赢家」。
      *
-     * 一墩的赢家只在结算时由 `resolveTrick` 算出并写进 `history`，
-     * 这个字段从没被赋过值 —— v1.3.24 之前座位标签的 `.is-win` 因此一直没生效。
-     * 要「当前谁最大」请用 `app/view.ts` 的 `leadingSeat()`（走 `trickStanding`）。
+     * 实际行为（v1.3.29 复核后更正，旧注释写「从没被赋过值」是**错的**）：
+     *   - 出牌途中：保持**上一墩**的赢家（`game.ts` 结算时把 `winner` 留在 trick 上
+     *     传给下一墩），所以它是个**过期值** —— 比 `null` 更危险；
+     *   - 本墩结算：由 `resolveTrick` 算出后写进 `history`，不是写这里。
+     *
+     * v1.3.24 之前座位标签的 `.is-win` 就是读了这个过期字段，所以一直亮错人。
+     * 要「当前谁最大」请用 `app/view.ts` 的 `leadingSeat()`（内部走 `trickStanding`）。
      */
     readonly winner: Seat | null
   }

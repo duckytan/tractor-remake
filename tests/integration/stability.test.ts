@@ -155,7 +155,9 @@ describe('M6 · 提示不改变游戏状态（FR-19 ③）', () => {
 
   it('showHint 只写 hintIds，不碰 selected', () => {
     const s = setup()
-    const ids = [1, 2, 3]
+    // v1.3.29 起 `showHint` 会校验 id 必须在手里（docs/33 C1-02），
+    // 所以这里必须取真实手牌 id，不能随手写 [1,2,3]。
+    const ids = (s.hands[HUMAN_SEAT] as readonly Card[]).slice(0, 3).map((c) => c.id)
     const withHint = reduce(s, { type: 'showHint', ids })
     expect(withHint.hintIds).toEqual(ids)
     // 关键：selected 与局面完全没变

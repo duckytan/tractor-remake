@@ -26,6 +26,9 @@ export function calcBottomBonus(
   winnerIsDealerSide: boolean,
 ): BottomBonusResult {
   if (winnerIsDealerSide) return { applies: false, multiplier: 1, extra: 0 }
+  // 空牌型（没有任何组）不该拿到 ×2：旧实现倍数停在初始值 `single`，
+  // 于是「赢家的牌型是空的」这种畸形数据会让底分白给（docs/33 C6-06）。
+  if (winnerAnalysis.groups.length === 0) return { applies: false, multiplier: 1, extra: 0 }
 
   let multiplier: number = BOTTOM_MULTIPLIER.single
   for (const g of winnerAnalysis.groups) {
