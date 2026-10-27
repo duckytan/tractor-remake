@@ -50,9 +50,18 @@ export interface AudioBuses {
   readonly fxBus: GainNode
 }
 
-/** 建整套总线。调用方负责确保这是「用户手势之后」 */
-export function createBuses(vol: Volumes): AudioBuses {
-  const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
+/**
+ * 建整套总线。调用方负责确保这是「用户手势之后」。
+ *
+ * @param ctx 已经创建好的上下文。**手势回调里应该先自己 new 一个再传进来** ——
+ *   建图要 50ms+（75 个 GainNode），塞在手势回调里会让首次点击明显卡顿
+ *   （docs/34 D-2 实测 116ms）。拆成「先建上下文，再空闲时建图」两步。
+ */
+export function createBuses(vol: Volumes, existingCtx?: AudioContext): AudioBuses {
+  const ctx =
+    existingCtx ??
+    new (window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
 
   const master = ctx.createGain()
   master.gain.value = vol.master

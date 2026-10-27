@@ -97,11 +97,55 @@ export function createAudio(initial: AudioSettings): AudioHandle {
     sfx: settings.volumeSfx,
   })
 
+  /**
+   * 手势内先建好的上下文（`start()` 里创建）。
+   *
+   * 为什么要拆两步（docs/34 D-2）：建整套总线要 50ms+（75 个 GainNode + 压缩器 +
+   * 卷积混响），而浏览器要求「音频必须由用户手势启动」—— 旧实现把整段建图
+   * 塞在 pointerdown 回调里，实测首次点击卡 **116ms**（其中 55.5ms 是 AudioContext）。
+   * 现在手势里只 `new AudioContext()` + `resume()`（~1ms），建图推到空闲回调。
+   */
+  let earlyCtx: AudioContext | null = null
+  let buildTimer: number | null = null
+
+  /**
+   * **页面加载后就在空闲时把 AudioContext 建好（保持 suspended）**。
+   *
+   * `new AudioContext()` 本身要 46ms（实测），而浏览器允许在没有用户手势时
+   * 创建「挂起」的上下文 —— 只有 `resume()` / 发声必须在手势里。
+   * 所以先建好、手势里只 resume，把最后这 46ms 也挪出点击路径。
+   *
+   * 实测：拆建图后首点 116ms → 49.9ms；再预建上下文 → 见 F8 的验收记录。
+   */
+  const prewarm = (): void => {
+    if (earlyCtx || buses) return
+    try {
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      earlyCtx = new AC()
+      // 建好就挂起，避免「没点过页面却在放声音」
+      if (earlyCtx.state === 'running') void earlyCtx.suspend().catch(() => {})
+    } catch {
+      earlyCtx = null
+    }
+  }
+  if (typeof window !== 'undefined') {
+    const ric = (
+      window as unknown as {
+        requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number
+      }
+    ).requestIdleCallback
+    if (typeof ric === 'function') ric(prewarm, { timeout: 1500 })
+    else window.setTimeout(prewarm, 300)
+  }
+
   /** 建上下文 + 调度器（幂等） */
   const ensure = (): boolean => {
     if (buses) return true
     try {
-      buses = createBuses(volumes())
+      buses = createBuses(volumes(), earlyCtx ?? undefined)
+      earlyCtx = null
     } catch {
       return false
     }
@@ -200,9 +244,33 @@ export function createAudio(initial: AudioSettings): AudioHandle {
     },
 
     start() {
-      if (!ensure() || !music) return
-      music.start()
-      if (settings.soundEnhanced) void ensureTone()
+      // ① 手势内只做「必须同步」的一件事：创建并 resume 上下文
+      if (!earlyCtx && !buses) {
+        try {
+          const AC =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+          earlyCtx = new AC()
+          void earlyCtx.resume().catch(() => {})
+        } catch {
+          earlyCtx = null
+        }
+      }
+      // ② 建图（50ms+）推到空闲：晚一个 tick 不会有听感差异 ——
+      //    第一个音效本来就在下一帧之后（出牌动画/发牌 tick）。
+      if (buildTimer !== null) return
+      const build = (): void => {
+        buildTimer = null
+        if (!ensure() || !music) return
+        music.start()
+        if (settings.soundEnhanced) void ensureTone()
+      }
+      const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number })
+        .requestIdleCallback
+      buildTimer =
+        typeof ric === 'function'
+          ? (ric(build, { timeout: 200 }) as unknown as number)
+          : (window.setTimeout(build, 0) as unknown as number)
     },
 
     stop() {
@@ -216,7 +284,10 @@ export function createAudio(initial: AudioSettings): AudioHandle {
     },
 
     playSfx(name, opts) {
-      if (!ensure()) return
+      // 图还没建好就直接跳过，**不要**在这里同步 `ensure()` ——
+      // 那会把 50ms 建图重新塞回手势回调，白拆了（见 start() 的注释）。
+      // 建图最多晚一个空闲回调（<200ms），期间静音一次可以接受。
+      if (!buses) return
       playSfx(rt, host(), name, opts)
     },
 

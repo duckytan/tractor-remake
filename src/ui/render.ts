@@ -259,6 +259,20 @@ const SETTINGS_TABS: readonly { key: SettingsTab; label: string }[] = [
   { key: 'rule', label: '规则' },
 ]
 
+/**
+ * 手牌元素的复用缓存：`id → { el, sig }`。
+ *
+ * 牌面是一整张内联 SVG（约 1.4KB），25 张 = 35KB / 25 次 `innerHTML`。
+ * 整棵重建时每出一张牌就把 25 张全序列化一遍 —— 实测单次 render 16ms，
+ * 其中一半以上花在这里（docs/34 D-3）。
+ *
+ * 签名（`sig`）只包含**影响牌面外观的类名**：选中/提示/飞行中/分组间隔/可点态。
+ * 签名没变就直接搬同一个节点（`appendChild` 移动而非复制），变了才重建。
+ *
+ * 放模块级而不是函数内：`render()` 每次调用都是新的栈帧，缓存必须跨调用存活。
+ */
+const handCardCache = new Map<number, { el: HTMLElement; sig: string }>()
+
 export function render(root: HTMLElement, s: GameState, act: Actions): void {
   ensureDefs()
   // 体验档位挂在 <html> 上：styles.css 里用的是 :root[...] 选择器，
@@ -477,16 +491,26 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         // 这张牌还在从牌堆飞过来 ⇒ 先占位不显形，落地那帧由 dealFly 揭开（见 ui/dealFly.ts）
         isInFlight(c.id) ? 'card--incoming' : '',
         item.gapBefore ? 'card--gap' : '',
+        burying ? 'is-pickable' : canAct ? '' : 'card--disabled',
       ]
         .filter(Boolean)
         .join(' ')
-      const el = cardEl(c, {
-        cls,
-        id: c.id,
-      })
-      if (burying) el.classList.add('is-pickable')
-      else if (!canAct) el.classList.add('card--disabled')
-      // NFR-10：可操作时牌可 Tab 聚焦，回车切换选中
+      // **牌面元素复用**（v1.3.29 · docs/34 D-3）。
+      //
+      // 一张牌的 DOM 里有一整张内联 SVG（约 1.4KB），25 张就是 35KB / 25 次 innerHTML。
+      // 整棵重建的旧实现每出一张牌就把 25 张全重新序列化一遍 —— 这是 16ms/次的主要来源。
+      // 这里按 `id + 类名签名` 复用：签名没变就搬同一个节点过去（`appendChild` 会移动而非复制），
+      // 变了才重建。出牌时只有被出的那张从列表里消失，其余 24 张零成本。
+      const sig = cls
+      const cached = handCardCache.get(c.id)
+      const el =
+        cached !== undefined && cached.sig === sig
+          ? cached.el
+          : (() => {
+              const fresh = cardEl(c, { cls, id: c.id })
+              handCardCache.set(c.id, { el: fresh, sig })
+              return fresh
+            })()
       if (burying || canAct) {
         el.tabIndex = 0
         el.setAttribute('role', 'button')
@@ -496,10 +520,18 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         // 牌名缓存到 dataset.name，`patchSelection` 增量更新时不必再算一遍。
         el.dataset.name = cardSpokenName(c)
         el.setAttribute('aria-label', handCardLabel(el.dataset.name, c.id, isHint))
+      } else {
+        el.removeAttribute('role')
+        el.removeAttribute('aria-pressed')
+        el.removeAttribute('tabindex')
       }
       hand.appendChild(el)
     }
     if (items.length === 0) hand.innerHTML = '<div class="hand-empty">手牌已出完</div>'
+    // 出掉的牌要清出缓存，否则一局下来 Map 会留下 100 多个游离节点
+    for (const id of [...handCardCache.keys()]) {
+      if (!items.some((it) => it.card.id === id)) handCardCache.delete(id)
+    }
 
     // 手牌重叠率按容器宽度反算（分组间隔一起计入），保证任意张数都铺得下且角标可见
     // 花色分组间隔 = 卡宽的 20%（与 CSS 的 --suit-gap 同源，避免两处各写一个数）
