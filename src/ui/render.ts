@@ -86,10 +86,21 @@ const AI_LEVEL_OPTS = [
   { v: '3', label: '超强' },
 ] as const
 
+/** 级牌标签：下标与 `core/cards.ts` 的 rank 序一致（0 = 2 … 12 = A） */
+const LEVEL_LABELS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'] as const
+
+/**
+ * 级牌显示名。
+ *
+ * `LevelRank` 不是 rank 下标：1 = A、2 = 2 … 11 = J、12 = Q、13 = K、18 = 打王级。
+ * 映射公式与 `core/cards.ts` 的 `levelRankToRankIndex` **必须一致**（`(lr+11)%13`）。
+ *
+ * v1.3.29 之前这里是 `return String(lr)`，于是打 J/Q/K 时顶栏显示
+ * 「打 11 / 打 12 / 打 13」—— 玩家看到的是内部编号（docs/31 遗留 P2，docs/35 F1 修）。
+ */
 export function levelLabel(lr: LevelRank): string {
   if (lr === 18) return '打王'
-  if (lr === 1) return 'A'
-  return String(lr)
+  return (LEVEL_LABELS[(lr + 11) % 13] ?? '?') as string
 }
 
 export function trumpLabel(t: Trump): string {
@@ -274,8 +285,8 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     <header class="topbar">
       <div class="brand">拖拉机 · 重制版<span class="brand__ver" title="版本 ${__APP_VERSION__}">v${__APP_VERSION__}</span></div>
       <div class="meta">
-        <span>第 <b>${s.round}</b> 局</span>
-        <span>打 <b>${levelLabel(s.levelRank)}</b></span>
+        <span>第 <b>${esc(s.round)}</b> 局</span>
+        <span>打 <b>${esc(levelLabel(s.levelRank))}</b></span>
         <span>主 <b>${trumpLabel(s.trump)}</b></span>
         <span>庄 <b>${SEAT_LABEL[s.dealer]}</b></span>
       </div>
@@ -338,7 +349,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const side = seat === 1 || seat === 3
 
     box.innerHTML = `<div class="seat-tag${isWinner ? ' is-win' : ''}">
-        ${SEAT_LABEL[seat]} · ${hand.length} 张 · ${roleTag(s, seat)}
+        ${esc(SEAT_LABEL[seat])} · ${esc(hand.length)} 张 · ${roleTag(s, seat)}
         ${turn === seat ? '<span class="turn-dot"></span>' : ''}
       </div>
       <div class="seat-body">
@@ -407,7 +418,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       </div>`
         : ''
     box.innerHTML = `<div class="seat-tag${isWinner ? ' is-win' : ''}">
-        ${SEAT_LABEL[HUMAN_SEAT]} · ${held} 张 · ${roleTag(s, HUMAN_SEAT)}
+        ${esc(SEAT_LABEL[HUMAN_SEAT])} · ${esc(held)} 张 · ${roleTag(s, HUMAN_SEAT)}
       </div>${deck}`
   }
 
@@ -422,20 +433,20 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   /* ---- 积分栏（顶部）---- */
   {
     const bar = q('status')
-    const teamA = `队A ${levelLabel(s.levels.a)}`
-    const teamB = `队B ${levelLabel(s.levels.b)}`
+    const teamA = `队A ${esc(levelLabel(s.levels.a))}`
+    const teamB = `队B ${esc(levelLabel(s.levels.b))}`
     bar.innerHTML = `
       <span>${teamA}</span><i></i>
       <span>${teamB}</span><i></i>
-      <span>闲家得分 <b>${s.defenderScore}</b> / 200</span><i></i>
+      <span>闲家得分 <b>${esc(s.defenderScore)}</b> / 200</span><i></i>
       <span>${
         s.phase === 'settle' || s.phase === 'over'
           ? // 一墩出对子/拖拉机时一次耗多张牌，实际墩数会少于 25。
             // 结算时还写「第 23 / 25 墩」会让人以为没打完。
-            `共 ${s.history.length} 墩`
-          : `第 ${s.tricksDone + (s.phase === 'play' ? 1 : 0)} / 25 墩`
+            `共 ${esc(s.history.length)} 墩`
+          : `第 ${esc(s.tricksDone + (s.phase === 'play' ? 1 : 0))} / 25 墩`
       }</span>
-      ${s.bottomScore > 0 ? `<i></i><span>底分 <b>${s.bottomScore}</b></span>` : ''}
+      ${s.bottomScore > 0 ? `<i></i><span>底分 <b>${esc(s.bottomScore)}</b></span>` : ''}
     `
   }
 
@@ -493,7 +504,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const bar = q('handbar')
     if (s.phase === 'bury') {
       bar.innerHTML = `
-        <span class="hint-text">选 8 张扣底（已选 ${s.selected.length} / 8）</span>
+        <span class="hint-text">选 8 张扣底（已选 ${esc(s.selected.length)} / 8）</span>
         <button class="btn btn--primary" data-act="bury" ${s.selected.length === 8 ? '' : 'disabled'}>扣底</button>`
     } else if (s.phase === 'play') {
       const myTurn = turn === HUMAN_SEAT
@@ -501,8 +512,8 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       if (rep !== null) {
         bar.innerHTML = `
           <button class="btn" data-act="replayStep" data-val="-1" ${rep.isFirst ? 'disabled' : ''}>◀ 上一墩</button>
-          <span class="hint-text">回放 第 ${rep.index + 1} / ${rep.total} 墩 · ${rep.winnerLabel} 赢${
-            rep.score > 0 ? ` · ${rep.score} 分` : ''
+          <span class="hint-text">回放 第 ${esc(rep.index + 1)} / ${esc(rep.total)} 墩 · ${esc(rep.winnerLabel)} 赢${
+            rep.score > 0 ? ` · ${esc(rep.score)} 分` : ''
           }</span>
           <button class="btn" data-act="replayStep" data-val="1" ${rep.isLast ? 'disabled' : ''}>下一墩 ▶</button>
           <button class="btn btn--primary" data-act="replayExit">退出回放</button>`
@@ -567,10 +578,10 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       const need = s.trumpCount + 1
       const title = !countering ? '定主' : s.counterOptions.length > 0 ? '反主' : '加固'
       const stateText = countering
-        ? ` · 当前主 <b>${trumpLabel(s.trump)}</b> · <b>${s.trumpCount}</b> 张`
+        ? ` · 当前主 <b>${esc(trumpLabel(s.trump))}</b> · <b>${esc(s.trumpCount)}</b> 张`
         : stillDealing
           ? // 「已发」按人类自己的到手张数算（第 26..33 轮是庄家独得，人类不涨）
-            ` · 已发 <b>${Math.min(s.revealed, totalHand)}</b> / ${totalHand} 张，摸到级牌可以先抢`
+            ` · 已发 <b>${esc(Math.min(s.revealed, totalHand))}</b> / ${esc(totalHand)} 张，摸到级牌可以先抢`
           : ''
       // 无将按钮为什么是灰的：只在「发完后首次定主」的面板上解释。
       // 中途面板（stillDealing）本来就不列无将，反主面板也不列，说这句反而误导。
@@ -578,14 +589,14 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         !countering && !stillDealing && !s.forcedNT && !allowed.has('NT')
       const note =
         s.guardBy !== null
-          ? `<p class="trump-note">已加固：反主门槛升到 <b>${need}</b> 张（锁死）</p>`
+          ? `<p class="trump-note">已加固：反主门槛升到 <b>${esc(need)}</b> 张（锁死）</p>`
           : countering && s.counterOptions.length > 0
-            ? `<p class="trump-note">反主需 <b>${need}</b> 张该门级牌</p>`
+            ? `<p class="trump-note">反主需 <b>${esc(need)}</b> 张该门级牌</p>`
             : ntNeedsJoker
               ? '<p class="trump-note">无将需持<b>一对王</b>（一对小王 或 一对大王）</p>'
               : ''
       const guardBtn = s.guardOption
-        ? `<div class="trump-actions"><button class="btn btn--primary guard-btn" data-act="guard">加固（需 ${GUARD_NEED} 张同花色级牌）</button></div>`
+        ? `<div class="trump-actions"><button class="btn btn--primary guard-btn" data-act="guard">加固（需 ${esc(GUARD_NEED)} 张同花色级牌）</button></div>`
         : ''
       // 亮主按钮三态（对齐原版按钮的三态：已亮 / 可亮 / 不可选，文档里记作 U/D/X）
       //
@@ -609,7 +620,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       fillOverlay(`
         <div class="panel">
           <h2>${title}</h2>
-          <p class="muted">本局打 <b>${levelLabel(s.levelRank)}</b>${s.forcedNT ? '（打王级强制无将）' : ''}${stateText}</p>
+          <p class="muted">本局打 <b>${esc(levelLabel(s.levelRank))}</b>${s.forcedNT ? '（打王级强制无将）' : ''}${stateText}</p>
           <div class="trump-grid">
             ${trumpBtn(0, SUIT_LABEL[0] as string)}
             ${trumpBtn(1, SUIT_LABEL[1] as string, ' is-red')}
@@ -666,10 +677,10 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
  * 定主阶段（还没开打）不弹，直接重开。
  */
 export function confirmNewPanel(s: GameState): string {
-  const progress = s.phase === 'bury' ? '还没扣底' : `第 ${Math.min(s.tricksDone + 1, 25)} 墩`
+  const progress = s.phase === 'bury' ? '还没扣底' : `第 ${esc(Math.min(s.tricksDone + 1, 25))} 墩`
   return `<div class="panel" role="dialog" aria-label="重新开局确认">
     <h2>重新开局？</h2>
-    <p class="muted">第 ${s.round} 局 · ${progress} · 当前进度会丢失（存档一并清掉）。</p>
+    <p class="muted">第 ${esc(s.round)} 局 · ${esc(progress)} · 当前进度会丢失（存档一并清掉）。</p>
     <div class="panel-actions">
       <button class="btn" data-act="cancelNew">取消</button>
       <button class="btn btn--primary" data-act="confirmNew">重新开局</button>
@@ -687,14 +698,14 @@ function counterStrip(s: GameState): string {
   if (!s.showCounter) return ''
   const c = counterView(s)
   const item = (label: string, slot: CounterSlot): string =>
-    `<span class="counter__item${slot.left === 0 ? ' is-done' : ''}">${label} <b>${slot.left}</b>/${slot.total}</span>`
+    `<span class="counter__item${slot.left === 0 ? ' is-done' : ''}">${esc(label)} <b>${esc(slot.left)}</b>/${esc(slot.total)}</span>`
   return `<div class="counter" data-slot="counter" title="记牌器：未出 / 总数（底牌 8 张谁也不知道，算在「未出」里）">
       ${item('大王', c.bigJoker)}
       ${item('小王', c.smallJoker)}
       ${item('主级', c.levelTrump)}
       ${item('副级', c.levelOff)}
       ${item('主', c.trumps)}
-      <span class="counter__item${c.pointsPlayed >= c.pointsTotal ? ' is-done' : ''}">分 <b>${c.pointsPlayed}</b>/${c.pointsTotal}</span>
+      <span class="counter__item${c.pointsPlayed >= c.pointsTotal ? ' is-done' : ''}">分 <b>${esc(c.pointsPlayed)}</b>/${esc(c.pointsTotal)}</span>
     </div>`
 }
 
@@ -703,15 +714,15 @@ export function settlePanel(s: GameState): string {
   if (!r) return ''
   const over = s.phase === 'over'
   const rows: string[] = []
-  rows.push(`<div class="row"><span>闲家得分</span><b>${r.defenderScore}</b></div>`)
-  rows.push(`<div class="row"><span>${r.dealerChanged ? '闲家上台' : '庄家方继续'}</span><b>${r.levels} 级</b></div>`)
+  rows.push(`<div class="row"><span>闲家得分</span><b>${esc(r.defenderScore)}</b></div>`)
+  rows.push(`<div class="row"><span>${r.dealerChanged ? '闲家上台' : '庄家方继续'}</span><b>${esc(r.levels)} 级</b></div>`)
   if (r.actualLevels !== r.levels) {
     rows.push(
-      `<div class="row"><span>必打截断</span><b>实际升 ${r.actualLevels} 级${r.guardLevel ? `（停在 ${levelLabel(r.guardLevel)}）` : ''}</b></div>`,
+      `<div class="row"><span>必打截断</span><b>实际升 ${esc(r.actualLevels)} 级${r.guardLevel ? `（停在 ${esc(levelLabel(r.guardLevel))}）` : ''}</b></div>`,
     )
   }
-  rows.push(`<div class="row"><span>下一局</span><b>${SEAT_LABEL[r.newDealer]}坐庄</b></div>`)
-  rows.push(`<div class="row"><span>级牌</span><b>队A ${levelLabel(r.newLevels.a)} · 队B ${levelLabel(r.newLevels.b)}</b></div>`)
+  rows.push(`<div class="row"><span>下一局</span><b>${esc(SEAT_LABEL[r.newDealer])}坐庄</b></div>`)
+  rows.push(`<div class="row"><span>级牌</span><b>队A ${esc(levelLabel(r.newLevels.a))} · 队B ${esc(levelLabel(r.newLevels.b))}</b></div>`)
 
   return `<div class="panel">
     <h2>${over ? `游戏结束 · ${r.winnerTeam === 0 ? '队A' : '队B'} 获胜` : '本局结算'}</h2>
@@ -765,10 +776,10 @@ function legalityBadge(s: GameState): string {
  */
 export function legalityBadgeOf(result: PlayResult): string {
   if (!result.ok) {
-    return `<span class="legality is-bad">✕ ${escapeHtml(result.detail)}</span>`
+    return `<span class="legality is-bad">✕ ${esc(result.detail)}</span>`
   }
   if (result.adjusted) {
-    return `<span class="legality is-warn">⚠ ${escapeHtml(result.detail)}（将只出 ${result.cards.length} 张）</span>`
+    return `<span class="legality is-warn">⚠ ${esc(result.detail)}（将只出 ${result.cards.length} 张）</span>`
   }
   return `<span class="legality is-ok">✓ 可以出</span>`
 }
@@ -1043,12 +1054,29 @@ function logPanel(s: GameState): string {
   </div>`
 }
 
-function escapeHtml(s: string): string {
-  return s
+/**
+ * HTML 转义。
+ *
+ * **为什么要有这一层**（docs/38 G-1）：`render()` 是「拼字符串 → innerHTML」，
+ * 任何被内插进模板的值都会被当成 HTML 解析。状态里理论上「一定是数字」的字段
+ * （`round` / `defenderScore` / `tricksDone` …）在旧 `loadState` 下没有任何校验，
+ * 一份被篡改的存档就能把 `<img onerror>` 送进 DOM 并执行。
+ *
+ * 现在入口已经做了字段级校验（见 `app/persist.ts` 的 `loadStateDetailed`），
+ * 但**出口仍然要转义** —— 将来只要新增一个玩家可输入的字段（昵称、房间名），
+ * 忘了校验就是真漏洞。两层都做才算收口。
+ *
+ * 接受 `unknown` 而不是 `string`：这样 `${esc(x)}` 对数字/布尔/undefined 也能直接用，
+ * 不必在每个调用点先判类型。
+ */
+function esc(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  return String(v)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 export interface HandFit {

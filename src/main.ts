@@ -9,7 +9,7 @@ import type { PlayContext } from '@ai/enumerate'
 import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
 import { aiCanAct, newGame, reduce } from '@app/game'
-import { clearState, loadPrefs, loadState, savePrefs, saveState } from '@app/persist'
+import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
 import type { Prefs } from '@app/persist'
@@ -23,8 +23,8 @@ const root = document.getElementById('app')
 if (!root) throw new Error('#app 未找到')
 
 const prefs = loadPrefs()
-const restored = loadState()
-let state: GameState = restored ?? newGame(
+const loaded = loadStateDetailed()
+let state: GameState = loaded.state ?? newGame(
   prefs.ruleConfig,
   prefs.aiLevelOpponent,
   prefs.aiSpeedMs,
@@ -42,6 +42,21 @@ state = {
   hintSelects: prefs.hintSelects,
   showCounter: prefs.showCounter,
   pendingConfig: prefs.ruleConfig,
+}
+/**
+ * 存档没恢复成功时**告诉玩家一声**。
+ *
+ * 旧实现是静默重开 —— 玩家看到的是「我明明打到一半，怎么重新发牌了」，
+ * 完全不知道发生了什么（docs/33 C3-02）。现在把原因写进 `notice`，
+ * 由 toast 显示一次，玩家点掉或下一个动作就消失。
+ *
+ * 注意 `contract-phase` 不提示：定主阶段本来就不恢复（见 `loadStateDetailed`），
+ * 那是设计行为，说「存档损坏」反而吓人。
+ */
+if (loaded.issue === 'version') {
+  state = { ...state, notice: '存档版本已过期，已重新开局' }
+} else if (loaded.issue === 'corrupt') {
+  state = { ...state, notice: '存档内容已损坏，已重新开局' }
 }
 
 let aiTimer: number | null = null
@@ -148,6 +163,11 @@ function afterChange(): void {
     volumeSfx: state.volumeSfx,
   })
   paint()
+  // 必须在 paint 之后：飞行牌要量「这张牌刚画到哪儿」，以及牌堆的位置
+  trackDealAnimation(root as HTMLElement, state)
+  scheduleDeal()
+  scheduleAi()
+}
 
 /*
  * PWA：生产环境注册 service worker（离线 + 可安装）。
@@ -155,6 +175,11 @@ function afterChange(): void {
  * **本地预览 / e2e 不注册**：它们都跑在 127.0.0.1 / localhost 上，
  * 而 SW 会把构建产物缓存起来 —— 之后改了代码再跑，读到的还是旧产物，
  * 排查起来极其费时（PWA 最经典的坑）。部署到 Vercel 等真实域名时才启用。
+ *
+ * **必须放在 `afterChange()` 外面**（v1.3.29 修正）：这段曾经写在 `paint()` 之后、
+ * 但括号没闭合，于是整块落进了 `afterChange()` 函数体 —— 每次状态变化都会
+ * 重新 `addEventListener('load', …)` 一次，监听器无限累积（虽然 `load` 只触发一次
+ * 所以没暴露成 bug，但属于典型的「括号放错位置」事故）。
  */
 const isLocalHost = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)
 if (import.meta.env.PROD && !isLocalHost && 'serviceWorker' in navigator) {
@@ -163,11 +188,6 @@ if (import.meta.env.PROD && !isLocalHost && 'serviceWorker' in navigator) {
       /* 注册失败不影响游戏本身（只是没有离线能力） */
     })
   })
-}
-  // 必须在 paint 之后：飞行牌要量「这张牌刚画到哪儿」，以及牌堆的位置
-  trackDealAnimation(root as HTMLElement, state)
-  scheduleDeal()
-  scheduleAi()
 }
 
 /** 上一次 paint 用的状态：captureFx 要用它读「上一帧的本墩出牌」（见 ui/dealFly.ts） */

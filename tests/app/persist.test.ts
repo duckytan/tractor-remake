@@ -16,10 +16,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { PREFS_VERSION, clearState, loadPrefs, loadState, savePrefs, saveState } from '@app/persist'
+import { PREFS_VERSION, clearState, loadPrefs, loadState, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { STATE_VERSION } from '@app/state'
 import type { GameState } from '@app/state'
-import { DEFAULT_RULE_CONFIG, HAND_SIZE } from '@core'
+import { DEFAULT_RULE_CONFIG } from '@core'
 import type { Card, RuleConfig } from '@core'
 import { newGame, reduce } from '@app/game'
 import { declareAndPass } from '../helpers/declare'
@@ -223,10 +223,17 @@ describe('对局存档：loadState / saveState / clearState', () => {
     expect(() => savePrefs(loadPrefs())).not.toThrow()
   })
 
-  it('hands[0] 不是数组时 revealed 回落 HAND_SIZE（形状兜底）', () => {
+  /**
+   * **v1.3.29 改了契约**（docs/33 C4-01、docs/35 F1）。
+   *
+   * 旧实现遇到 `hands: [null, [], [], []]` 会**静默补一个 revealed = HAND_SIZE**
+   * 然后把坏状态放行 —— 结果是在渲染路径上炸（白屏），比拒绝更糟。
+   * 现在改成「字段级校验，不合法整份丢弃」，所以这里断言的是 **null**。
+   */
+  it('hands[0] 不是数组 ⇒ 整份丢弃（不再静默补 revealed）', () => {
     const s = playState(38)
     saveState({ ...s, hands: [null, [], [], []] as unknown as GameState['hands'] })
-    expect(loadState()?.revealed).toBe(HAND_SIZE)
+    expect(loadState()).toBeNull()
   })
 
   it('存储抛异常时读写都不崩（隐私模式）', () => {
@@ -245,5 +252,154 @@ describe('对局存档：loadState / saveState / clearState', () => {
     expect(() => saveState(playState(37))).not.toThrow()
     expect(loadState()).toBeNull()
     expect(() => clearState()).not.toThrow()
+  })
+})
+
+/**
+ * 字段级校验（v1.3.29 · docs/35 F1）。
+ *
+ * 背景：旧 `loadState` 只校验 3 个条件，剩下 40 多个字段裸奔。实测后果（docs/33 C4、
+ * docs/38 G-1/G-3）：
+ *   - 字段不全 → 首帧崩、白屏且无法自愈
+ *   - `phase` 非法 → 之后**所有 action 变空操作**，只有 newGame 能救
+ *   - 数字字段被塞成 HTML → 拼进 `innerHTML` 后**执行脚本**
+ *
+ * 新契约：**任何一项不过就整份丢弃**（返回 null），绝不把半坏的状态放进运行时。
+ */
+describe('对局存档：字段级校验（v1.3.29）', () => {
+  const playState = (seed: number) => {
+    let s = newGame(DEFAULT_RULE_CONFIG, 1, 420, seed)
+    s = declareAndPass(s, 0)
+    if (s.phase === 'bury') {
+      const hand = s.hands[s.dealer] as readonly Card[]
+      s = reduce(s, { type: 'bury', ids: hand.slice(0, 8).map((c) => c.id) })
+    }
+    return s
+  }
+  /** 写一份「合法存档 + 局部篡改」 */
+  const saveTampered = (seed: number, patch: Record<string, unknown>) => {
+    const s = playState(seed)
+    saveState({ ...s, ...patch } as GameState)
+    return s
+  }
+
+  it('数字字段被塞成 HTML 字符串 ⇒ 整份丢弃（XSS 入口封死）', () => {
+    const payload = '<img src=x onerror="window.__XSS__=1">'
+    for (const k of ['round', 'tricksDone', 'defenderScore', 'bottomScore', 'levelRank']) {
+      saveTampered(40, { [k]: payload })
+      expect(loadState(), `${k} 应该被拒绝`).toBeNull()
+    }
+  })
+
+  it('NaN / Infinity 一律拒绝（堵住 NaN 污染）', () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      saveTampered(41, { defenderScore: bad })
+      expect(loadState()).toBeNull()
+      saveTampered(41, { step: bad })
+      expect(loadState()).toBeNull()
+    }
+  })
+
+  it('levelRank 越界 ⇒ 拒绝（LevelRank 只有 1..13 与 18，没有 14~17）', () => {
+    for (const bad of [0, 14, 17, 19]) {
+      saveTampered(42, { levelRank: bad })
+      expect(loadState(), `levelRank=${bad}`).toBeNull()
+    }
+  })
+
+  it('phase 非法 ⇒ 拒绝（否则载入后所有 action 变空操作）', () => {
+    for (const bad of ['nonsense', '', null, 0]) {
+      saveTampered(43, { phase: bad })
+      expect(loadState(), `phase=${String(bad)}`).toBeNull()
+    }
+  })
+
+  it('缺 pendingConfig ⇒ 拒绝（否则换局后 config 变 undefined、ctxOf 崩）', () => {
+    const s = playState(44)
+    const { pendingConfig: _drop, ...rest } = s
+    void _drop
+    saveState(rest as GameState)
+    expect(loadState()).toBeNull()
+  })
+
+  it('牌值 / 牌 id 越界 ⇒ 拒绝', () => {
+    const s = playState(45)
+    const hand = (s.hands[0] as readonly Card[]).slice()
+    saveState({
+      ...s,
+      hands: [[{ id: 0, value: 99 }, ...hand.slice(1)], s.hands[1], s.hands[2], s.hands[3]],
+    } as GameState)
+    expect(loadState()).toBeNull()
+
+    saveState({
+      ...s,
+      hands: [[{ id: 999, value: 3 }, ...hand.slice(1)], s.hands[1], s.hands[2], s.hands[3]],
+    } as GameState)
+    expect(loadState()).toBeNull()
+  })
+
+  it('同一手牌里 id 重复 ⇒ 拒绝（重复牌会让合法性判定失真）', () => {
+    const s = playState(46)
+    const hand = s.hands[0] as readonly Card[]
+    const dup = hand.slice()
+    dup[1] = dup[0] as Card
+    saveState({ ...s, hands: [dup, s.hands[1], s.hands[2], s.hands[3]] } as GameState)
+    expect(loadState()).toBeNull()
+  })
+
+  it('缺 bottom / history / trick ⇒ 拒绝', () => {
+    for (const k of ['bottom', 'history', 'trick', 'hands', 'levels']) {
+      saveTampered(47, { [k]: undefined })
+      expect(loadState(), `缺 ${k}`).toBeNull()
+    }
+  })
+
+  it('trick.plays 的 analysis 不信存档，读档时重算', () => {
+    const s = playState(48)
+    const hand = s.hands[0] as readonly Card[]
+    const played = hand[0] as Card
+    // 造一个「已出一张牌」的当前墩，analysis 故意写错（谎称是 5 连对）
+    saveState({
+      ...s,
+      hands: [hand.slice(1), s.hands[1], s.hands[2], s.hands[3]],
+      trick: {
+        leader: 0,
+        winner: null,
+        plays: [
+          {
+            seat: 0,
+            cards: [played],
+            analysis: { suitSlot: -1, typeCode: 10, groups: [], pairCount: 9, singleCount: 0, keyCard: null, score: 999, isMultiGroup: true },
+          },
+        ],
+      },
+    } as unknown as GameState)
+
+    const back = loadState()
+    expect(back).not.toBeNull()
+    const p = back?.trick.plays[0]
+    expect(p?.cards).toEqual([played])
+    // 单张 ⇒ 1 组、0 对子、分数按牌面算（不是存档里的 999）
+    expect(p?.analysis.groups.length).toBe(1)
+    expect(p?.analysis.pairCount).toBe(0)
+    expect(p?.analysis.score).toBeLessThan(999)
+  })
+
+  it('loadStateDetailed 能区分「版本不符 / 内容不合法 / 定主阶段 / 无存档」', () => {
+    expect(loadStateDetailed()).toEqual({ state: null, issue: null })
+
+    saveState({ ...playState(49), version: STATE_VERSION - 1 })
+    expect(loadStateDetailed().issue).toBe('version')
+
+    saveState(newGame(DEFAULT_RULE_CONFIG, 1, 420, 50))
+    expect(loadStateDetailed().issue).toBe('contract-phase')
+
+    saveTampered(51, { hands: 'nope' })
+    expect(loadStateDetailed().issue).toBe('corrupt')
+
+    saveState(playState(52))
+    const ok = loadStateDetailed()
+    expect(ok.issue).toBeNull()
+    expect(ok.state).not.toBeNull()
   })
 })
