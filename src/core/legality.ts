@@ -67,7 +67,21 @@ export function checkPlay(o: CheckPlayOptions): PlayResult {
 
   const my = analyze(cards, ctx)
   if (lead) return checkFollow(hand, cards, my, lead.analysis, ctx)
-  return checkLead(cards, my, ctx, o.opponents ?? [])
+
+  // **甩牌必须拿到真实对手手牌**（docs/33 C1-01）。
+  //
+  // `opponents` 缺省成 `[]` 时，`checkLead` 的「每一组都要大于其他三家同类型最大值」
+  // 会变成**空集上的全称命题**，恒为真 —— 于是任何甩牌都被放行，甩牌规则形同虚设。
+  // 这里 fail closed：没有对手信息就拒绝甩牌，而不是默默放过。
+  // 单组首出（单张/对子/连对）不需要对手信息，不受影响。
+  const opponents = o.opponents
+  // 只拦「真甩牌」（同槽多组）。混花色首出（suitSlot === -1）本来就会被 checkLead
+  // 以更准确的 `mixed-suit-lead` 拒掉，不该被这条抢走原因。
+  const isRealThrow = my.isMultiGroup && my.suitSlot !== -1
+  if (isRealThrow && (opponents === undefined || opponents.length === 0)) {
+    return reject('throw-failed', '缺少对手手牌，无法校验甩牌')
+  }
+  return checkLead(cards, my, ctx, opponents ?? [])
 }
 
 /* ---------- 首出 ---------- */

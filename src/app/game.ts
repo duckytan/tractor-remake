@@ -865,6 +865,20 @@ function playCards(s: GameState, seat: Seat, cards: readonly Card[]): GameState 
   const isLead = s.trick.plays.length === 0
   const leadPlay = isLead ? undefined : (s.trick.plays[0] as Play)
 
+  // ---- 防御性校验（docs/33 C6-01 / C6-03）----
+  //
+  // ① 手牌为空却还要出牌：`checkPlay` 会以 'empty' 拒绝，`playCards` 返回原状态，
+  //    而 `aiCanAct` 只判 phase/座位 —— 于是 aiStep 会**无限空转**（实测 phase 永远停在 play）。
+  //    这里显式拒绝并给出可读原因，配合 `aiCanAct` 一起把循环断掉。
+  if ((s.hands[seat] as readonly Card[]).length === 0) {
+    return reject(s, 'empty', '该座位已经没有手牌')
+  }
+  // ② 同一座位在一墩里出两次牌：凑满 4 手后 `resolveTrick` 会按「4 手牌」结算，
+  //    于是算出一个**非法赢家**（有人出了两次、有人一次没出）而没有任何报错。
+  if (s.trick.plays.some((p) => p.seat === seat)) {
+    return reject(s, 'cards-not-in-hand', '该座位本墩已经出过牌')
+  }
+
   const result = checkPlay({
     hand: s.hands[seat] as readonly Card[],
     cards,
@@ -1146,8 +1160,12 @@ export function reduce(s: GameState, action: Action): GameState {
         ? { ...s, aiLevelPartner: action.level }
         : { ...s, aiLevelOpponent: action.level }
 
-    case 'setAiSpeed':
-      return { ...s, aiSpeedMs: action.ms }
+    case 'setAiSpeed': {
+      // 夹到 0..5000，与 `loadPrefs` 的读档口径保持一致；
+      // 非有限值直接忽略，否则 NaN 会让 setTimeout 立刻触发（= AI 瞬移）
+      if (!Number.isFinite(action.ms)) return s
+      return { ...s, aiSpeedMs: Math.max(0, Math.min(5000, Math.round(action.ms))) }
+    }
 
     case 'toggleFourColor':
       return { ...s, fourColor: !s.fourColor }
@@ -1197,6 +1215,9 @@ export function reduce(s: GameState, action: Action): GameState {
       return { ...s, autoVariation: !s.autoVariation }
 
     case 'setVolume': {
+      // `Math.round(NaN)` 还是 NaN，`Math.max/min` 也拦不住 ⇒ volume 会被写成 NaN，
+      // 然后一路传到音频层（gain = NaN）与存档（docs/33 C1-03）。非有限值直接忽略。
+      if (!Number.isFinite(action.value)) return s
       const v = Math.max(0, Math.min(100, Math.round(action.value)))
       if (action.which === 'master') return { ...s, volumeMaster: v }
       if (action.which === 'bgm') return { ...s, volumeBgm: v }
@@ -1212,8 +1233,11 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'replayStep': {
       if (s.replayAt === null) return s
+      // `Math.trunc(NaN)` 是 NaN，两个边界判断（NaN < 0 / NaN >= len）**都是 false**
+      // ⇒ replayAt 会被写成 NaN，回放界面从此错位（docs/33 C1-03）
+      if (!Number.isFinite(action.delta)) return s
       const next = s.replayAt + Math.trunc(action.delta)
-      if (next < 0 || next >= s.history.length) return s
+      if (!Number.isFinite(next) || next < 0 || next >= s.history.length) return s
       return { ...s, replayAt: next }
     }
 
@@ -1243,7 +1267,11 @@ export function aiCanAct(s: GameState): boolean {
   // 回放期间 AI 必须停手：否则看着历史墩的同时局面还在往前走
   if (s.replayAt !== null) return false
   const seat = seatToPlay(s)
-  return seat !== null && seat !== HUMAN_SEAT
+  if (seat === null || seat === HUMAN_SEAT) return false
+  // 该座位没有手牌就出不了牌 —— 返回 true 会让 main.ts 的 setTimeout 链条
+  // 每 aiSpeedMs 触发一次 aiStep，而 aiStep 每次都返回原状态 ⇒ **无限空转**
+  // （docs/33 C6-01：phase 永远停在 play，玩家看到的是「卡住了」）。
+  return (s.hands[seat] as readonly Card[]).length > 0
 }
 
 export { TRUMP_POWER_BASE, advanceLevel, levelsFor, nextSeat, partnerOf }

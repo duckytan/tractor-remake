@@ -376,6 +376,21 @@ export function loadStateDetailed(): LoadResult {
   const hands = o.hands as Card[][]
   const trickPlays = o.trick.plays as { seat: Seat; cards: Card[] }[]
 
+  // ---- 108 张守恒（docs/33 C6-02）----
+  //
+  // 任意时刻「四家手牌 + 底牌 + 历史墩已出 + 当前墩已出」必须正好 108 张。
+  // 少一张的存档会让一墩永远凑不满 4 手 —— 实测打 800 步也不结算，玩家看到的是「卡住」。
+  // 这条同时兜住「多牌」与「重复牌跨数组」两种畸形。
+  const totalCards =
+    hands.reduce((n, h) => n + h.length, 0) +
+    (o.bottom as Card[]).length +
+    (o.history as GameState['history']).reduce(
+      (n, r) => n + r.plays.reduce((m, p) => m + p.cards.length, 0),
+      0,
+    ) +
+    trickPlays.reduce((n, p) => n + p.cards.length, 0)
+  if (totalCards !== DECK_SIZE) return { state: null, issue: 'corrupt' }
+
   // ---- 组合成完整状态。能走到这里的字段已全部校验过，剩下的是「软字段」----
   const base: GameState = {
     ...(o as unknown as GameState),
