@@ -1032,13 +1032,19 @@ export function currentWinnerOf(s: GameState): { seat: Seat; analysis: ReturnTyp
 }
 
 /**
- * 让指定座位用 AI 出一手牌。
+ * 让指定座位**选一手牌**（纯计算，不落子）。
  *
- * 抽成独立函数有两个原因：
- *   1. 座位无关 —— 测试可以给四个座位都套 AI，不必把「人类座位」特殊对待；
- *   2. 随机源统一 —— 同一步用同一个 rng 派生式，公平对比不同档位。
+ * 抽出来的原因：**「提示」和 AI 必须共用一个大脑**。
+ * 早先提示走的是 `enumeratePlays(...)` 取第一个合法候选，而候选是按小到大枚举的
+ * ⇒ 提示永远只会让你出最小的一手（用户反馈「提示还是太弱智」）。
+ * 现在提示直接调这里，拿到的是 L3（超强 + 残局搜索）算出来的那一手。
+ *
+ * `aiPlayFor` 也走这里，所以「AI 会怎么打」和「提示建议怎么打」不可能分叉。
+ *
+ * 座位无关 —— 测试可以给四个座位都套 AI，不必把「人类座位」特殊对待；
+ * 随机源统一 —— 同一步用同一个 rng 派生式，公平对比不同档位。
  */
-export function aiPlayFor(
+export function choosePlay(
   s: GameState,
   seat: Seat,
   level: AiLevel,
@@ -1046,7 +1052,7 @@ export function aiPlayFor(
    * 调试/标定用开关。
    *
    * `peek: true` = **旧行为**：把三家真实手牌塞进 `opponents`，让策略直接读（明牌）。
-   * 默认（false）= 只用公开信息推断（`buildBelief`），见 docs/15 KN-10。
+   * 默认跟玩家设置 `aiPeekHands` 走（默认开）—— 见 docs/15 KN-10。
    * 保留这个开关是为了能配对测量「明牌 vs 推断」的强度差，正常对局不要传。
    */
   opts?: {
@@ -1054,7 +1060,7 @@ export function aiPlayFor(
     /** 是否启用残局搜索（默认开；标定脚本用它做 A/B） */
     readonly endgame?: boolean
   },
-): GameState {
+): readonly Card[] {
   // 显式 opts 优先（标定用），否则跟玩家设置走（默认读牌）
   const peek = opts?.peek ?? s.aiPeekHands
 
@@ -1062,7 +1068,7 @@ export function aiPlayFor(
   // 搜索不接管（牌太多 / 关掉读牌 / 超预算）时返回 null，落回启发式。
   if (level === 3 && opts?.endgame !== false) {
     const solved = solveEndgame(s, seat, peek)
-    if (solved !== null) return playCards(s, seat, solved)
+    if (solved !== null) return solved
   }
   const ctx = ctxOf(s)
   const isLead = s.trick.plays.length === 0
@@ -1103,7 +1109,24 @@ export function aiPlayFor(
     rngFor(s.seed, s.step + 1000),
   )
 
-  return playCards(s, seat, decision.cards)
+  return decision.cards
+}
+
+/**
+ * 让指定座位用 AI 出一手牌（`choosePlay` 算完直接落子）。
+ *
+ * 与 `choosePlay` 分开是为了让「提示」能只取建议、不动状态。
+ */
+export function aiPlayFor(
+  s: GameState,
+  seat: Seat,
+  level: AiLevel,
+  opts?: {
+    readonly peek?: boolean
+    readonly endgame?: boolean
+  },
+): GameState {
+  return playCards(s, seat, choosePlay(s, seat, level, opts))
 }
 
 /* ---------- AI ---------- */

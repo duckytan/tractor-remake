@@ -8,7 +8,7 @@ import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
 import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
-import { aiCanAct, newGame, pickPrefs, reduce } from '@app/game'
+import { aiCanAct, choosePlay, newGame, pickPrefs, reduce } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
@@ -372,7 +372,7 @@ function undoMove(): void {
 }
 
 /**
- * 提示：高亮一手合法牌。
+ * 提示：高亮一手**建议**的牌。
  *
  * 两种模式由设置项 `hintSelects` 决定（默认关）：
  * - 关（默认）：FR-19 ③ —— **不改变游戏状态**，只写 hintIds，不动 selected。
@@ -380,32 +380,56 @@ function undoMove(): void {
  *   而且提示结果还会被 saveState 写进存档。
  * - 开：派发 `hintSelect`，一次写入 hintIds + selected，直接进入可出牌状态。
  *   覆盖已选牌 + selected 进存档是**预期副作用**（设置项文案已写明）。
+ *
+ * **建议从哪来**（v1.3.31 修）：早先走 `enumeratePlays(...)` 取第一个合法候选，
+ * 而候选是按小到大枚举的 ⇒ 提示永远只会让你出最小的一手（用户反馈「太弱智」）。
+ * 现在直接调 `choosePlay()` —— 与 AI 完全同一个大脑（L3 超强 + 残局精确搜索），
+ * 所以「提示建议怎么打」和「超强 AI 会怎么打」不可能分叉。
  */
 function hint(): void {
   if (seatToPlay(state) !== HUMAN_SEAT) return
-  const ctx = ctxOf(state)
-  const hand = state.hands[HUMAN_SEAT] as readonly Card[]
-  const leadPlay = state.trick.plays[0] as Play | undefined
+  const ids = hintIdsFor(state)
+  if (ids.length === 0) return
+  dispatch(state.hintSelects ? { type: 'hintSelect', ids } : { type: 'showHint', ids })
+}
 
-  const pc: PlayContext = leadPlay
-    ? { kind: 'follow', leadCards: leadPlay.cards, leadAnalysis: leadPlay.analysis }
-    : { kind: 'lead' }
-
-  const candidates = enumeratePlays(hand, ctx, pc, 40)
-  for (const cards of candidates) {
+/**
+ * 算出一手建议牌（牌 id 列表）。
+ *
+ * ① 主路径：`choosePlay` 选出的那一手 —— 先过一遍 `checkPlay` 兜底，
+ *    万一策略给出不合法的一手（理论上不会，但提示是玩家直接看到的东西，
+ *    错一次就会被当成「提示坏了」），落到 ②。
+ * ② 兜底：老的「枚举候选取第一个合法」—— 保证任何局面下提示都有输出。
+ */
+function hintIdsFor(s: GameState): number[] {
+  const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+  if (hand.length === 0) return []
+  const leadPlay = s.trick.plays[0] as Play | undefined
+  const opponents = [1, 2, 3].map((x) => s.hands[x] as readonly Card[])
+  const verify = (cards: readonly Card[]): number[] | null => {
     const r = checkPlay({
       hand,
       cards,
-      ctx,
+      ctx: ctxOf(s),
       ...(leadPlay ? { lead: { cards: leadPlay.cards, analysis: leadPlay.analysis } } : {}),
-      opponents: [1, 2, 3].map((x) => state.hands[x] as readonly Card[]),
+      opponents,
     })
-    if (r.ok) {
-      const ids = r.cards.map((c) => c.id)
-      dispatch(state.hintSelects ? { type: 'hintSelect', ids } : { type: 'showHint', ids })
-      return
-    }
+    return r.ok ? r.cards.map((c) => c.id) : null
   }
+
+  // ① 与 AI 同一个大脑（L3 = 超强 + 残局搜索；读牌与否跟玩家设置走）
+  const best = verify(choosePlay(s, HUMAN_SEAT, 3))
+  if (best !== null) return best
+
+  // ② 兜底：枚举候选里第一个合法的
+  const pc: PlayContext = leadPlay
+    ? { kind: 'follow', leadCards: leadPlay.cards, leadAnalysis: leadPlay.analysis }
+    : { kind: 'lead' }
+  for (const cards of enumeratePlays(hand, ctxOf(s), pc, 40)) {
+    const ids = verify(cards)
+    if (ids !== null) return ids
+  }
+  return []
 }
 
 /* 键盘：空格出牌 / Esc 取消 / H 提示 / 回车选牌
