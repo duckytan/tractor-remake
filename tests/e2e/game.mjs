@@ -242,18 +242,48 @@ try {
     await clickHandCards(page, ids)
     const bar2 = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
     rec('S1b 扣底：选 8 张后按钮可用', bar2.includes('8 / 8'), `handbar="${bar2}"`)
-    await page.click('[data-act="bury"]')
+    // toast 会盖住「扣底」按钮（ISS-2），先点掉再点，且用 force 兜底
+    const toast1 = page.locator('[data-slot="toast"].is-show')
+    if (await toast1.count()) await toast1.click({ force: true })
+    await page.click('[data-act="bury"]', { force: true })
     await sleep(300)
   }
 
-  /* ---------- 等到我的回合（AI 可能先出牌） ---------- */
-  await page.waitForFunction(
-    () => {
+  /* ---------- 等到我的回合（AI 可能先出牌） ----------
+     定主阶段会**反复**弹面板：AI 反主 / 我方还能加固时都会再弹一次
+     （「加固」面板同样只有「过（不反）」能出）。
+     旧版这里只等 handbar，碰上第二次弹面板就会 30s 超时 —— 每次轮询前先放行。 */
+  for (let i = 0; i < 100; i++) {
+    const pass = page.locator('[data-act="passCounter"]')
+    if (await pass.count()) {
+      await pass.first().click({ force: true })
+      await sleep(250)
+      continue
+    }
+    const deal = page.locator('[data-act="passDeal"]')
+    if (await deal.count()) {
+      await deal.first().click({ force: true })
+      await sleep(250)
+      continue
+    }
+    const ready = await page.evaluate(() => {
       const el = document.querySelector('[data-slot="handbar"] .hint-text')
-      return el && el.textContent.includes('轮到你了')
-    },
-    { timeout: 30000 },
-  )
+      return !!(el && el.textContent.includes('轮到你了'))
+    })
+    if (ready) break
+    await sleep(300)
+  }
+  const reachedMyTurn = await page.evaluate(() => {
+    const el = document.querySelector('[data-slot="handbar"] .hint-text')
+    return !!(el && el.textContent.includes('轮到你了'))
+  })
+  if (!reachedMyTurn) {
+    const why = await page.evaluate(() => ({
+      bar: document.querySelector('[data-slot="handbar"]')?.innerText?.replace(/\s+/g, ' '),
+      panel: document.querySelector('.panel h2')?.textContent ?? '',
+    }))
+    console.log('DEBUG 未轮到人类：', JSON.stringify(why))
+  }
   const myTurnBar = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
   rec('S2 等到人类回合', true, `handbar="${myTurnBar}"`)
 
@@ -343,6 +373,63 @@ try {
     dlgOpen && switchCount >= 7 && dlgClosed,
     `dialog=${dlgOpen} switches=${switchCount} closedAfterEsc=${dlgClosed}`,
   )
+
+  /* ---------- P2b 作弊开关「查看别人手牌」（v1.3.30） ----------
+     三家手牌从牌背换成明牌，排序与玩家手牌同一套（handView）。
+     只验「摊开 / 张数对得上 / 关掉能回牌背」，排序由 tests/app/handView.test.ts 保证。 */
+  {
+    const seatState = () =>
+      page.evaluate(() => {
+        const out = {}
+        for (const seat of [1, 2, 3]) {
+          const box = document.querySelector(
+            `[data-slot="${['center', 'west', 'north', 'east'][seat]}"]`,
+          )
+          const tag = box?.querySelector('.seat-tag')?.textContent ?? ''
+          const m = tag.match(/(\d+)\s*张/)
+          const row = box?.querySelector('.reveal-row')
+          out[seat] = {
+            declared: m ? Number(m[1]) : -1,
+            reveal: row !== null && row !== undefined,
+            shown: row ? row.querySelectorAll('.card').length : 0,
+            backs: box?.querySelectorAll('.card--back').length ?? 0,
+          }
+        }
+        return out
+      })
+
+    const before = await seatState()
+    await page.click('[data-act="openSettings"]')
+    await sleep(300)
+    await page.click('[data-act="settingsTab"][data-val="game"]')
+    await sleep(200)
+    await page.click('.switch[aria-label="查看别人手牌"]')
+    await sleep(250)
+    await page.click('[data-act="closeSettings"]')
+    await sleep(400)
+    const on = await seatState()
+    const allShown = [1, 2, 3].every(
+      (s) => on[s].reveal && on[s].shown === on[s].declared && on[s].backs === 0,
+    )
+    rec(
+      'P2b 作弊开关：三家手牌摊成明牌（张数一致、无牌背）',
+      before[1].reveal === false && allShown,
+      `before=${JSON.stringify(before)} on=${JSON.stringify(on)}`,
+    )
+
+    await page.click('[data-act="openSettings"]')
+    await sleep(250)
+    await page.click('.switch[aria-label="查看别人手牌"]')
+    await sleep(200)
+    await page.click('[data-act="closeSettings"]')
+    await sleep(350)
+    const off = await seatState()
+    rec(
+      'P2c 作弊开关可关闭（回到牌背）',
+      [1, 2, 3].every((s) => off[s].reveal === false && off[s].backs > 0),
+      JSON.stringify(off),
+    )
+  }
 
   /* ---------- P2 第一个完整墩 ---------- */
   // 注意：若某墩轮到我领袖，游戏会停下来等输入 —— 需要自动续打才能观察到墩完成

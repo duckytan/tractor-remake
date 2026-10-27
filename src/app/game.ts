@@ -478,6 +478,7 @@ const PREF_FIELDS = [
   'animation',
   'animSpeed',
   'showHistory',
+  'showOppHands',
   'showCounter',
   'hintSelects',
   'aiPeekHands',
@@ -1281,6 +1282,9 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'toggleShowHistory':
       return { ...s, showHistory: !s.showHistory }
+    case 'toggleShowOppHands':
+      // 纯展示项：只影响三家牌背画成牌面，规则 / AI 一律照旧
+      return { ...s, showOppHands: !s.showOppHands }
 
     case 'toggleHintSelects':
       return { ...s, hintSelects: !s.hintSelects }

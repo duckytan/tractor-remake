@@ -192,6 +192,17 @@ export interface GameState {
   /** 手牌前方「最近几墩」历史牌条开关（体验项，立即生效） */
   readonly showHistory: boolean
   /**
+   * 作弊：明牌显示其他三家的手牌。
+   *
+   * **纯展示项**，不改任何规则：只影响 `render` 里三家牌背画成牌背还是牌面。
+   * 与 `aiPeekHands` 是两件独立的事 —— 那个控制 **AI 能不能看你**，
+   * 这个控制 **你能不能看 AI**，互不影响（两个都开 = 双向明牌）。
+   *
+   * 默认关。排序走 `handView()`，与玩家手牌完全同一套规则
+   *（主牌段 → 主花色 → 副牌花色，花色内降序，分组留间隔）。
+   */
+  readonly showOppHands: boolean
+  /**
    * 提示即选中：开启后点「提示」会直接把提示的牌写进 `selected`。
    *
    * **默认 false**。开启时有两个已知副作用（属于预期行为，设置面板里已写明）：
@@ -262,6 +273,7 @@ export type Action =
   | { readonly type: 'cancelNewGame' }
   | { readonly type: 'toggleAnimation' }
   | { readonly type: 'toggleShowHistory' }
+  | { readonly type: 'toggleShowOppHands' }
   | { readonly type: 'toggleHintSelects' }
   | { readonly type: 'toggleShowCounter' }
   | { readonly type: 'toggleAiPeek' }
@@ -360,6 +372,7 @@ export const emptyState = (): GameState => ({
   volumeSfx: 80,
   replayAt: null,
   showHistory: true,
+  showOppHands: false,
   hintSelects: false,
   settingsOpen: false,
   logOpen: false,

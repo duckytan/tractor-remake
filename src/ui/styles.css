@@ -280,6 +280,51 @@ html, body {
 .seat--west .back-row--side .card { transform: rotate(-90deg); }
 .seat--east .back-row--side .card { transform: rotate(90deg); }
 
+/* ---------- 明牌（作弊开关「查看别人手牌」） ----------
+   三家的手牌从牌背换成正面小牌，排序与玩家手牌完全一致（app/handView）。
+   小牌尺寸 / 步长 / 分组间隔都由 render.ts 按当前牌面档位算好写成内联变量：
+     --mini-w   小牌宽
+     --mini-h   小牌高（= 宽 × 1.4）
+     --mini-step 每张**露出**的长度（px，正数；margin 用 step - 尺寸 得到负重叠）
+     --mini-gap  分组间隔（额外加在 step 上）
+   两张牌的 margin 写成 `step - 尺寸`：step 越接近尺寸，重叠越少。 */
+.reveal-row {
+  display: flex;
+  align-items: flex-start;
+  --mini-w: 51px;
+  --mini-h: 71px;
+  --mini-step: 17px;
+  --mini-gap: 18px;
+}
+/* 明牌不可点：它们是别人的牌，点了也没有任何行为（也免得挡住牌桌的点击） */
+.reveal-row .card { cursor: default; pointer-events: none; }
+/* 横排（北家）：负 margin 让后一张盖住前一张的右半边，只露左上角标。
+   用 :not(--side) 限定，否则会跟下面的竖排规则抢 margin。 */
+.reveal-row:not(.reveal-row--side) .card + .card {
+  margin-left: calc(var(--mini-step) - var(--mini-w));
+}
+.reveal-row:not(.reveal-row--side) .card + .card--gap {
+  margin-left: calc(var(--mini-step) - var(--mini-w) + var(--mini-gap));
+}
+
+/* 西 / 东：竖排、牌面**正立**（牌背能转 90°，牌面转了只露一条边，认不出点数）。
+   后面那张盖住前面那张的下半部分，每张都露出左上角的点数 + 花色。
+   一列放不下（庄家最多 33 张）就 `column wrap` 折到下一列 ——
+   列高由 render.ts 按座位实际高度写成 --mini-col-h。
+   **重叠必须用 margin-bottom**（不能用 `+ .card` 的 margin-top）：
+   折列后每列第一张也会命中 `+ .card`，会把自己的顶边顶出容器、切掉点数。 */
+.reveal-row--side {
+  flex-flow: column wrap;
+  align-content: flex-start;
+  align-items: center;
+  height: var(--mini-col-h, auto);
+  min-width: calc(var(--mini-w) + 2px);
+}
+.reveal-row--side .card { margin-bottom: calc(var(--mini-step) - var(--mini-h)); }
+.reveal-row--side .card--gap {
+  margin-bottom: calc(var(--mini-step) - var(--mini-h) + var(--mini-gap));
+}
+
 /* 侧家出牌区：牌背与桌心之间，竖向堆叠，卡牌旋转 90° 面向桌心。
    旋转后视觉高度 = 卡宽，步长按「视觉高度的一半」算（与 .back-row--side 同一套思路）。
    **定宽**（= --played-w）：宽度绝不能随内容变 —— 本墩有没有出牌、历史组里有几张牌，
@@ -297,6 +342,20 @@ html, body {
 }
 .plays--side .plays__now { flex-direction: column; align-items: center; }
 .plays--side .plays__now .card + .card { margin-top: calc(var(--played-w) * -1.05); }
+/* 侧家的一手多张牌（对子 / 拖拉机）必须**竖排**。
+   `.cards` 默认是横排，而上面那条负 margin-top 本来是给竖排叠牌用的 ——
+   横排下它把第二张往上顶了 88px，同时 flex 默认 `align-items: stretch` 会把第二张
+   拉成 206px 的长条（v1.3.30 实测：东家出对子时一张牌拉长近一倍，还盖住了明牌列）。 */
+.plays--side .cards { flex-direction: column; align-items: center; }
+
+/* 明牌模式（作弊）下侧家出牌区按内容自适应宽度。
+   多张牌的牌组（对子 / 拖拉机）旋转 90° 后横排会比定宽容器宽 40~90px，
+   平时两侧都是空地，溢出看不出来；明牌列一进来就会被整块盖住（实测重叠 80×84）。
+   只在 `felt--reveal` 下放开，正常对局仍然保持东西镜像的定宽。 */
+.felt--reveal .plays--side {
+  width: max-content;
+  min-width: calc(var(--played-w) * 1.4);
+}
 /* 侧家历史小牌竖向压叠。压叠量必须按**小牌自己**的宽度（--tiny-w）算：
    以前用全局 --card-w，小牌只有 0.32×卡宽，每张却上移 1.05×卡宽，
    第三张就冲出容器、压到旁边的牌背区上（v1.3.22 实测东家重叠 3785px²）。 */

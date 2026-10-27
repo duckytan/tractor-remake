@@ -64,6 +64,8 @@ export interface Prefs {
   readonly animSpeed: AnimSpeed
   /** 手牌前方历史牌条开关 */
   readonly showHistory: boolean
+  /** 作弊：明牌显示其他三家手牌（纯展示，不改规则） */
+  readonly showOppHands: boolean
   /** 提示即选中 */
   readonly hintSelects: boolean
   /** 记牌器 */
@@ -89,6 +91,7 @@ const DEFAULT_PREFS: Prefs = {
   animation: true,
   animSpeed: 'normal',
   showHistory: true,
+  showOppHands: false,
   hintSelects: false,
   showCounter: false,
   aiPeekHands: true,
@@ -191,6 +194,8 @@ export function loadPrefs(): Prefs {
           : DEFAULT_PREFS.animSpeed,
       // 缺字段按默认：历史牌条默认开、提示即选中默认关
       showHistory: o.showHistory !== false,
+      // 作弊开关默认关：老存档没有这个字段 ⇒ 不能突然把三家手牌摊开
+      showOppHands: o.showOppHands === true,
       hintSelects: o.hintSelects === true,
       showCounter: o.showCounter === true,
       // 缺字段按「读牌」处理：旧存档没有这个字段，默认行为不能变
@@ -452,6 +457,7 @@ export function loadStateDetailed(): LoadResult {
     revealed: hands[0]!.length,
     // 体验项由 Prefs 覆盖（见 main.ts），这里只做形状兜底
     showHistory: o.showHistory !== false,
+    showOppHands: o.showOppHands === true,
     hintSelects: o.hintSelects === true,
     showCounter: o.showCounter === true,
     animation: o.animation !== false,

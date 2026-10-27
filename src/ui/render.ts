@@ -11,7 +11,7 @@
  * pastPlaysView），不出现 power / 主牌判定等规则概念。
  */
 
-import type { Card, LevelRank, Play, PlayResult, RuleConfig, Seat, Trump } from '@core'
+import type { Card, LevelRank, Play, PlayResult, RuleConfig, RuleContext, Seat, Trump } from '@core'
 import { DEAL_TOTAL, DECK_SIZE, GUARD_NEED, checkPlay, dealtCount, isSameTeam } from '@core'
 import type { AiLevel } from '@ai/policy'
 import { THEMES, THEME_ORDER, isThemeKey } from '@audio/scenes'
@@ -28,7 +28,7 @@ import {
 } from '@app/view'
 import { leadingSeat } from '@app/view'
 import type { CounterSlot } from '@app/view'
-import { backEl, cardEl, cardSpokenName, ensureDefs } from './card'
+import { backEl, cardEl, cardName, cardSpokenName, ensureDefs } from './card'
 import { isBackInFlight, isInFlight } from './dealFly'
 
 export interface Actions {
@@ -81,6 +81,28 @@ const SIDE_RATIO_SHORT = 0.253
 const NORTH_BACK_RATIO = 0.307
 /** 侧家竖向重叠率下限：低于这个值牌与牌就糊成一整块，看不出张数 */
 const SIDE_MIN_STEP = 0.18
+
+/* ---------- 明牌作弊（showOppHands）的几何 ----------
+   三家各 25 张要全部摊开（牌背模式只露 10 张），所以牌面必须比牌背小一号，
+   否则一列 25 张纵向能到 500px、直接盖住出牌区。 */
+/** 明牌小牌宽度占卡宽的比例（窄屏再压一档：北家横排 25 张才铺得下） */
+const REVEAL_RATIO = 0.34
+const REVEAL_RATIO_NARROW = 0.26
+/** 横排（北家）每张露出的宽度比例：左上角标约占 24%，45% 既能看清点数又留足重叠 */
+const REVEAL_STEP_RATIO = 0.45
+/**
+ * 竖排（西/东）步长下限 = 牌高的 29.5%（M 档小牌 71px 高 ⇒ 21px）。
+ *
+ * 不是拍脑袋：左上角标在 SVG 里占 y 8~40（点数 8~23、花色 26~40），
+ * 牌高 71px 时花色下沿落在 20.3px —— 露出少于 21px 就只剩点数、看不见花色，
+ * ♠K 和 ♥K 分不出来。宁可多折一列也不能少露这 1px。
+ * 按比例而不是写死 px：手机档卡宽只有 44px，写死 21px 会变成「牌间空隙」。
+ */
+const REVEAL_MIN_STEP_RATIO = 0.295
+/** 小牌宽度下限：手机档卡宽 44px × 0.26 = 11px，点数都糊了，至少给 30px */
+const REVEAL_MIN_W = 30
+/** 分组间隔占小牌宽的比例（与玩家手牌的分组间隔同一意图，只是跟着小牌缩放） */
+const REVEAL_GAP_RATIO = 0.35
 /** AI 四档（弱 / 中 / 强 / 超强） */
 const AI_LEVEL_OPTS = [
   { v: '0', label: '弱' },
@@ -325,7 +347,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     <div class="scorebar status" data-slot="status"></div>
     ${counterStrip(s)}
 
-    <main class="felt">
+    <main class="felt${s.showOppHands ? ' felt--reveal' : ''}">
       <div class="seat seat--north" data-slot="north"></div>
       <div class="seat seat--west" data-slot="west"></div>
       <div class="seat seat--center" data-slot="center"></div>
@@ -361,6 +383,8 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
   // 本墩当前谁最大（走 trickStanding，能排除垫牌）。每帧算一次，四个出牌区共用。
   // 不能用 s.trick.winner —— 那个字段在出牌途中恒为 null。
   const leadSeat = leadingSeat(s)
+  // 明牌作弊要排序 ⇒ 需要规则上下文（主牌 / 级牌）。只算一次，手牌区共用。
+  const ruleCtx = ctxOf(s)
   for (const seat of [1, 2, 3] as Seat[]) {
     const box = q(SEAT_CLASS[seat])
     // 侧家牌背要旋转 90°，旋转后包围盒宽 = 牌高 = sideW×1.4。
@@ -401,6 +425,14 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const side = seat === 1 || seat === 3
     const backRow = box.querySelector(`[data-slot="back-${seat}"]`) as HTMLElement
     const narrow = window.innerWidth <= 900
+    // 作弊「查看别人手牌」：整手摊成明牌（牌背模式只露 10 张），
+    // 发牌期间仍按「已发到几张」逐张长出来。纯展示，不影响任何规则判定。
+    if (s.showOppHands) {
+      const shown =
+        s.phase === 'contract' ? Math.min(hand.length, dealtCardsFor(s, seat)) : hand.length
+      fillRevealRow(backRow, hand.slice(0, shown), side, cardW, seat, ruleCtx)
+      continue
+    }
     let show = Math.min(hand.length, side ? (narrow ? 8 : SIDE_SHOW) : 13)
     // 逐张发牌期间：牌背也一张一张长出来（否则三家是「啪」一下全出现）
     if (s.phase === 'contract') show = Math.min(show, dealtCardsFor(s, seat))
@@ -484,7 +516,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const fullHand = s.hands[HUMAN_SEAT] as readonly Card[]
     // 逐张发牌：只渲染已经发到手上的那部分（hands 里始终是完整的 25 张）
     const myHand = s.revealed < fullHand.length ? fullHand.slice(0, s.revealed) : fullHand
-    const items = handView(myHand, ctxOf(s))
+    const items = handView(myHand, ruleCtx)
     const selected = new Set(s.selected)
     const hinted = new Set(s.hintIds)
     // 回放期间手牌不可点（看的是历史墩，点牌没有意义）
@@ -990,7 +1022,8 @@ export function settingsPanel(s: GameState): string {
         <span>AI 出牌速度<small class="set-desc">快一点更好打；想看清每张牌就调慢</small></span>
         ${seg('setAiSpeed', 'AI 出牌速度', AI_SPEED_OPTS.map((o) => ({ ...o, on: o.v === nearestSpeed(s.aiSpeedMs) })))}
       </div>
-      ${swAct('toggleAiPeek', 'AI 读牌', '开启时 AI 能看到你的手牌（默认，强度更高）；关闭后只用公开信息推断，更公平但会变弱', s.aiPeekHands)}`,
+      ${swAct('toggleAiPeek', 'AI 读牌', '开启时 AI 能看到你的手牌（默认，强度更高）；关闭后只用公开信息推断，更公平但会变弱', s.aiPeekHands)}
+      ${swAct('toggleShowOppHands', '查看别人手牌', '作弊：其他三家手牌以明牌显示（排序与你的手牌一致）。只影响画面，不改变规则与 AI 行为', s.showOppHands)}`,
     )}
 
     ${group(
@@ -1310,6 +1343,92 @@ function fitSideStack(box: HTMLElement, count: number, cardW: number): void {
   box.style.setProperty('--side-step', step.toFixed(3))
 }
 
+/**
+ * 明牌作弊：把一家的手牌画成**正面小牌**（`showOppHands` 开启时代替牌背）。
+ *
+ * 排序**必须**走 `handView()` —— 那是玩家手牌用的同一套展示序
+ *（主牌段 → 主花色 → 副牌花色，花色内降序 + 分组间隔）。
+ * ui 层不许自己判主牌 / 牌力（分层铁律，见 docs/07-编码规范.md）。
+ *
+ * 几何上的两个坑：
+ * - **西/东不能沿用牌背的 rotate(90°)**：牌背转过来无所谓，牌面转了只露一条边，
+ *   点数就认不出来了。所以侧家改成「竖排 + 牌面正立」，每张露左上角标。
+ * - 侧家 25 张要按可用高度反算步长（思路同 `fitSideStack`），否则会溢出到出牌区上。
+ */
+function fillRevealRow(
+  box: HTMLElement,
+  cards: readonly Card[],
+  side: boolean,
+  cardW: number,
+  seat: Seat,
+  ctx: RuleContext,
+): void {
+  // 明牌的叠放规则与牌背完全不同（步长变量也不同），直接换容器类名
+  box.className = side ? 'reveal-row reveal-row--side' : 'reveal-row'
+
+  const narrow = window.innerWidth <= 900
+  const w = Math.max(
+    REVEAL_MIN_W,
+    Math.round(cardW * (narrow ? REVEAL_RATIO_NARROW : REVEAL_RATIO)),
+  )
+  const h = Math.round(w * 1.4)
+  const minStep = Math.round(h * REVEAL_MIN_STEP_RATIO)
+  const items = handView(cards, ctx)
+
+  // 步长 = 每张露出的长度（px）。先定容器变量，再塞牌，避免中途 reflow 两次。
+  let step: number
+  const gapPx = Math.round(w * REVEAL_GAP_RATIO)
+  const gapN = items.filter((it) => it.gapBefore).length
+  if (side) {
+    // 竖排：可用高度 = 座位总高 - 座位标签（`.seat` 是 grid item，被拉伸到整行高，
+    // 而明牌容器自身在 flex 里是内容高度，量它只会得到 0 —— v1.3.30 踩过）。
+    const seatEl = box.closest('.seat') as HTMLElement | null
+    const tagH = seatEl?.querySelector('.seat-tag')?.getBoundingClientRect().height ?? 0
+    const avail = seatEl ? Math.max(120, Math.round(seatEl.clientHeight - tagH - 6)) : 0
+    const fit =
+      items.length > 1 && avail > 0
+        ? (avail - h - gapN * gapPx) / (items.length - 1)
+        : h * REVEAL_STEP_RATIO
+    step = Math.max(minStep, Math.min(Math.round(h * 0.5), Math.round(fit)))
+    // 一列塞不下就靠 `flex-flow: column wrap` 折到下一列（顺序仍是「先上后下、先左后右」）。
+    // **列高按「均分」反算**，否则 25 张会排成 19+6 那种一头沉的形状 ——
+    // 先算需要几列，再把牌平均分到各列。
+    const need = items.length * step + gapN * gapPx
+    const cols = avail > 0 ? Math.max(1, Math.ceil(need / avail)) : 1
+    const perCol = Math.ceil(items.length / cols)
+    // 分组间隔按张数摊到每张上，列高留 10px 余量（否则刚好卡边界会多折一列）
+    const gapShare = (perCol * gapN * gapPx) / items.length
+    const colH = Math.min(avail, Math.ceil(perCol * step + gapShare) + 10)
+    // avail 为 0（容器还没布局）时不写列高，退回 CSS 的 auto（单列，不会把牌压成 0 高）
+    if (avail > 0) box.style.setProperty('--mini-col-h', `${colH}px`)
+  } else {
+    // 横排：北家那一行宽度由内容决定（grid 里是 auto 列），
+    // 所以按「最多占视口一半、且不超过 680px」反算，避免把东西两家挤没。
+    const maxW = Math.min(680, Math.max(240, window.innerWidth * 0.52))
+    const fit = items.length > 1 ? (maxW - w) / (items.length - 1) : w
+    step = Math.round(Math.max(w * 0.2, Math.min(w * REVEAL_STEP_RATIO, fit)))
+  }
+  box.style.setProperty('--mini-w', `${w}px`)
+  box.style.setProperty('--mini-h', `${h}px`)
+  box.style.setProperty('--mini-step', `${step}px`)
+  box.style.setProperty('--mini-gap', `${gapPx}px`)
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i] as (typeof items)[number]
+    const el = cardEl(it.card, {
+      width: w,
+      id: it.card.id,
+      // 分组间隔 + 飞行中占位：与玩家手牌同一套语义（发牌动画按 .card--incoming 揭面）
+      cls: [it.gapBefore ? 'card--gap' : '', isBackInFlight(seat, i) ? 'card--incoming' : '']
+        .filter(Boolean)
+        .join(' '),
+      title: cardName(it.card),
+    })
+    el.dataset.reveal = String(seat)
+    box.appendChild(el)
+  }
+}
+
 function bind(root: HTMLElement, s: GameState, act: Actions): void {
   /* 拖动音量滑条：置标志让 paint 别重绘，松手再解除。
      不这么做的话，每个 input 事件 dispatch 一次音量 → paint 整棵重建 →
@@ -1451,6 +1570,9 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
         break
       case 'toggleAiPeek':
         act.dispatch({ type: 'toggleAiPeek' })
+        break
+      case 'toggleShowOppHands':
+        act.dispatch({ type: 'toggleShowOppHands' })
         break
       case 'toggleSoundEnhanced':
         act.dispatch({ type: 'toggleSoundEnhanced' })
