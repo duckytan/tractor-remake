@@ -10,6 +10,7 @@
 import { decide } from '@ai/policy'
 import type { AiLevel } from '@ai/policy'
 import { buildBelief } from '@ai/belief'
+import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
 import { isSameTeam,
   DEAL_TOTAL,
@@ -1047,10 +1048,21 @@ export function aiPlayFor(
    * 默认（false）= 只用公开信息推断（`buildBelief`），见 docs/15 KN-10。
    * 保留这个开关是为了能配对测量「明牌 vs 推断」的强度差，正常对局不要传。
    */
-  opts?: { readonly peek?: boolean },
+  opts?: {
+    readonly peek?: boolean
+    /** 是否启用残局搜索（默认开；标定脚本用它做 A/B） */
+    readonly endgame?: boolean
+  },
 ): GameState {
   // 显式 opts 优先（标定用），否则跟玩家设置走（默认读牌）
   const peek = opts?.peek ?? s.aiPeekHands
+
+  // L3：残局先做完全搜索（含抠底的跨墩交换，启发式看不到）。
+  // 搜索不接管（牌太多 / 关掉读牌 / 超预算）时返回 null，落回启发式。
+  if (level === 3 && opts?.endgame !== false) {
+    const solved = solveEndgame(s, seat, peek)
+    if (solved !== null) return playCards(s, seat, solved)
+  }
   const ctx = ctxOf(s)
   const isLead = s.trick.plays.length === 0
 
@@ -1349,3 +1361,165 @@ export function aiCanAct(s: GameState): boolean {
 }
 
 export { TRUMP_POWER_BASE, advanceLevel, levelsFor, nextSeat, partnerOf }
+
+/* ============================================================
+   残局精确求解（v1.3.29 · docs/28 §5「残局搜索」）
+   ------------------------------------------------------------
+   为什么要它：启发式打分（policy.ts）永远是「逐手局部最优」，
+   看不到「这一墩让出去、下一墩用主牌收 20 分」这种跨墩交换；
+   也看不到**抠底**（最后一墩由闲家赢时底分 ×2/×4/×8）——
+   而抠底往往是整局最大的一次分数摆动。
+
+   做法：牌少的时候直接做**完全信息极小极大 + α-β 剪枝**。
+   为什么敢用完全信息：这个搜索只在「AI 读牌」开着时启用
+   （`aiPeekHands`），与 L3 既有的 `exactBeatable` 同一信息假设；
+   关掉读牌就不接管，交给概率推断的启发式。
+
+   为什么放在 app 层而不是 ai/：搜索要把「出一手牌」应用成新状态，
+   而那套逻辑（含抠底、终局判定）在 `playCards` / `resolveCurrentTrick` 里。
+   放 ai/ 会形成 `ai → app → ai` 的双向依赖；放这里零依赖、零重复。
+
+   触发门槛刻意很紧（总剩牌 ≤ `ENDGAME_MAX_CARDS`）：
+   节点数随剩牌数指数增长，而残局一局只出现一次，宁可只在真能算完时接管。
+   ============================================================ */
+
+/** 接管阈值：四家手牌总数 ≤ 这个值才做完全搜索（8 = 最多 2 墩） */
+export const ENDGAME_MAX_CARDS = 8
+/** 节点上限：超了就放弃（返回已找到的最好一手，或 null） */
+const ENDGAME_NODE_BUDGET = 120_000
+/** 时间上限（ms）：兜底，防止慢机器上卡住主线程 */
+const ENDGAME_TIME_BUDGET_MS = 40
+/** 每个节点的候选上限（α-β 的宽度） */
+const ENDGAME_BRANCH = 12
+
+const ENDGAME_ABORT = Symbol('endgame-abort')
+
+/**
+ * 某座位在当前局面下的**合法**候选出法（最多 `ENDGAME_BRANCH` 个）。
+ *
+ * 与 `policy.ts` 的 `legalOnly` 同口径（枚举 + `checkPlay` 过滤），
+ * 但不能直接复用 —— 那是 policy 的私有函数，而 policy 反过来要调本文件，
+ * 会形成双向依赖。这段只有十几行，重复的代价小于依赖环的代价。
+ */
+function endgameCandidates(s: GameState, seat: Seat): Card[][] {
+  const ctx = ctxOf(s)
+  // **手牌必须按规范序排**：`enumeratePlays` 的产出顺序跟着输入走，
+  // 而搜索结果里有大量并列最优（同一分值的不同出法）。不规范化的话
+  // 「手牌数组顺序不同 ⇒ 选出不同的并列解」—— 直接违反
+  // `tests/ai/order-independence.test.ts` 的不变量。
+  const hand = [...(s.hands[seat] as readonly Card[])].sort(
+    (a, b) => ctx.power.get(a.value) - ctx.power.get(b.value) || a.id - b.id,
+  )
+  const isLead = s.trick.plays.length === 0
+  const leadPlay = isLead ? undefined : (s.trick.plays[0] as Play)
+  const pc = isLead
+    ? ({ kind: 'lead' } as const)
+    : ({ kind: 'follow', leadCards: leadPlay!.cards, leadAnalysis: leadPlay!.analysis } as const)
+  const raw = enumeratePlays(hand, ctx, pc, ENDGAME_BRANCH, true)
+  const opponents = [0, 1, 2, 3]
+    .filter((x) => x !== seat)
+    .map((x) => s.hands[x] as readonly Card[])
+  const out: Card[][] = []
+  for (const cards of raw) {
+    if (cards.length === 0) continue
+    const r = checkPlay({
+      hand,
+      cards,
+      ctx,
+      ...(leadPlay ? { lead: { cards: leadPlay.cards, analysis: leadPlay.analysis } } : {}),
+      opponents,
+    })
+    if (r.ok) out.push(r.cards.slice())
+  }
+  // 候选也按规范键排序：并列最优时永远取「值序列最小」的那一手
+  out.sort((x, y) => {
+    const kx = x.map((c) => c.value).sort((a, b) => a - b).join(',')
+    const ky = y.map((c) => c.value).sort((a, b) => a - b).join(',')
+    return kx < ky ? -1 : kx > ky ? 1 : 0
+  })
+  return out
+}
+
+/**
+ * 残局求解：返回「本手应该出哪几张」，null = 不接管（交给启发式）。
+ *
+ * 目标函数直接用**真实结算口径**：`defenderScore`（已含抠底）。
+ * 我在庄家方就最小化它、在闲家就最大化它 —— 这样连「该不该让出这一墩
+ * 换取最后一墩的抠底权」这种跨墩交换也能被算出来。
+ */
+export function solveEndgame(
+  s: GameState,
+  seat: Seat,
+  /** 是否允许用四家真实手牌（默认跟玩家设置走；标定脚本可以强制） */
+  allowPeek: boolean = s.aiPeekHands,
+): Card[] | null {
+  if (s.phase !== 'play') return null
+  if (seatToPlay(s) !== seat) return null
+  // 搜索要用四家的真实手牌 ⇒ 只在「读牌」开着时启用（否则等于偷偷用隐藏信息）
+  if (!allowPeek) return null
+  const total = s.hands.reduce((n, h) => n + h.length, 0)
+  if (total === 0 || total > ENDGAME_MAX_CARDS) return null
+
+  const myTeam = teamOf(seat)
+  const deadline = Date.now() + ENDGAME_TIME_BUDGET_MS
+  let nodes = 0
+
+  /** 终局得分：换成「我方视角越大越好」 */
+  const terminalValue = (st: GameState): number =>
+    teamOf(st.dealer) === myTeam ? -st.defenderScore : st.defenderScore
+
+  const search = (st: GameState, alpha: number, beta: number, depth: number): number => {
+    nodes += 1
+    if (nodes > ENDGAME_NODE_BUDGET) throw ENDGAME_ABORT
+    // 每 256 个节点查一次时间，避免 Date.now() 成为热点
+    if ((nodes & 0xff) === 0 && Date.now() > deadline) throw ENDGAME_ABORT
+
+    if (st.phase !== 'play') return terminalValue(st)
+    const acting = seatToPlay(st)
+    if (acting === null) return terminalValue(st)
+    const cands = endgameCandidates(st, acting)
+    if (cands.length === 0) return terminalValue(st)
+
+    const maximizing = teamOf(acting) === myTeam
+    let best = maximizing ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY
+    let a = alpha
+    let b = beta
+    for (const cards of cands) {
+      const next = playCards(st, acting, cards)
+      if (next === st) continue // 被规则拒绝
+      const v = search(next, a, b, depth + 1)
+      if (maximizing) {
+        if (v > best) best = v
+        if (best > a) a = best
+      } else {
+        if (v < best) best = v
+        if (best < b) b = best
+      }
+      if (b <= a) break // 剪枝
+    }
+    if (!Number.isFinite(best)) return terminalValue(st)
+    return best
+  }
+
+  const rootCands = endgameCandidates(s, seat)
+  if (rootCands.length === 0) return null
+
+  let bestCards: Card[] | null = null
+  let bestVal = Number.NEGATIVE_INFINITY
+  try {
+    for (const cards of rootCands) {
+      const next = playCards(s, seat, cards)
+      if (next === s) continue
+      const v = search(next, bestVal, Number.POSITIVE_INFINITY, 1)
+      if (v > bestVal) {
+        bestVal = v
+        bestCards = cards
+      }
+    }
+  } catch (e) {
+    // 超出预算：返回**已经算出来的最好一手**（比启发式不会更差，因为它是真算过的）
+    if (e !== ENDGAME_ABORT) throw e
+    return bestCards
+  }
+  return bestCards
+}
