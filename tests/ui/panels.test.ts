@@ -95,11 +95,17 @@ describe('设置面板 · 声音分组', () => {
     expect(html).toMatch(/data-vol="sfx"[^>]*value="80"|value="80"[^>]*data-vol="sfx"/)
   })
 
-  /** 取包含 marker 的那个 <button ...> 开标签（属性顺序无关） */
+  /**
+   * 取包含 marker 的那个 `<button ...>` 开标签（属性顺序无关）。
+   *
+   * v1.3.29 改成正则：开关的 `data-act` 现在**同时挂在整行和按钮上**
+   * （点行文字也能切换，见 docs/37 E-3），旧实现用 `indexOf` 会先命中
+   * `<div class="set-row" data-act=...>`，再 `lastIndexOf('<button')` 就串到上一行了。
+   */
   const btnTag = (html: string, marker: string): string => {
-    const i = html.indexOf(marker)
-    if (i < 0) return ''
-    return html.slice(html.lastIndexOf('<button', i), html.indexOf('>', i) + 1)
+    const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`<button[^>]*${escaped}[^>]*>`)
+    return re.exec(html)?.[0] ?? ''
   }
 
   it('两个开关默认：增强音效关、自动变奏开', () => {
