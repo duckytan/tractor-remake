@@ -1305,6 +1305,15 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
   root.onpointerdown = (ev) => {
     const t = ev.target
     if (t instanceof HTMLInputElement && t.type === 'range') draggingRange = true
+    // **鼠标点手牌不抢焦点**（v1.3.29 修复）。
+    //
+    // 手牌是 `tabindex=0` + `role=button`（NFR-10 要求键盘可选），所以浏览器
+    // 点它时会把它设为 activeElement。于是「点一张牌 → 按空格」命中的是
+    // `onCard` 分支（空格 = 切换选中）⇒ **取消选中而不是出牌**，
+    // 用户看到的是「点了牌按空格没反应」。
+    // 阻止 pointerdown 的默认行为可以阻止聚焦，而 click 事件照常触发 ——
+    // 键盘用户走 Tab 聚焦不受影响。
+    if (t instanceof Element && t.closest('.hand .card[data-id]') !== null) ev.preventDefault()
   }
   root.onpointerup = endRangeDrag
   root.onpointercancel = endRangeDrag
