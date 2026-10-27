@@ -14,7 +14,7 @@ import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
 import type { Prefs } from '@app/persist'
 import { ANIM_SPEED_SCALE, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
-import { isDraggingRange, refitHand, render } from '@ui/render'
+import { isDraggingRange, patchSelection, refitHand, render } from '@ui/render'
 import { captureFx, setAnimScale, trackDealAnimation, trackPlayFx } from '@ui/dealFly'
 import { createAudio } from '@audio/index'
 import type { AudioHandle, AudioSettings } from '@audio/index'
@@ -193,6 +193,23 @@ if (import.meta.env.PROD && !isLocalHost && 'serviceWorker' in navigator) {
 /** 上一次 paint 用的状态：captureFx 要用它读「上一帧的本墩出牌」（见 ui/dealFly.ts） */
 let lastPainted: GameState | null = null
 
+/**
+ * 只有 `selected` / `hintIds` 变了？（= 纯视觉变化，可以走增量路径）
+ *
+ * 判定靠**引用比较**：`reduce` 是不可变更新的，没变的字段保持同一引用，
+ * 变了的字段换新引用。所以 56 个字段逐个 `!==` 就能精确判断，
+ * 不需要深比较（`hands` / `trick` / `history` 这些嵌套结构同理）。
+ */
+const SELECTION_ONLY_KEYS = new Set<string>(['selected', 'hintIds'])
+function onlySelectionChanged(prev: GameState, next: GameState): boolean {
+  if (prev === next) return false
+  for (const k of Object.keys(next) as (keyof GameState)[]) {
+    if (SELECTION_ONLY_KEYS.has(k as string)) continue
+    if (prev[k] !== next[k]) return false
+  }
+  return true
+}
+
 /* ============================================================
    音频
    ------------------------------------------------------------
@@ -242,6 +259,19 @@ function paint(): void {
   // 出牌动画只在「出牌阶段 + 动画开」时需要前后帧快照。
   // 发牌阶段每 55ms 一次 paint，每次都量 30+ 个矩形（强制同步布局）纯属浪费。
   const wantFx = state.animation && state.phase === 'play'
+
+  // 选牌 / 提示是纯视觉状态：只切 class，不重建 DOM。
+  // 整棵重建会把焦点（键盘用户每选一张就要重新 Tab）、<input> 拖动、动画状态
+  // 一起丢掉，而且一次选牌要写 71 次 innerHTML / 72KB（docs/34 D-3、docs/37 E-2）。
+  // 放在 captureFx 之前：这条路径没有任何牌在飞，不需要前后帧快照。
+  if (lastPainted !== null && onlySelectionChanged(lastPainted, state)) {
+    lastPainted = state
+    lastAudioPainted = state
+    patchSelection(root as HTMLElement, state)
+    audio.applySettings(audioSettingsOf(state))
+    return
+  }
+
   // 顺序不能换：render 会重建整棵 DOM，旧元素的矩形只能在它之前量
   const before = wantFx ? captureFx(root as HTMLElement, lastPainted ?? state) : null
   lastPainted = state

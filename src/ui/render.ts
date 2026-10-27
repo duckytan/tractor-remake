@@ -1,8 +1,11 @@
 /**
  * 界面渲染
  *
- * 策略：每次状态变化重建 DOM。牌桌最多约 200 个节点，重建成本可忽略，
- * 换来的是「渲染 = state 的纯函数」这种简单性。
+ * 两条渲染路径：
+ *   ① `render()` —— 整棵 `root` 重建（骨架 + 逐槽填充）。状态的结构性变化走这里。
+ *   ② `patchSelection()` —— **只切手牌的 class 与操作条的状态**，不动 DOM 结构。
+ *      选牌 / 提示是纯视觉状态，走整棵重建会把焦点、`<input>` 拖动、动画状态
+ *      一起丢掉（docs/37 E-2 实测：键盘选牌后 activeElement 变成 BODY）。
  *
  * 分层铁律：本文件只消费 app 层算好的视图数据（handView / trickLogView /
  * pastPlaysView），不出现 power / 主牌判定等规则概念。
@@ -25,7 +28,7 @@ import {
 } from '@app/view'
 import { leadingSeat } from '@app/view'
 import type { CounterSlot } from '@app/view'
-import { backEl, cardEl, ensureDefs } from './card'
+import { backEl, cardEl, cardSpokenName, ensureDefs } from './card'
 import { isBackInFlight, isInFlight } from './dealFly'
 
 export interface Actions {
@@ -488,7 +491,11 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         el.tabIndex = 0
         el.setAttribute('role', 'button')
         el.setAttribute('aria-pressed', on ? 'true' : 'false')
-        el.setAttribute('aria-label', isHint ? `第 ${c.id} 张牌（提示）` : `第 ${c.id} 张牌`)
+        // 牌面名必须进 label（docs/37 E-4）：`aria-label` 会覆盖内部 SVG 的
+        // 「黑桃2」，只写「第 N 张牌」等于告诉视障用户「这是一张牌」就没了。
+        // 牌名缓存到 dataset.name，`patchSelection` 增量更新时不必再算一遍。
+        el.dataset.name = cardSpokenName(c)
+        el.setAttribute('aria-label', handCardLabel(el.dataset.name, c.id, isHint))
       }
       hand.appendChild(el)
     }
@@ -504,7 +511,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const bar = q('handbar')
     if (s.phase === 'bury') {
       bar.innerHTML = `
-        <span class="hint-text">选 8 张扣底（已选 ${esc(s.selected.length)} / 8）</span>
+        <span class="hint-text" data-slot="hint-text">选 8 张扣底（已选 ${esc(s.selected.length)} / 8）</span>
         <button class="btn btn--primary" data-act="bury" ${s.selected.length === 8 ? '' : 'disabled'}>扣底</button>`
     } else if (s.phase === 'play') {
       const myTurn = turn === HUMAN_SEAT
@@ -512,7 +519,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       if (rep !== null) {
         bar.innerHTML = `
           <button class="btn" data-act="replayStep" data-val="-1" ${rep.isFirst ? 'disabled' : ''}>◀ 上一墩</button>
-          <span class="hint-text">回放 第 ${esc(rep.index + 1)} / ${esc(rep.total)} 墩 · ${esc(rep.winnerLabel)} 赢${
+          <span class="hint-text" data-slot="hint-text">回放 第 ${esc(rep.index + 1)} / ${esc(rep.total)} 墩 · ${esc(rep.winnerLabel)} 赢${
             rep.score > 0 ? ` · ${esc(rep.score)} 分` : ''
           }</span>
           <button class="btn" data-act="replayStep" data-val="1" ${rep.isLast ? 'disabled' : ''}>下一墩 ▶</button>
@@ -520,8 +527,10 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
         return
       }
       bar.innerHTML = `
-        <span class="hint-text">${myTurn ? '轮到你了' : `${SEAT_LABEL[turn ?? 0]} 出牌中…`}</span>
-        ${legalityBadge(s)}
+        <!-- data-slot 是 patchSelection() 的稳定锚点：选牌时只改文本 / innerHTML /
+             disabled，按钮元素本身不重建 ⇒ 焦点与 hover 都不丢 -->
+        <span class="hint-text" data-slot="hint-text">${myTurn ? '轮到你了' : `${esc(SEAT_LABEL[turn ?? 0])} 出牌中…`}</span>
+        <span data-slot="legality">${legalityBadge(s)}</span>
         <button class="btn" data-act="undo" ${act.canUndo ? '' : 'disabled'}>悔牌</button>
         <button class="btn" data-act="clear" ${s.selected.length ? '' : 'disabled'}>取消</button>
         <button class="btn" data-act="hint" ${myTurn ? '' : 'disabled'}>提示</button>
@@ -1077,6 +1086,70 @@ function esc(v: unknown): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+/** 手牌元素的可读名称：「黑桃2，第 52 张牌（提示）」 */
+function handCardLabel(name: string, id: number, isHint: boolean): string {
+  return `${name}，第 ${id} 张牌${isHint ? '（提示）' : ''}`
+}
+
+/**
+ * **增量**更新选牌 / 提示相关的视觉状态，不重建 DOM。
+ *
+ * 为什么需要它（docs/37 E-2、docs/34 D-1/D-3）：
+ *   - `render()` 是整棵重建，选一张牌会把那个 `.card` 元素销毁 → **焦点掉到 BODY**，
+ *     键盘用户每选一张就要重新 Tab 十几下；再按回车也取消不了（事件目标没了）。
+ *   - 一次选牌要写 71 次 `innerHTML` / 72KB 字符串（整棵骨架 + 逐槽填充），
+ *     而选牌是**最高频操作**，这笔开销纯属浪费。
+ *
+ * 只动两类东西：
+ *   ① 手牌：`.card--selected` / `.card--hint` 类 + `aria-pressed` / `aria-label`
+ *   ② 操作条：`data-slot="hint-text"` 文本、`data-slot="legality"` 内容、
+ *      以及三个按钮的 `disabled`（按钮元素本身不替换 ⇒ 焦点/hover 都保住）
+ *
+ * 调用方保证：**只有 `selected` / `hintIds` 变了**才走这里（见 `main.ts` 的
+ * `onlySelectionChanged`）。其它任何字段变化都必须走完整 `render()`。
+ */
+export function patchSelection(root: HTMLElement, s: GameState): void {
+  const selected = new Set(s.selected)
+  const hinted = new Set(s.hintIds)
+
+  const hand = root.querySelector<HTMLElement>('[data-slot="hand"]')
+  if (hand !== null) {
+    for (const el of hand.querySelectorAll<HTMLElement>('.card[data-id]')) {
+      const id = Number(el.dataset.id)
+      if (!Number.isFinite(id)) continue
+      const on = selected.has(id)
+      const isHint = hinted.has(id)
+      el.classList.toggle('card--selected', on)
+      el.classList.toggle('card--hint', isHint)
+      // 不可操作的牌没有 role=button，也就没有 aria 状态要维护
+      if (el.getAttribute('role') === 'button') {
+        el.setAttribute('aria-pressed', on ? 'true' : 'false')
+        el.setAttribute('aria-label', handCardLabel(el.dataset.name ?? '', id, isHint))
+      }
+    }
+  }
+
+  const bar = root.querySelector<HTMLElement>('[data-slot="handbar"]')
+  if (bar === null) return
+  const n = s.selected.length
+  const myTurn = seatToPlay(s) === HUMAN_SEAT
+
+  if (s.phase === 'bury') {
+    const hintText = bar.querySelector<HTMLElement>('[data-slot="hint-text"]')
+    if (hintText !== null) hintText.textContent = `选 8 张扣底（已选 ${n} / 8）`
+  }
+  const legality = bar.querySelector<HTMLElement>('[data-slot="legality"]')
+  if (legality !== null && s.phase === 'play') legality.innerHTML = legalityBadge(s)
+
+  const setDisabled = (act: string, disabled: boolean): void => {
+    const b = bar.querySelector<HTMLButtonElement>(`[data-act="${act}"]`)
+    if (b !== null) b.disabled = disabled
+  }
+  setDisabled('bury', n !== 8)
+  setDisabled('clear', n === 0)
+  setDisabled('play', !(myTurn && n > 0))
 }
 
 export interface HandFit {

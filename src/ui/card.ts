@@ -182,3 +182,20 @@ export function cardName(c: Card): string {
   if (v === 53) return '大王'
   return `${['♠', '♥', '♣', '♦'][Math.floor(v / 13)]}${RANK_LABELS[v % 13]}`
 }
+
+/**
+ * 牌名（**口语版**，给屏幕阅读器用）。
+ *
+ * 和 `cardName` 的区别：花色写成汉字而不是符号。屏幕阅读器读「♠2」常常读成
+ * 「黑桃符号 2」或者干脆跳过符号，读「黑桃2」才稳定。
+ *
+ * 为什么需要它（docs/37 E-4）：手牌元素的 `aria-label` 之前只写「第 105 张牌」，
+ * 而 `aria-label` 会**覆盖**内部 SVG 上的牌面名称 —— 视障用户能 Tab 到手牌，
+ * 却完全不知道手里是什么牌，等于这个游戏对他们不可玩。
+ */
+export function cardSpokenName(c: Card): string {
+  const v = c.value
+  if (v === 52) return '小王'
+  if (v === 53) return '大王'
+  return `${['黑桃', '红心', '梅花', '方片'][Math.floor(v / 13)]}${RANK_LABELS[v % 13]}`
+}
