@@ -193,7 +193,16 @@ export function checkFollow(
   if (sameSuit < leadCount) return { ok: true, cards } // 花色不够，垫牌自由
 
   const needPairs = Math.min(lead.pairCount, handPairs)
-  if (my.pairCount !== needPairs) {
+  // **「至少」而不是「恰好」**（v1.3.29 修正，docs/32 B-2 的连带缺陷）。
+  //
+  // 原实现要求 `my.pairCount === needPairs`，于是出现**无解死锁**：
+  // 首出是甩牌（2 张散单，pairCount = 0），跟家手里该花色恰好只有一对 ——
+  // 必须出 2 张该花色（needSuit = 2），但任何 2 张都是对子 ⇒ pairCount = 1 ≠ 0
+  // ⇒ 没有任何合法出法，AI 卡死、人类也无牌可出。
+  //
+  // 规则本意是「有对子必须跟出来」（不能藏着对子只出散牌），而不是「不许比对子多」。
+  // 所以放宽成「不能少于」：多出对子只是自己吃亏，不影响合法性。
+  if (my.pairCount < needPairs) {
     return reject('must-follow-pairs', `有对子必须跟 ${needPairs} 对（你出了 ${my.pairCount} 对）`)
   }
   return { ok: true, cards }

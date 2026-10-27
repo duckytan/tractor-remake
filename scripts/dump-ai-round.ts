@@ -130,7 +130,14 @@ interface RoundDump {
   readonly guardLevel: number | null
   readonly stuck: string | null
   /** 首出统计：首出次数 / 其中「出的是手里最小牌」/ 其中出主牌 */
-  readonly leadStats: { readonly leads: number; readonly minCard: number; readonly trump: number; readonly joker: number }
+  readonly leadStats: {
+    readonly leads: number
+    readonly minCard: number
+    readonly trump: number
+    readonly joker: number
+    /** 甩牌（同槽多组）首出次数 */
+    readonly multi: number
+  }
   /** 决策耗时（毫秒），逐手记录 */
   readonly decisionMs: number[]
   /** 抢主统计：亮主时该门手里有几张（按已发到的牌算） */
@@ -202,7 +209,7 @@ function driveRound(seed: number, level = 3): RoundDump {
   const tricks: TrickDump[] = []
   const anomalies: Anomaly[] = []
   let pending: PendingPlay[] = []
-  let leadStats = { leads: 0, minCard: 0, trump: 0, joker: 0 }
+  let leadStats = { leads: 0, minCard: 0, trump: 0, joker: 0, multi: 0 }
   const decisionMs: number[] = []
   const grabLens: number[] = []
   let stuck: string | null = null
@@ -280,6 +287,7 @@ function driveRound(seed: number, level = 3): RoundDump {
             : 0),
         trump: leadStats.trump + (played.analysis.suitSlot === 4 ? 1 : 0),
         joker: leadStats.joker + (played.cards.some((c) => c.value >= 52) ? 1 : 0),
+        multi: leadStats.multi + (played.analysis.isMultiGroup ? 1 : 0),
       }
     }
 
@@ -572,15 +580,20 @@ function main(): void {
       ` · 该垫没垫 ${count('missed-points')}`,
   )
   console.log(`    其中 B2 该赢不赢 ${count('miss-win')} · B3 该毙不毙 ${count('miss-ruff')}`)
+  // **每局失误数**比「失误/墩」更稳：甩牌/对子会让一墩吃多张牌，墩数在 20~25 之间浮动，
+  // 用墩数做分母会让「同样的失误数」算出不同的比率（v1.3.29 实测 562 墩 → 468 墩）。
+  console.log(`    每局失误 ${(total / nd).toFixed(2)} 处 · 每局墩数 ${avg((d) => d.tricks.length).toFixed(1)}`)
 
   const leads = done.reduce((x, d) => x + d.leadStats.leads, 0) || 1
   const minLeads = done.reduce((x, d) => x + d.leadStats.minCard, 0)
   const trumpLeads = done.reduce((x, d) => x + d.leadStats.trump, 0)
   const jokerLeads = done.reduce((x, d) => x + d.leadStats.joker, 0)
+  const multiLeads = done.reduce((x, d) => x + d.leadStats.multi, 0)
   console.log(
     `  首出 ${leads} 次：出「手里最小牌」${((minLeads / leads) * 100).toFixed(1)}%` +
       ` · 出主牌 ${((trumpLeads / leads) * 100).toFixed(1)}%` +
-      ` · 出王 ${((jokerLeads / leads) * 100).toFixed(1)}%`,
+      ` · 出王 ${((jokerLeads / leads) * 100).toFixed(1)}%` +
+      ` · 甩牌 ${multiLeads} 次（${((multiLeads / leads) * 100).toFixed(1)}%）`,
   )
 
   const ms = done.flatMap((d) => d.decisionMs).sort((a, b) => a - b)

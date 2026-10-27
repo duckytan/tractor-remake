@@ -56,11 +56,37 @@ export function enumeratePlays(
 
 /* ---------- 首出 ---------- */
 
+/**
+ * 把一个花色槽拆成「可独立甩出的组」：单张 / 对子 / 连对。
+ *
+ * 甩牌的规则是「每一组都要大于其他三家同槽同类型的最大值」（见 `core/legality.ts`
+ * 的 `checkLead`），所以候选必须按**组**组合，而不是按张数随便拼。
+ *
+ * 返回按牌力**降序**（甩牌通常是想把大的先兑现）。
+ */
+function groupsOfSlot(cards: readonly Card[], ctx: RuleContext): Card[][] {
+  const a = analyze(cards, ctx)
+  const out: Card[][] = []
+  for (const g of a.groups) {
+    if (g.kind === 'tractor') {
+      // 连对整体作为一组（不能拆成两个对子甩，那样校验口径就变了）
+      out.push(g.cards.slice())
+    } else if (g.kind === 'pair') {
+      out.push(g.cards.slice())
+    } else {
+      out.push([g.cards[0] as Card])
+    }
+  }
+  return out.sort(
+    (x, y) => ctx.power.get((y[0] as Card).value) - ctx.power.get((x[0] as Card).value),
+  )
+}
+
 function enumerateLeads(
   hand: readonly Card[],
   ctx: RuleContext,
   limit: number,
-  _wide: boolean,
+  wide: boolean,
 ): Card[][] {
   const out: Card[][] = []
   const ha = analyzeHand(hand, ctx)
@@ -110,6 +136,43 @@ function enumerateLeads(
     flush()
   }
 
+  /* ---- 甩牌（同槽多组）----
+   *
+   * v1.3.29 新增（docs/32 B-2）。旧实现只产单张/对子/连对，**AI 永远不会甩牌** ——
+   * 人类甩 5 张，AI 只能一张一张出，是最容易被看穿的「不会玩」。
+   *
+   * 生成策略（不穷举，只要「够用且合法」）：
+   *   - 每门取「最强的 2 组 / 3 组」—— 甩牌的目的就是一次性兑现大牌
+   *   - 再取「最弱的 2 组」—— 残局把垃圾一起扔掉
+   *   - `wide === false`（L0/L1）只给最强 2 组，保持低档「看得少」的语义
+   *
+   * 合法性不在这里判：`policy.ts` 的 `legalOnly` 会拿**真实对手手牌**逐个 `checkPlay`，
+   * 不合格的自然被过滤掉（甩牌失败还会被裁剪成最小单位，那条路径也照常工作）。
+   */
+  for (const slot of [0, 1, 2, 3, 4] as SuitSlot[]) {
+    const slotCards = ha.slots[slot]!.cards
+    if (slotCards.length < 2) continue
+    const gs = groupsOfSlot(slotCards, ctx)
+    if (gs.length < 2) continue
+
+    const take = (from: readonly Card[][], n: number): Card[] | null => {
+      if (from.length < n) return null
+      const picked: Card[] = []
+      for (let i = 0; i < n; i++) picked.push(...(from[i] as Card[]))
+      return picked
+    }
+
+    // 只给「最强 N 组」：甩牌的目的是把大牌一次性兑现。
+    // 「最弱的 2 组」也试过，但那类候选几乎必然过不了 `checkLead` 的逐组校验
+    // （每组都要大于三家最大值），只是白花算力，而且偶尔能过时也是坏首出。
+    const top2 = take(gs, 2)
+    if (top2 !== null) out.push(top2)
+    if (wide) {
+      const top3 = take(gs, 3)
+      if (top3 !== null) out.push(top3)
+    }
+  }
+
   return dedupe(out, limit)
 }
 
@@ -141,7 +204,15 @@ function enumerateFollows(
   const lead = pc.leadAnalysis
   const leadCount = pc.leadCards.length
   const slot = lead.suitSlot
-  if (slot === -1) return []
+  if (slot === -1) {
+    // 混槽首出（规则上不合法 —— `checkLead` 会以 `mixed-suit-lead` 拒掉）。
+    // 纯防御：给两个「整手按牌力升/降序取前 N 张」的候选，让 `checkPlay` 去裁决，
+    // 而不是返回空数组把上层推到兜底分支（那个分支在 v1.3.29 之前是坏的，
+    // 见 docs/32 B-7：`slot === -1` 时比较器恒返回 1，等于不排序且不校验结构）。
+    const byAsc = asc(hand, ctx)
+    if (byAsc.length < leadCount) return []
+    return dedupe([byAsc.slice(0, leadCount), [...byAsc].reverse().slice(0, leadCount)], limit)
+  }
 
   const ha = analyzeHand(hand, ctx)
   const handSlot = asc(ha.slots[slot]!.cards, ctx)

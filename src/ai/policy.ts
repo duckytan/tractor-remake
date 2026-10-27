@@ -107,7 +107,7 @@ export const L3_WEIGHTS = {
    */
   control: 0.55,
   /** 首出后「下一墩主动权」的溢价 */
-  followUp: 0.35,
+  followUp: 0.2,
 }
 
 export interface AiDecisionInput {
@@ -211,6 +211,10 @@ function canBeOverturned(
   if (cards.length === 0) return false
   const mine = analyze(cards, ctx)
   if (mine.suitSlot === -1) return true // 混花色，不可能守住
+  // 合法甩牌是**整组**比较的：`checkLead` 已经保证每一组都大于其他三家同类型的最大值，
+  // 所以「甩出去」本身不可能被压。L3 的 `exactBeatable` 早就这么判了，L2 漏了这条 ——
+  // 后果是 L2 把每一个甩牌都当成「会被压」，永远不甩（实测甩牌率 0%）。
+  if (mine.groups.length > 1) return false
   if (!mine.keyCard) return false
 
   const myPower = ctx.power.get(mine.keyCard.value)
@@ -342,6 +346,10 @@ function exactBeatable(
   if (cards.length === 0) return false
   const mine = analyze(cards, ctx)
   if (mine.suitSlot === -1) return true // 混花色，不可能守住
+  // 合法甩牌是**整组**比较的：`checkLead` 已经保证每一组都大于其他三家同类型的最大值，
+  // 所以「甩出去」本身不可能被压。L3 的 `exactBeatable` 早就这么判了，L2 漏了这条 ——
+  // 后果是 L2 把每一个甩牌都当成「会被压」，永远不甩（实测甩牌率 0%）。
+  if (mine.groups.length > 1) return false
   if (!mine.keyCard) return false
   if (mine.groups.length > 1) return false // 合法甩牌：压不了
   const pairs = pairsNeededOf(mine)
@@ -442,16 +450,42 @@ export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDeci
   const wide = level >= 2
   const candidates = legalOnly(hand, ctx, play, 60, opponents, wide)
   if (candidates.length === 0) {
-    // 兜底：优先出首出花色的牌，再按牌力从小到大
-    const slot = play.kind === 'follow' ? play.leadAnalysis.suitSlot : -1
+    /**
+     * 兜底：**逐个 `checkPlay` 试，取第一个合法的**。
+     *
+     * 旧实现是「按牌力排序后 `slice(0, count)`」，三个问题（docs/32 B-7）：
+     *   ① `slot === -1`（混槽首出）时比较器的两个分支都返回 1 ⇒ 等于**不排序**，
+     *      取到的是发牌原序的前 N 张；
+     *   ② 完全不校验对子/拖拉机结构 —— 首出是对子时取两张散牌，非法；
+     *   ③ 出非法牌后 `playCards` 会拒绝并返回原状态，于是 AI 这一手**永远出不去**，
+     *      主线程的 setTimeout 链条变成无限空转（配合 `aiCanAct` 就是死循环）。
+     *
+     * 现在改成「候选逐个验证」，宁可多算几次也绝不返回未经验证的牌。
+     */
     const count = play.kind === 'follow' ? play.leadCards.length : 1
-    const sorted = [...hand].sort((a, b) => {
-      const sa = slot !== -1 && ctx.power.isTrump(a.value) === (slot === 4) ? 0 : 1
-      const sb = slot !== -1 && ctx.power.isTrump(b.value) === (slot === 4) ? 0 : 1
-      if (sa !== sb) return sa - sb
-      return ctx.power.get(a.value) - ctx.power.get(b.value)
-    })
-    return { cards: sorted.slice(0, count), reason: '兜底' }
+    const byPower = [...hand].sort((a, b) => ctx.power.get(a.value) - ctx.power.get(b.value))
+    const tries: Card[][] = []
+    if (play.kind === 'lead') {
+      for (const c of byPower) tries.push([c])
+    } else if (byPower.length >= count) {
+      tries.push(byPower.slice(0, count))
+      tries.push([...byPower].reverse().slice(0, count))
+    }
+    for (const cards of tries) {
+      const r = checkPlay({
+        hand,
+        cards,
+        ctx,
+        ...(play.kind === 'follow'
+          ? { lead: { cards: play.leadCards, analysis: play.leadAnalysis } }
+          : {}),
+        opponents,
+      })
+      if (r.ok) return { cards: r.cards.slice(), reason: '兜底' }
+    }
+    // 真的没有合法出法（畸形局面）：返回最小的一手，让 `playCards` 拒绝并给出原因，
+    // 由 `aiCanAct` 那一侧的守卫把循环断掉。
+    return { cards: byPower.slice(0, Math.max(1, count)), reason: '兜底' }
   }
 
   if (level === 0) {
