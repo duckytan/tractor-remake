@@ -516,6 +516,13 @@ html, body {
 
 /* ---------- 弹层 ---------- */
 
+/* 顶栏的 AI 档位标记：稍微提亮，让「我现在打的是哪一档」一眼可见
+   （v1.3.29 —— 它以前只藏在设置面板里，用户不知道自己在打「中」档） */
+.topbar .meta-ai {
+  color: #f0c674; /* 与 .seat-role.is-dealer 同一支金色 */
+  font-weight: 600;
+}
+
 .overlay {
   position: fixed;
   inset: 0;

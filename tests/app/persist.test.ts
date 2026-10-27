@@ -119,6 +119,68 @@ describe('偏好设置迁移：twoAsPermanent 默认值 false → true', () => {
   })
 })
 
+/**
+ * v1.3.29：AI 档位默认「中」→「超强」的一次性迁移。
+ *
+ * 背景：残局搜索、甩牌、L3 精确判定**全都只在「超强」档生效**，
+ * 而老存档里存的档位是 1（旧默认）。不迁移的话老玩家永远碰不到新能力 ——
+ * 这正是「AI 太弱智」反馈和「L3 已经很强」事实对不上的原因。
+ *
+ * 与 `twoAsPermanent` 同一类取舍：档位 1 无法区分「旧默认镜像」与「显式选择」，
+ * 按旧默认处理，玩家想调回去只要点一下。
+ *
+ * **同时锁住「分段迁移」**：v1.2.2 的规则迁移门槛是 `version < 2`，
+ * 不能因为版本号升到 3 就对 v2 存档重跑一遍（那会把玩家显式关掉的规则开关又打开）。
+ */
+describe('偏好设置迁移：AI 档位 中 → 超强（v1.3.29）', () => {
+  it('v2 存档里的「中」(1) ⇒ 迁移到「超强」(3)', () => {
+    store.setItem(KEY_PREFS, JSON.stringify({ prefsVersion: 2, aiLevelPartner: 1, aiLevelOpponent: 1 }))
+    const p = loadPrefs()
+    expect(p.aiLevelPartner).toBe(3)
+    expect(p.aiLevelOpponent).toBe(3)
+  })
+
+  it('v2 存档里的「强」(2) 不动 —— 只迁移「中」这一档', () => {
+    store.setItem(KEY_PREFS, JSON.stringify({ prefsVersion: 2, aiLevelPartner: 2, aiLevelOpponent: 0 }))
+    const p = loadPrefs()
+    expect(p.aiLevelPartner).toBe(2)
+    expect(p.aiLevelOpponent).toBe(0)
+  })
+
+  it('当前版本存档里的「中」(1) 被尊重（玩家显式选的不许改）', () => {
+    store.setItem(
+      KEY_PREFS,
+      JSON.stringify({ prefsVersion: PREFS_VERSION, aiLevelPartner: 1, aiLevelOpponent: 1 }),
+    )
+    const p = loadPrefs()
+    expect(p.aiLevelPartner).toBe(1)
+    expect(p.aiLevelOpponent).toBe(1)
+  })
+
+  it('缺字段 ⇒ 回落到**当前默认档**（不是硬编码的旧默认 1）', () => {
+    store.setItem(KEY_PREFS, JSON.stringify({ prefsVersion: PREFS_VERSION }))
+    const p = loadPrefs()
+    expect(p.aiLevelPartner).toBe(3)
+    expect(p.aiLevelOpponent).toBe(3)
+  })
+
+  it('分段迁移：v2 存档的规则开关不会被 v1.2.2 的迁移重跑', () => {
+    store.setItem(
+      KEY_PREFS,
+      JSON.stringify({
+        prefsVersion: 2,
+        aiLevelOpponent: 1,
+        ruleConfig: { ...legacyRuleConfig, twoAsPermanent: false },
+      }),
+    )
+    const p = loadPrefs()
+    // 规则迁移门槛是 version < 2 ⇒ v2 存档的 false 必须原样保留
+    expect(p.ruleConfig.twoAsPermanent).toBe(false)
+    // 而档位迁移门槛是 version < 3 ⇒ 这里仍然生效
+    expect(p.aiLevelOpponent).toBe(3)
+  })
+})
+
 describe('偏好设置：动画速度档位（v1.3.8）', () => {
   it('老档没有 animSpeed 字段 ⇒ 默认「中」', () => {
     store.setItem(KEY_PREFS, JSON.stringify({ ruleConfig: legacyRuleConfig }))

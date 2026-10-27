@@ -89,6 +89,9 @@ const AI_LEVEL_OPTS = [
   { v: '3', label: '超强' },
 ] as const
 
+/** 顶栏用的短标签（对手档位；队友档位在设置里看） */
+const AI_LEVEL_LABEL: Record<AiLevel, string> = { 0: '弱', 1: '中', 2: '强', 3: '超强' }
+
 /** 级牌标签：下标与 `core/cards.ts` 的 rank 序一致（0 = 2 … 12 = A） */
 const LEVEL_LABELS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'] as const
 
@@ -304,8 +307,12 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
       <div class="meta">
         <span>第 <b>${esc(s.round)}</b> 局</span>
         <span>打 <b>${esc(levelLabel(s.levelRank))}</b></span>
-        <span>主 <b>${trumpLabel(s.trump)}</b></span>
-        <span>庄 <b>${SEAT_LABEL[s.dealer]}</b></span>
+        <span>主 <b>${esc(trumpLabel(s.trump))}</b></span>
+        <span>庄 <b>${esc(SEAT_LABEL[s.dealer])}</b></span>
+        <!-- AI 档位必须可见（v1.3.29）：它以前只藏在设置面板里，用户根本不知道
+             自己一直在打「中」档 —— 「AI 太弱智」的反馈和「L3 已经很强」的事实
+             完全对不上。顺带补上「主」「庄」两处漏掉的 esc。 -->
+        <span class="meta-ai" title="对手 AI 强度（设置 → 牌局 可改）">AI <b>${esc(AI_LEVEL_LABEL[s.aiLevelOpponent])}</b></span>
       </div>
       <div class="top-actions">
         <button class="btn btn--ghost" data-act="toggleFourColor">四色</button>

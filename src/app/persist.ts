@@ -45,7 +45,7 @@ const KEY_PREFS = 'tractor.prefs.v1'
  * 玩家真调过的）与当前默认值不冲突，照旧认存档都不会错。
  * 反过来，若对所有字段都「重置成默认」，就会把玩家显式调过的设置一起抹掉 —— 绝不能那样做。
  */
-export const PREFS_VERSION = 2
+export const PREFS_VERSION = 3
 
 export interface Prefs {
   /** 对家（座位 2，队友）强度 */
@@ -80,8 +80,8 @@ export interface Prefs {
 }
 
 const DEFAULT_PREFS: Prefs = {
-  aiLevelPartner: 1,
-  aiLevelOpponent: 1,
+  aiLevelPartner: 3,
+  aiLevelOpponent: 3,
   aiSpeedMs: 420,
   fourColor: false,
   ruleConfig: DEFAULT_RULE_CONFIG,
@@ -136,29 +136,52 @@ export function loadPrefs(): Prefs {
       readonly aiLevel?: unknown
       readonly prefsVersion?: unknown
     }
-    // v1.2.2 之前的存档没有 prefsVersion（读作 0）⇒ 视作旧档。
-    // 用「小于」而不是「不等于」：将来升到 v3 时，v2 的存档不该被当成旧档再迁移一次。
-    // 注意变量名不要叫 legacy —— 下面 `o.aiLevel` 那个「旧存档只有单档 AI 难度」的兜底
-    // 已经占用了 `legacy` 这个名字。
+    // 没有 prefsVersion（读作 0）= v1.2.2 之前的存档。
+    //
+    // **迁移必须按「版本区间」判断，不能用 `version < PREFS_VERSION`**：
+    // 那样每升一次版本，所有历史迁移都会对旧档**重跑一遍** ——
+    // 比如 v1.2.2 的 `twoAsPermanent` 迁移会把玩家显式关掉的开关又打开。
+    // 所以每个迁移各自记一个门槛版本。
     const version = typeof o.prefsVersion === 'number' ? o.prefsVersion : 0
-    const isLegacyArchive = version < PREFS_VERSION
+    /** v1.2.2 迁移：`twoAsPermanent` 默认值 false → true */
+    const legacyRuleConfig = version < 2
+    /** v1.3.29 迁移：AI 档位默认「中」→「超强」 */
+    const legacyAiLevel = version < 3
     const cardSize: CardSize = o.cardSize === 'S' || o.cardSize === 'L' ? o.cardSize : 'M'
     // 四档：0 弱 / 1 中 / 2 强 / 3 超强；非法值回落 1（别把「超强」降级成「普通」）
-    const level = (v: unknown): AiLevel => (v === 0 || v === 2 || v === 3 ? v : 1)
+    // 非法/缺失值回落到**当前默认档**（不是硬编码 1 —— 默认改过一次，
+    // 硬编码会让「字段缺失」永远回到旧默认，与 `DEFAULT_PREFS` 悄悄分叉）。
+    const level = (v: unknown, d: AiLevel = DEFAULT_PREFS.aiLevelOpponent): AiLevel =>
+      v === 0 || v === 1 || v === 2 || v === 3 ? v : d
+    /**
+     * v1.3.29 的档位迁移：把「中」抬到「超强」。
+     *
+     * 为什么敢这么做：档位 1 既可能是玩家显式选的，也可能只是**旧默认值**的镜像，
+     * 存档里没有留「改过什么」的痕迹 —— 与 v1.2.2 的 `twoAsPermanent` 是同一类取舍。
+     * 这里按「旧默认」处理，因为默认值已经从「中」改成「超强」，
+     * 不迁移的话老玩家会一直停在「中」档，永远碰不到新做的 AI 能力
+     * （残局搜索、甩牌、L3 精确判定全都只在「超强」档生效）。
+     * 想调回去只要在设置里点一下。
+     */
+    const migrateLevel = (v: AiLevel): AiLevel => (legacyAiLevel && v === 1 ? 3 : v)
     // 旧存档只有单档 aiLevel ⇒ 两侧都继承它
-    const legacy = o.aiLevel
+    const legacyAi = o.aiLevel
     /** 音量：0..100 整数，非法值回落默认 */
     const vol = (v: unknown, d: number): number =>
       typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : d
     return {
-      aiLevelPartner: o.aiLevelPartner === undefined ? level(legacy) : level(o.aiLevelPartner),
-      aiLevelOpponent: o.aiLevelOpponent === undefined ? level(legacy) : level(o.aiLevelOpponent),
+      aiLevelPartner: migrateLevel(
+        o.aiLevelPartner === undefined ? level(legacyAi) : level(o.aiLevelPartner),
+      ),
+      aiLevelOpponent: migrateLevel(
+        o.aiLevelOpponent === undefined ? level(legacyAi) : level(o.aiLevelOpponent),
+      ),
       aiSpeedMs:
         typeof o.aiSpeedMs === 'number' && Number.isFinite(o.aiSpeedMs)
           ? Math.max(0, Math.min(5000, o.aiSpeedMs))
           : DEFAULT_PREFS.aiSpeedMs,
       fourColor: o.fourColor === true,
-      ruleConfig: sanitizeConfig(o.ruleConfig, isLegacyArchive),
+      ruleConfig: sanitizeConfig(o.ruleConfig, legacyRuleConfig),
       cardSize,
       animation: o.animation !== false,
       // 动画速度：老档没有这个字段 ⇒ 中速
