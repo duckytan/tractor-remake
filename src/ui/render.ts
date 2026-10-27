@@ -854,18 +854,24 @@ function ruleNote(pending: RuleConfig, live: RuleConfig): string {
 
 export function settingsPanel(s: GameState): string {
   const c = s.pendingConfig
-  /** 规则开关：写 pendingConfig，下一局生效 */
+  /**
+   * 规则开关：写 pendingConfig，下一局生效。
+   *
+   * `data-cfg` 同时挂在**整行**和开关上：点开关时 `closest` 命中最内层的开关，
+   * 点同一行的文字/说明时命中最内层的行 —— 两处都能切换（docs/37 E-3：
+   * 原来只有 40×22 的开关本体可点，点文字没反应，移动端很容易点空）。
+   */
   const sw = (key: string, label: string, desc: string, on: boolean): string => `
-    <div class="set-row">
-      <span>${label}<small class="set-desc">${desc}</small></span>
-      <button class="switch" role="switch" aria-checked="${on ? 'true' : 'false'}" data-cfg="${key}" aria-label="${label}"></button>
+    <div class="set-row" data-cfg="${key}">
+      <span>${esc(label)}<small class="set-desc">${esc(desc)}</small></span>
+      <button class="switch" role="switch" aria-checked="${on ? 'true' : 'false'}" data-cfg="${key}" aria-label="${esc(label)}"></button>
     </div>`
 
-  /** 体验开关：直接改 state，立即生效 */
+  /** 体验开关：直接改 state，立即生效（整行可点，理由同上） */
   const swAct = (act: string, label: string, desc: string, on: boolean): string => `
-    <div class="set-row">
-      <span>${label}<small class="set-desc">${desc}</small></span>
-      <button class="switch" role="switch" aria-checked="${on ? 'true' : 'false'}" data-act="${act}" aria-label="${label}"></button>
+    <div class="set-row" data-act="${act}">
+      <span>${esc(label)}<small class="set-desc">${esc(desc)}</small></span>
+      <button class="switch" role="switch" aria-checked="${on ? 'true' : 'false'}" data-act="${act}" aria-label="${esc(label)}"></button>
     </div>`
 
   const seg = (

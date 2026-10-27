@@ -412,7 +412,20 @@ window.addEventListener('keydown', (ev) => {
     return
   }
 
+  // 焦点在「本来就能用空格激活」的元素上时，空格必须归浏览器。
+  //
+  // 旧实现无条件 `preventDefault()` + `playSelected()`，于是：
+  //   - 焦点在顶栏「设置」上按空格 → 什么都不发生（Enter 才有用）
+  //   - 焦点在设置里的 role=switch 上按空格 → 开关不翻转
+  // 即 NFR-10 声称的「全部操作可用键盘完成」实际做不到（docs/37 E-1）。
+  const onActivatable =
+    ev.target instanceof HTMLElement &&
+    ev.target.closest(
+      'button, [role="button"], [role="switch"], [role="tab"], [role="checkbox"], input, select, textarea, a[href]',
+    ) !== null
+
   if (ev.code === 'Space') {
+    if (onActivatable) return
     ev.preventDefault()
     dispatch({ type: 'playSelected' })
   } else if (ev.code === 'Escape') {
@@ -421,7 +434,7 @@ window.addEventListener('keydown', (ev) => {
     else if (state.settingsOpen) dispatch({ type: 'closeSettings' })
     else if (state.logOpen) dispatch({ type: 'toggleLog' })
     else dispatch({ type: 'clearSelect' })
-  } else if (ev.key === 'h' || ev.key === 'H') {
+  } else if ((ev.key === 'h' || ev.key === 'H') && !onActivatable) {
     hint()
   }
 })

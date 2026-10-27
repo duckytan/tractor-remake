@@ -142,6 +142,12 @@ html, body {
 .btn--ghost { background: transparent; }
 /* 记录面板里每墩的「回放」小按钮 */
 .btn--mini { padding: 1px 8px; font-size: 11px; border-radius: 6px; }
+/* 焦点框：浏览器默认是 `auto 1px` 的深色描边，在深绿顶栏上几乎看不见。
+   统一成 2px 品牌色 + 2px 间距，键盘用户才能看清焦点在哪（docs/37 E-5）。 */
+.btn:focus-visible {
+  outline: 2px solid var(--sel);
+  outline-offset: 2px;
+}
 
 /* 面板是浅色底：.btn 的默认配色是给深色顶栏用的，直接放进来会「白底白字」看不清。
    这里给面板内的非主按钮换成深色文字（.trump-btn 另有自己的样式，不受影响）。 */
@@ -914,7 +920,9 @@ html, body {
 .set-row .set-desc {
   display: block;
   font-size: 11.5px;
-  color: var(--ink-faint);
+  /* 不用 --ink-faint：它在白底上只有 3.55:1，11.5px 正文达不到 WCAG AA 的 4.5。
+     这个值实测 4.96:1（docs/37 E-6）。 */
+  color: #727068;
   margin-top: 2px;
 }
 
@@ -946,6 +954,13 @@ html, body {
 .switch[aria-checked='true'] { background: #1d9e75; border-color: #1d9e75; }
 .switch[aria-checked='true']::after { transform: translateX(18px); }
 .switch:focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; }
+/* 点击热区扩到 44×44（原按钮只有 40×22，移动端手指容易点空）。
+   用伪元素撑开而不是改尺寸 —— 改尺寸会破坏开关的视觉比例。 */
+.switch::before {
+  content: '';
+  position: absolute;
+  inset: -11px -4px;
+}
 
 /* 分段选择 */
 .seg {
@@ -969,7 +984,9 @@ html, body {
   white-space: nowrap;
 }
 .seg button:hover { color: var(--ink); }
-.seg button.is-on { background: #fff; color: #1d9e75; font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+/* 文字色比品牌绿 #1d9e75 更深：白底上 #1d9e75 只有 3.39:1，
+   #137a57 是 5.32:1（docs/37 E-6）。背景保持白色以维持选中感。 */
+.seg button.is-on { background: #fff; color: #137a57; font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .seg button:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
 
 /* 对局记录：按墩分组的卡片，左色条标赢家队伍，得分高亮，牌面按花色着色 */
