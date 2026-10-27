@@ -10,7 +10,7 @@
 import { decide } from '@ai/policy'
 import type { AiLevel } from '@ai/policy'
 import type { PlayContext } from '@ai/enumerate'
-import {
+import { isSameTeam,
   DEAL_TOTAL,
   HAND_SIZE,
   RANKS_PER_SUIT,
@@ -547,7 +547,7 @@ function humanCounterOptions(s: GameState): Trump[] {
   if (s.trumpDeclarer === HUMAN_SEAT) return []
   const hand = s.hands[HUMAN_SEAT] as readonly Card[]
   const ctx = ctxOf(s)
-  const sameTeam = s.trumpDeclarer !== null && teamOf(HUMAN_SEAT) === teamOf(s.trumpDeclarer)
+  const sameTeam = s.trumpDeclarer !== null && isSameTeam(HUMAN_SEAT, s.trumpDeclarer)
   const all: Trump[] = [0, 1, 2, 3, 'NT']
   return all.filter((t) =>
     canCounter({
@@ -706,7 +706,7 @@ function resolveContract(s: GameState): GameState {
     for (const seat of [1, 2, 3] as Seat[]) {
       const hand = cur.hands[seat] as readonly Card[]
       // ① 反主
-      const sameTeam = cur.trumpDeclarer !== null && teamOf(seat) === teamOf(cur.trumpDeclarer)
+      const sameTeam = cur.trumpDeclarer !== null && isSameTeam(seat, cur.trumpDeclarer)
       const pick = ([0, 1, 2, 3] as Suit[]).find(
         (t) =>
           canCounter({
@@ -824,7 +824,7 @@ export function declareTrump(s: GameState, trump: Trump): GameState {
       return reject(s, 'cannot-counter', '这张级牌还没发到手，不能亮主')
     }
   } else {
-    const sameTeam = s.trumpDeclarer !== null && teamOf(HUMAN_SEAT) === teamOf(s.trumpDeclarer)
+    const sameTeam = s.trumpDeclarer !== null && isSameTeam(HUMAN_SEAT, s.trumpDeclarer)
     const ok = canCounter({
       hand: s.hands[HUMAN_SEAT] as readonly Card[],
       ctx: ctxOf(s),
@@ -1057,7 +1057,7 @@ export function aiPlayFor(s: GameState, seat: Seat, level: AiLevel): GameState {
       ctx,
       play: pc,
       currentWinner,
-      partnerLeading: currentWinner !== null && teamOf(currentWinner.seat) === teamOf(seat),
+      partnerLeading: currentWinner !== null && isSameTeam(currentWinner.seat, seat),
       // 对家手牌：L2 用它做前瞻（这手能不能守住）
       opponents: [0, 1, 2, 3]
         .filter((x) => x !== seat)
@@ -1083,7 +1083,7 @@ export function aiPlayFor(s: GameState, seat: Seat, level: AiLevel): GameState {
  * 对家（座位 2，与人类同队）用 `aiLevelPartner`；两个敌家用 `aiLevelOpponent`。
  */
 export function aiLevelForSeat(s: GameState, seat: Seat): AiLevel {
-  return teamOf(seat) === teamOf(HUMAN_SEAT) ? s.aiLevelPartner : s.aiLevelOpponent
+  return isSameTeam(seat, HUMAN_SEAT) ? s.aiLevelPartner : s.aiLevelOpponent
 }
 
 function aiPlay(s: GameState): GameState {

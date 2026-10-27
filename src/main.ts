@@ -244,6 +244,20 @@ document.addEventListener('visibilitychange', () => {
   audio.setPageVisible(!document.hidden)
 })
 
+/**
+ * 页面卸载时回收 AudioContext。
+ *
+ * `audio.dispose()` 早就写好了，但**从来没有人调用**（docs/31 P1-3 / J1-7）——
+ * 典型的「写了清理函数却没接线」。不回收的后果是：
+ *   · 开着标签页再关掉，`AudioContext` 可能停留在 running 状态占着音频设备；
+ *   · 移动端 Safari 对同时存在的 AudioContext 数量有限制（历史上是 4 个），
+ *     反复刷新会累积到超限、后续页面直接没声音。
+ * 用 `pagehide` 而不是 `beforeunload`：后者在移动端和 bfcache 场景下不触发。
+ */
+window.addEventListener('pagehide', () => {
+  audio.dispose()
+})
+
 /** 上一次 paint 给音频用的状态（与 lastPainted 同源，单独存一份避免动画关掉时失效） */
 let lastAudioPainted: GameState | null = null
 

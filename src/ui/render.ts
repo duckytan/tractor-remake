@@ -12,7 +12,7 @@
  */
 
 import type { Card, LevelRank, Play, PlayResult, RuleConfig, Seat, Trump } from '@core'
-import { DEAL_TOTAL, DECK_SIZE, GUARD_NEED, checkPlay, dealtCount, teamOf } from '@core'
+import { DEAL_TOTAL, DECK_SIZE, GUARD_NEED, checkPlay, dealtCount, isSameTeam } from '@core'
 import type { AiLevel } from '@ai/policy'
 import { THEMES, THEME_ORDER, isThemeKey } from '@audio/scenes'
 import type { Action, CardSize, GameState } from '@app/state'
@@ -124,7 +124,7 @@ function seatRoleLabel(
   seat: Seat,
 ): { text: string; title: string; isDealer: boolean } {
   if (seat === s.dealer) return { text: '庄', title: '庄家（本局坐庄）', isDealer: true }
-  if (teamOf(seat) === teamOf(s.dealer)) {
+  if (isSameTeam(seat, s.dealer)) {
     return { text: '友', title: '庄家的队友（庄家队）', isDealer: false }
   }
   return { text: '闲', title: '闲家', isDealer: false }
