@@ -82,6 +82,26 @@
 - **设置行文字可点**：开关的 `data-cfg`/`data-act` 同时挂到整行；开关热区 40×22 → 48×44
 - **对比度**：`.set-desc` 3.55 → 4.96、`.seg button.is-on` 3.39 → 5.32（WCAG AA 4.5）
 
+### 修复 · 核心层与状态机的入参守卫（F11）
+
+- `levelsFor(NaN)` 原来三个分支全 false ⇒ 静默落成「庄家方升 1 级」→ 改为抛错
+- `advanceLevel` 的循环次数由 `levels` 决定（`defenderScore=1e9` 会跑 2500 万次 / 78ms）→ 夹到 ≤20
+- `resolveTrick` 对「首出混花色」报「没有出牌」（误导）→ 拆成三个分支
+- `calcBottomBonus(空牌型)` 倍数停在初始值 ⇒ 底分白给 ×2 → 空 groups 直接不翻倍
+- `allFromHand` 用多重集计数，同一 id 出现 3 次也能通过 → 加「出牌 id 必须互不相同」
+- `revealTick` 不走 `withStep` ⇒ 整段发牌期 `step` 恒为 0 ⇒ `aiGrabPick` 的骰子是常量
+- `setSelection` / `showHint` / `hintSelect` 不校验 id、不限阶段 → 新增 `validHandIds()`
+- `declareTrump(4)` 运行时守卫（非法主牌标识会让整张牌力表失去主牌段）
+
+### 修复 · 收尾（F12）
+
+- `audio.dispose()` 写了但从来没被调用 → `pagehide` 时回收 AudioContext
+- `isSameTeam` 在 core 里导出却被内联 7 处 → 收敛
+- 删除 `src/ai/index.ts`（tsconfig 只配了 `@ai/*`，没有裸 `@ai`，它连被 import 的路径都不存在）
+- 设置标签栏吸顶（滚到底也能换标签）；矮屏（≤460px）紧凑布局，
+  横屏 844×390 首屏「总音量」滑条不再被裁在面板下沿之外
+- 出牌中「第 3 / 25 墩」的分母 25 是上限不是实际值（一局只打 19~25 墩）→ 改成「第 3 墩」
+
 ### 修复 · 其它
 
 - `levelLabel(11/12/13)` 返回「11/12/13」而不是「J/Q/K」（打 J/Q/K 时顶栏显示内部编号）
@@ -89,6 +109,13 @@
   `addEventListener('load')`
 - 补 `LICENSE`（MIT）+ `package.json` 的 `license` 字段 + README 的第三方参考声明
 - `docs/12` 加过时标注、`docs/15` 台账补齐 v1.3.4~v1.3.29
+
+### 尝试并回退
+
+- **AI 清主规划**（docs/15 KN-9）：试了 `edge = 我主牌数 − 对手平均主牌数` 的加分模型 +
+  「对手无主时扣分」。实测每局失误 L2 1.06→1.15、L3 0.85→0.92，L3vsL2 64.7%→62.0~62.7%，
+  L2vsL1 80.3%→81.7%（600 对噪声内）—— **没有可测量的收益**，且与已有的「长套加分」
+  高度重复（主牌多时 `slotCount(主)*0.07` 已经偏向出主）。已回退，结论记进 KN-9。
 
 ### 变更 · 标定基线
 
