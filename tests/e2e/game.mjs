@@ -104,7 +104,12 @@ try {
   })
 
   /* ---------- S0 加载 + 定主面板 ---------- */
-  await page.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 })
+  // **不能用 `networkidle` 等加载完再数牌**：逐张发牌总共只 25×55ms ≈ 1.4s，
+  // 而线上（E2E_BASE 指向 vercel）从 goto 到 networkidle 常常要 2~3s ——
+  // 等它回来时牌早就发完了，earlyHand 恒为 25，把「发牌动画」这条断言误判成失败
+  // （v1.3.30 实测：本地 18/18，线上 17/18，唯一失败就是它）。
+  // 改成 domcontentloaded 后立刻进页面内轮询，第一张牌一出现就同一帧计数。
+  await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 })
   // 逐张发牌：先确认手牌开始出现（此时不该已经满 25 张）。
   // 必须在**页面内**等到第一张牌并同一帧计数 —— waitForSelector + count() 是两次
   // 跨进程往返，机器一慢（实测傍晚负载下 >1.4s）就会错过 55ms/张的动画窗口，
