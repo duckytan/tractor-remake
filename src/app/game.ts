@@ -9,6 +9,7 @@
 
 import { decide } from '@ai/policy'
 import type { AiLevel } from '@ai/policy'
+import { buildBelief } from '@ai/belief'
 import type { PlayContext } from '@ai/enumerate'
 import { isSameTeam,
   DEAL_TOTAL,
@@ -478,6 +479,7 @@ const PREF_FIELDS = [
   'showHistory',
   'showCounter',
   'hintSelects',
+  'aiPeekHands',
   'musicTheme',
   'soundEnhanced',
   'autoVariation',
@@ -1034,7 +1036,21 @@ export function currentWinnerOf(s: GameState): { seat: Seat; analysis: ReturnTyp
  *   1. 座位无关 —— 测试可以给四个座位都套 AI，不必把「人类座位」特殊对待；
  *   2. 随机源统一 —— 同一步用同一个 rng 派生式，公平对比不同档位。
  */
-export function aiPlayFor(s: GameState, seat: Seat, level: AiLevel): GameState {
+export function aiPlayFor(
+  s: GameState,
+  seat: Seat,
+  level: AiLevel,
+  /**
+   * 调试/标定用开关。
+   *
+   * `peek: true` = **旧行为**：把三家真实手牌塞进 `opponents`，让策略直接读（明牌）。
+   * 默认（false）= 只用公开信息推断（`buildBelief`），见 docs/15 KN-10。
+   * 保留这个开关是为了能配对测量「明牌 vs 推断」的强度差，正常对局不要传。
+   */
+  opts?: { readonly peek?: boolean },
+): GameState {
+  // 显式 opts 优先（标定用），否则跟玩家设置走（默认读牌）
+  const peek = opts?.peek ?? s.aiPeekHands
   const ctx = ctxOf(s)
   const isLead = s.trick.plays.length === 0
 
@@ -1067,6 +1083,8 @@ export function aiPlayFor(s: GameState, seat: Seat, level: AiLevel): GameState {
       remainingSeats: [0, 1, 2, 3].filter(
         (x) => x !== seat && !s.trick.plays.some((p) => p.seat === x),
       ) as Seat[],
+      // 概率推断（只吃公开信息）。`peek` 时不给，退回旧的全信息判定。
+      ...(peek ? {} : { belief: buildBelief(s, seat) }),
     },
     level,
     rngFor(s.seed, s.step + 1000),
@@ -1257,6 +1275,9 @@ export function reduce(s: GameState, action: Action): GameState {
 
     case 'toggleShowCounter':
       return { ...s, showCounter: !s.showCounter }
+
+    case 'toggleAiPeek':
+      return { ...s, aiPeekHands: !s.aiPeekHands }
 
     case 'setMusicTheme':
       return { ...s, musicTheme: action.theme }

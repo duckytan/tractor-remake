@@ -41,6 +41,7 @@ state = {
   showHistory: prefs.showHistory,
   hintSelects: prefs.hintSelects,
   showCounter: prefs.showCounter,
+  aiPeekHands: prefs.aiPeekHands,
   pendingConfig: prefs.ruleConfig,
 }
 /**
@@ -155,6 +156,7 @@ function afterChange(): void {
     showHistory: state.showHistory,
     hintSelects: state.hintSelects,
     showCounter: state.showCounter,
+    aiPeekHands: state.aiPeekHands,
     musicTheme: state.musicTheme,
     soundEnhanced: state.soundEnhanced,
     autoVariation: state.autoVariation,

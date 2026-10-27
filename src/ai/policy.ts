@@ -11,6 +11,8 @@
 
 import { analyze, cardsScore, checkPlay, suitSlotOf, teamOf } from '@core'
 import type { Card, PlayAnalysis, RuleContext, Seat, SuitSlot } from '@core'
+import { BEAT_THRESHOLD, beatChance } from './belief'
+import type { Belief } from './belief'
 import { enumeratePlays } from './enumerate'
 import type { PlayContext } from './enumerate'
 import type { Rng } from '@core'
@@ -138,6 +140,17 @@ export interface AiDecisionInput {
    * 因此所有既有调用点无需改动。
    */
   readonly remainingSeats?: readonly Seat[]
+  /**
+   * 对手手牌的概率推断（docs/15 KN-10）。
+   *
+   * 传了就**不再读 `opponents`** 做策略判断 —— 只用公开信息（我的手牌 +
+   * 已出的牌 + 每家张数）算「被压概率」。不传则退回旧的全信息精确判定
+   * （单元测试里构造的局面没有完整对局状态，走这条）。
+   *
+   * 注意 `opponents` 仍然必须传：`legalOnly` 校验**甩牌合法性**时要用真实手牌，
+   * 那是规则要求（甩牌不合法会当场失败），不是 AI 的策略选择。
+   */
+  readonly belief?: Belief
 }
 
 export interface AiDecision {
@@ -440,6 +453,53 @@ function leadFollowUp(
 }
 
 
+/**
+ * 「我这手会不会被对手压」——**唯一入口**。
+ *
+ * 有 `belief` 时走概率推断（只用公开信息）；没有时退回旧的全信息精确判定。
+ * 两条路径的语义完全一致（布尔），所以打分公式不用改。
+ */
+function willBeBeaten(
+  cards: readonly Card[],
+  mine: PlayAnalysis,
+  ctx: RuleContext,
+  input: AiDecisionInput,
+  level: AiLevel,
+  partnerLeading: boolean,
+  memo?: Map<string, number>,
+): boolean {
+  if (partnerLeading) return false // 队友已经赢着，不需要防守
+  const belief = input.belief
+  if (belief !== undefined) {
+    if (mine.suitSlot === -1) return true
+    const pairs = pairsNeededOf(mine)
+    if (pairs < 0) return false // 合法甩牌：压不了
+    if (!mine.keyCard) return false
+    // **精度分档**：L2 用粗推断、L3 用细推断。
+    //
+    // 这一条是 L2/L3 的「信息质量差」，与旧实现一一对应：
+    //   · 旧 L2 的 `canBeOverturned` 只比牌力 —— 不看结构（对子当单张算）
+    //     也不看谁已经出过牌（把出过牌的人也当威胁）；
+    //   · 旧 L3 的 `exactBeatable` 补了这两点。
+    // 现在两者共用概率模型，如果不在这里分档，L2 和 L3 的「会不会被压」判定
+    // 就完全一样了 —— 实测 L3 vs L2 从 64.7% 掉到 52.3%（L3 的主优势被抹平）。
+    const fine = level === 3
+    return (
+      beatChance({
+        belief,
+        ctx,
+        mySlot: mine.suitSlot,
+        pairs: fine ? pairs : 0,
+        myPower: ctx.power.get(mine.keyCard.value),
+        remaining: fine ? input.remainingSeats : undefined,
+      }) >= BEAT_THRESHOLD
+    )
+  }
+  return level === 3
+    ? exactBeatable(cards, ctx, input.opponents, input.remainingSeats, partnerLeading, input.seat, memo)
+    : canBeOverturned(cards, ctx, input.opponents)
+}
+
 /** 各档的决策理由（也用于测试断言与日志可读性） */
 const DECISION_REASONS: readonly string[] = ['随机', '启发式', '评估', '精确']
 
@@ -582,17 +642,7 @@ function scoreCandidate(
     if (isL2Plus) {
       // ① 前瞻：这一手能不能守住？
       //    L2 只比牌力；L3 换精确判定（看结构、看出牌顺序、队友领先时免防守）
-      const beaten = isL3
-        ? exactBeatable(
-            cards,
-            ctx,
-            opponents,
-            input.remainingSeats,
-            partnerLeading,
-            input.seat,
-            memo,
-          )
-        : canBeOverturned(cards, ctx, opponents)
+      const beaten = willBeBeaten(cards, a, ctx, input, level, partnerLeading, memo)
       if (beaten) score -= isL3 ? L3_WEIGHTS.exactOver : L2_WEIGHTS.over
       // ② 赢墩价值：这一墩已有的分越多，越值得花代价去赢
       if (iAmWinning && !partnerLeading) {
@@ -622,17 +672,7 @@ function scoreCandidate(
     // ④ 前瞻：首出这手，对手能不能压？（L2 只比牌力，L3 精确判结构）
     let beaten = false
     if (isL2Plus) {
-      beaten = isL3
-        ? exactBeatable(
-            cards,
-            ctx,
-            opponents,
-            input.remainingSeats,
-            partnerLeading,
-            input.seat,
-            memo,
-          )
-        : canBeOverturned(cards, ctx, opponents)
+      beaten = willBeBeaten(cards, a, ctx, input, level, partnerLeading, memo)
       if (beaten) score -= isL3 ? L3_WEIGHTS.exactOverLead : L2_WEIGHTS.overLead
       // ⑤ 有连对的长套优先 —— 把拖拉机先兑现
       if (slot !== -1 && hasTractor(hand, slot, ctx)) score += L2_WEIGHTS.tractor
@@ -640,9 +680,25 @@ function scoreCandidate(
 
     if (isL3) {
       // ⑥ 续庄溢价：这一手出完，我方还能不能接着首出
-      score +=
-        L3_WEIGHTS.followUp *
-        leadFollowUp(cards, ctx, opponents, input.seat, input.remainingSeats, memo)
+      //    有 belief 时用概率（`beatChance < 阈值` = 守得住 = 续庄）
+      const followUp =
+        input.belief !== undefined
+          ? a.suitSlot !== -1 && a.keyCard && pairsNeededOf(a) >= 0
+            ? beatChance({
+                belief: input.belief,
+                ctx,
+                mySlot: a.suitSlot,
+                pairs: pairsNeededOf(a),
+                myPower: ctx.power.get(a.keyCard.value),
+                remaining: input.remainingSeats,
+              }) < BEAT_THRESHOLD
+              ? 1
+              : 0
+            : a.groups.length > 1
+              ? 1 // 合法甩牌：默认续庄
+              : 0
+          : leadFollowUp(cards, ctx, opponents, input.seat, input.remainingSeats, memo)
+      score += L3_WEIGHTS.followUp * followUp
       // ⑦ 控制力损耗：只在「这手会被压」时才算白花
       if (beaten) score -= L3_WEIGHTS.control * controlLoss(cards, hand, ctx)
     }

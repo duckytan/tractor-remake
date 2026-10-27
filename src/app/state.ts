@@ -171,6 +171,17 @@ export interface GameState {
    */
   readonly showCounter: boolean
   /**
+   * AI 是否「读牌」（直接看对手手牌）。
+   *
+   * **默认 true**，因为实测关掉它会让 L3 明显变弱：
+   *   概率推断 vs 明牌偷看 = L2 49.3%（持平）/ L3 **27.0%**（大幅下降）
+   *   （300 副 × 2 座位互换配对，`.tmp/measure-belief.ts`）
+   *
+   * 想玩得更公平就关掉 —— AI 只用「我的手牌 + 已出的牌 + 每家张数」推断
+   * （`src/ai/belief.ts`），但强度会掉一档。详见 docs/15 KN-10。
+   */
+  readonly aiPeekHands: boolean
+  /**
    * 逐墩回放：正在回放第几墩（`history` 的下标），null = 正常对局。
    *
    * 回放期间 AI 停手（`aiCanAct` 返回 false）、人类手牌不可点、
@@ -253,6 +264,7 @@ export type Action =
   | { readonly type: 'toggleShowHistory' }
   | { readonly type: 'toggleHintSelects' }
   | { readonly type: 'toggleShowCounter' }
+  | { readonly type: 'toggleAiPeek' }
   | { readonly type: 'setMusicTheme'; readonly theme: ThemeKey }
   | { readonly type: 'toggleSoundEnhanced' }
   | { readonly type: 'toggleAutoVariation' }
@@ -339,6 +351,7 @@ export const emptyState = (): GameState => ({
   animSpeed: 'normal',
   confirmNew: false,
   showCounter: false,
+  aiPeekHands: true,
   musicTheme: 'spring',
   soundEnhanced: false,
   autoVariation: true,

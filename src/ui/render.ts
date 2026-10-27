@@ -982,7 +982,8 @@ export function settingsPanel(s: GameState): string {
       <div class="set-row">
         <span>AI 出牌速度<small class="set-desc">快一点更好打；想看清每张牌就调慢</small></span>
         ${seg('setAiSpeed', 'AI 出牌速度', AI_SPEED_OPTS.map((o) => ({ ...o, on: o.v === nearestSpeed(s.aiSpeedMs) })))}
-      </div>`,
+      </div>
+      ${swAct('toggleAiPeek', 'AI 读牌', '开启时 AI 能看到你的手牌（默认，强度更高）；关闭后只用公开信息推断，更公平但会变弱', s.aiPeekHands)}`,
     )}
 
     ${group(
@@ -1440,6 +1441,9 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
         break
       case 'toggleShowCounter':
         act.dispatch({ type: 'toggleShowCounter' })
+        break
+      case 'toggleAiPeek':
+        act.dispatch({ type: 'toggleAiPeek' })
         break
       case 'toggleSoundEnhanced':
         act.dispatch({ type: 'toggleSoundEnhanced' })

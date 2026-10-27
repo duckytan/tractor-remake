@@ -68,6 +68,8 @@ export interface Prefs {
   readonly hintSelects: boolean
   /** 记牌器 */
   readonly showCounter: boolean
+  /** AI 是否读牌（关掉后 AI 只用公开信息推断，更公平但更弱） */
+  readonly aiPeekHands: boolean
   /* ---------------- 声音 ---------------- */
   readonly musicTheme: ThemeKey
   readonly soundEnhanced: boolean
@@ -89,6 +91,7 @@ const DEFAULT_PREFS: Prefs = {
   showHistory: true,
   hintSelects: false,
   showCounter: false,
+  aiPeekHands: true,
   musicTheme: 'spring',
   soundEnhanced: false,
   autoVariation: true,
@@ -167,6 +170,8 @@ export function loadPrefs(): Prefs {
       showHistory: o.showHistory !== false,
       hintSelects: o.hintSelects === true,
       showCounter: o.showCounter === true,
+      // 缺字段按「读牌」处理：旧存档没有这个字段，默认行为不能变
+      aiPeekHands: o.aiPeekHands !== false,
       // 声音：主题非法值回落默认（春），音量夹到 0..100
       musicTheme: isThemeKey(o.musicTheme) ? o.musicTheme : DEFAULT_PREFS.musicTheme,
       soundEnhanced: o.soundEnhanced === true,
