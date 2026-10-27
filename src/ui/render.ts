@@ -18,6 +18,7 @@ import { THEMES, THEME_ORDER, isThemeKey } from '@audio/scenes'
 import type { Action, CardSize, GameState } from '@app/state'
 import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
+import { hintExplain } from '@app/hintView'
 import {
   counterView,
   dealtCardsFor,
@@ -601,14 +602,19 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
           <button class="btn btn--primary" data-act="replayExit">退出回放</button>`
         return
       }
+      // 有提示时，操作条直接写「这一手在干什么」——玩家看不懂建议的原因就在这
+      // （v1.3.32：提示与 AI 同源后会走「看起来没道理但胜率高」的线，必须给理由）
+      const hint = myTurn ? hintExplain(s) : null
       bar.innerHTML = `
         <!-- data-slot 是 patchSelection() 的稳定锚点：选牌时只改文本 / innerHTML /
              disabled，按钮元素本身不重建 ⇒ 焦点与 hover 都不丢 -->
-        <span class="hint-text" data-slot="hint-text">${myTurn ? '轮到你了' : `${esc(SEAT_LABEL[turn ?? 0])} 出牌中…`}</span>
+        <span class="hint-text" data-slot="hint-text"${hint ? ` title="${esc(hint.detail)}"` : ''}>${
+          myTurn ? esc(hint?.text ?? '轮到你了') : `${esc(SEAT_LABEL[turn ?? 0])} 出牌中…`
+        }</span>
         <span data-slot="legality">${legalityBadge(s)}</span>
         <button class="btn" data-act="undo" ${act.canUndo ? '' : 'disabled'}>悔牌</button>
         <button class="btn" data-act="clear" ${s.selected.length ? '' : 'disabled'}>取消</button>
-        <button class="btn" data-act="hint" ${myTurn ? '' : 'disabled'}>提示</button>
+        <button class="btn" data-act="hint" ${myTurn ? '' : 'disabled'} title="${hint ? esc(hint.detail) : '给出一手建议（与 AI 同一个决策引擎）'}">提示</button>
         <button class="btn btn--primary" data-act="play" ${myTurn && s.selected.length ? '' : 'disabled'}>出牌</button>`
     } else {
       bar.innerHTML = ''
@@ -1225,6 +1231,24 @@ export function patchSelection(root: HTMLElement, s: GameState): void {
   }
   const legality = bar.querySelector<HTMLElement>('[data-slot="legality"]')
   if (legality !== null && s.phase === 'play') legality.innerHTML = legalityBadge(s)
+
+  /* 提示是**纯视觉状态**，走的是增量路径（只改 hintIds）⇒ 操作条上的理由必须在这里更新，
+     否则点「提示」后手牌高亮了、理由还是「轮到你了」（回放分支的文案不能覆盖，跳过）。 */
+  if (s.phase === 'play' && s.replayAt === null) {
+    const hintText = bar.querySelector<HTMLElement>('[data-slot="hint-text"]')
+    const hint = myTurn ? hintExplain(s) : null
+    if (hintText !== null) {
+      hintText.textContent = myTurn
+        ? (hint?.text ?? '轮到你了')
+        : `${SEAT_LABEL[seatToPlay(s) ?? 0]} 出牌中…`
+      if (hint) hintText.title = hint.detail
+      else hintText.removeAttribute('title')
+    }
+    const hintBtn = bar.querySelector<HTMLButtonElement>('[data-act="hint"]')
+    if (hintBtn !== null) {
+      hintBtn.title = hint?.detail ?? '给出一手建议（与 AI 同一个决策引擎）'
+    }
+  }
 
   const setDisabled = (act: string, disabled: boolean): void => {
     const b = bar.querySelector<HTMLButtonElement>(`[data-act="${act}"]`)
