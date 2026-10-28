@@ -409,6 +409,30 @@ describe('对局存档：字段级校验（v1.3.29）', () => {
     expect(loadState()).toBeNull()
   })
 
+  it('跨数组的 id 重复 ⇒ 拒绝（总数仍是 108，但同一张牌出现两次）', () => {
+    // 造一份「总数守恒但 id 重复」的存档：
+    // 把 0 号手牌的第一张复制到 1 号手牌的首位、并删掉 1 号手牌原本的首张。
+    // 四家手牌张数不变 ⇒ 旧的「108 张守恒」检查照过，只有按 id 去重才拦得住。
+    const s = playState(52)
+    const h0 = s.hands[0] as readonly Card[]
+    const h1 = s.hands[1] as readonly Card[]
+    saveState({
+      ...s,
+      hands: [h0, [h0[0] as Card, ...h1.slice(1)], s.hands[2], s.hands[3]],
+    } as GameState)
+    expect(loadState()).toBeNull()
+
+    // 同一个 id 出现在「手牌」与「当前墩」里（更隐蔽的一种）：
+    // 手牌去掉一张、当前墩补上同一张 ⇒ 总数仍是 108，只有按 id 去重才拦得住。
+    const played = h0[1] as Card
+    saveState({
+      ...s,
+      hands: [h0.slice(1), s.hands[1], s.hands[2], s.hands[3]],
+      trick: { leader: 0, winner: null, plays: [{ seat: 0, cards: [played] }] },
+    } as unknown as GameState)
+    expect(loadState()).toBeNull()
+  })
+
   it('缺 bottom / history / trick ⇒ 拒绝', () => {
     for (const k of ['bottom', 'history', 'trick', 'hands', 'levels']) {
       saveTampered(47, { [k]: undefined })

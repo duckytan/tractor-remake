@@ -50,7 +50,13 @@ const clickHandCards = async (page, ids) => {
  * 这里按 state.confirmNew 判断要不要补点一次「重新开局」。
  */
 const startNewGame = async (page) => {
-  await page.click('[data-act="newGame"]')
+  // **用 evaluate 直接派发点击**（v1.3.34）：
+  // 定主面板是 `.overlay`（全屏、拦指针），面板一弹出来顶栏就点不到了 ——
+  // `page.click` 会一直重试到 30s 超时。重试分支（attempt > 1）恰好会在
+  // 「面板已弹、还没亮主」的时刻调用本函数，于是整轮 e2e 偶发挂在这里
+  // （实测一次：overlay intercepts pointer events ×57）。
+  // 这里要的是「让状态机收到 newGame」，不是「模拟真实指针」，所以直接派发。
+  await page.evaluate(() => document.querySelector('[data-act="newGame"]')?.click())
   await page.waitForTimeout(100)
   const needConfirm = await page.evaluate(() => {
     try {
@@ -59,7 +65,9 @@ const startNewGame = async (page) => {
       return false
     }
   })
-  if (needConfirm) await page.click('[data-act="confirmNew"]')
+  if (needConfirm) {
+    await page.evaluate(() => document.querySelector('[data-act="confirmNew"]')?.click())
+  }
 }
 
 const consoleErrors = []
@@ -134,16 +142,24 @@ try {
     .catch(() => false)
   const trumpCount = panelUp ? await page.locator('[data-trump]').count() : 0
   const trumpEnabled = panelUp ? await page.locator('[data-trump]:not([disabled])').count() : 0
+  // 「反主 / 加固」面板里 5 个花色按钮**全灰是合法的**：AI 在发牌途中抢了主，
+  // 人类手里没有可反的级牌 ⇒ 只能点「过（不反）」。旧断言只数 `:not([disabled])`，
+  // 撞上这个状态就判失败（实测 20 次新开局里 1 次，e2e 因此偶发 17/18）。
+  // 真正要防的是「面板上一个能点的都没有」⇒ 用「有出路」判断：能亮主，或能过。
+  const panelEscapes = panelUp
+    ? await page.locator('.trump-actions [data-act="passCounter"], .trump-actions [data-act="passDeal"]').count()
+    : 0
+  const panelUsable = trumpEnabled >= 1 || panelEscapes >= 1
   const panelCount = await page.locator('[data-slot="overlay"] .panel').count()
   const leftContract = (await page.locator('[data-slot="handbar"]').innerText()).replace(/\n/g, ' ')
   rec(
-    'S0 逐张发牌后弹出定主面板（5 个亮主按钮，至少 1 个可点）',
+    'S0 逐张发牌后弹出定主面板（5 个亮主按钮，至少 1 个可操作）',
     earlyHand > 0 &&
       earlyHand < 25 &&
       (panelUp
-        ? trumpCount === 5 && trumpEnabled >= 1 && panelCount === 1
+        ? trumpCount === 5 && panelUsable && panelCount === 1
         : leftContract.includes('扣底') || leftContract.includes('轮到你了')),
-    `earlyHand=${earlyHand} panel=${panelUp} trumpBtns=${trumpCount} enabled=${trumpEnabled} overlayPanel=${panelCount} handbar="${leftContract}"`,
+    `earlyHand=${earlyHand} panel=${panelUp} trumpBtns=${trumpCount} enabled=${trumpEnabled} escapes=${panelEscapes} overlayPanel=${panelCount} handbar="${leftContract}"`,
   )
   await page.screenshot({ path: `${SHOTS}/01-contract.png` })
 
@@ -164,7 +180,18 @@ try {
   const declareAndPass = async (prefer = '1') => {
     const enabled = page.locator('[data-trump]:not([disabled])')
     const n = await enabled.count()
-    if (n === 0) return false
+    if (n === 0) {
+      // 「加固 / 反主」面板里 5 个花色可能**全灰**（人类没有可反的级牌），
+      // 此时唯一出路是「过（不反）」。旧实现直接 return false 把面板留在屏幕上，
+      // 后面每一步都会被 overlay 拦住（v1.3.34 修）。
+      const pass = page.locator('[data-act="passCounter"]')
+      if (await pass.count()) {
+        await pass.click()
+        await sleep(300)
+        return true
+      }
+      return false
+    }
     const preferBtn = page.locator(`[data-trump="${prefer}"]:not([disabled])`)
     if (await preferBtn.count()) await preferBtn.click()
     else await enabled.first().click()

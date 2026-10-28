@@ -429,6 +429,27 @@ export function loadStateDetailed(): LoadResult {
     trickPlays.reduce((n, p) => n + p.cards.length, 0)
   if (totalCards !== DECK_SIZE) return { state: null, issue: 'corrupt' }
 
+  // ---- 牌 id 全局唯一（v1.3.34）----
+  //
+  // 上一条只保证「总数 108」，挡不住「一张牌出现在两处、另一张凭空消失」：
+  // 把 A 手牌里的一张复制到 B 手牌、同时删掉 B 的另一张，总数仍然是 108。
+  // 后果不是崩溃而是**静默错牌**：同一个 `data-id` 渲染成两个节点（点一下两张一起选中），
+  // 同一张牌还能被两个座位各出一次 —— 一墩里出现两张「同一张牌」，
+  // 108 张守恒、合法性校验全部照过，只有玩家看得出「这副牌不对劲」。
+  // 所以按 id 再做一次全局去重（顺带覆盖「id 与 value 不匹配」造成的伪造牌）。
+  const seenIds = new Set<number>()
+  const allCards: readonly Card[] = [
+    ...hands.flat(),
+    ...(o.bottom as Card[]),
+    ...(o.history as GameState['history']).flatMap((r) => r.plays.flatMap((p) => p.cards)),
+    ...trickPlays.flatMap((p) => p.cards),
+  ]
+  for (const c of allCards) {
+    if (seenIds.has(c.id)) return { state: null, issue: 'corrupt' }
+    seenIds.add(c.id)
+  }
+  if (seenIds.size !== DECK_SIZE) return { state: null, issue: 'corrupt' }
+
   // ---- 组合成完整状态。能走到这里的字段已全部校验过，剩下的是「软字段」----
   const base: GameState = {
     ...(o as unknown as GameState),

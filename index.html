@@ -17,9 +17,60 @@
   <meta name="apple-mobile-web-app-title" content="拖拉机">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <title>拖拉机 · 重制版</title>
+  <!-- 首屏骨架的样式必须内联：外链 CSS 在弱网下要等 200ms 才到，
+       那段时间正是「白屏」，而这块骨架存在的意义就是消灭白屏。
+       颜色与 styles.css 的牌桌底色同源（#0d1a14 → #0a1410）。 -->
+  <style>
+    .boot {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: radial-gradient(ellipse at 50% 42%, #16362a 0%, #0d1a14 60%, #0a1410 100%);
+      color: #e8e6df;
+      font: 500 15px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0.3px;
+    }
+    .boot__mark {
+      position: relative;
+      width: 56px;
+      height: 76px;
+    }
+    .boot__mark i {
+      position: absolute;
+      inset: 0;
+      border-radius: 6px;
+      background: #f7f5f0;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+      animation: boot-deal 1.6s ease-in-out infinite;
+    }
+    .boot__mark i:nth-child(1) { transform: rotate(-14deg) translateX(-10px); animation-delay: 0s; }
+    .boot__mark i:nth-child(2) { transform: rotate(0deg); animation-delay: 0.18s; }
+    .boot__mark i:nth-child(3) { transform: rotate(14deg) translateX(10px); animation-delay: 0.36s; }
+    .boot__tip { color: #9aa8a1; font-size: 13px; }
+    @keyframes boot-deal {
+      0%, 100% { opacity: 0.55; }
+      50% { opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .boot__mark i { animation: none; opacity: 1; }
+    }
+  </style>
 </head>
 <body>
-  <div id="app"></div>
+  <!-- 首屏骨架：JS 下载 + 编译期间先给出一张「正在发牌」的画面。
+       第一次 render() 用整棵新 DOM 覆盖 #app，这块自然消失，不需要额外清理逻辑；
+       JS 万一加载失败，玩家看到的也是品牌 + 提示，而不是纯白页。 -->
+  <div id="app">
+    <div class="boot" role="status" aria-live="polite">
+      <div class="boot__mark" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div>拖拉机 · 重制版</div>
+      <div class="boot__tip">正在发牌…</div>
+    </div>
+  </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
