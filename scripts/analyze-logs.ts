@@ -31,6 +31,8 @@ interface HumanPlay {
   cards: number[]
   ai: number[]
   hint: boolean
+  /** 提示当时高亮的那几张（老日志没有这个字段） */
+  hintCards?: number[]
 }
 interface Round {
   seed: number
@@ -112,6 +114,42 @@ console.log(
   `\n【你的出牌 vs AI 建议】${decisions} 次决策 · 一致 ${agree}（${pct(agree / Math.max(1, decisions))}）` +
     ` · 分歧 ${diffs.length} · 看提示 ${hints} 次（${pct(hints / Math.max(1, decisions))}）`,
 )
+
+/* ---- 提示 vs 你的选择（默认「稳妥」风格给出的那一手） ---- */
+let hintGiven = 0
+let hintFollowed = 0
+const hintDiffs: { where: string; hint: string; played: string; sameAsAi: boolean }[] = []
+for (const r of rounds) {
+  for (const p of r.human) {
+    if (!p.hint || !p.hintCards || p.hintCards.length === 0) continue
+    hintGiven++
+    const h = [...p.hintCards].sort((a, b) => a - b).join()
+    const played = [...p.cards].sort((a, b) => a - b).join()
+    const aiKey = [...p.ai].sort((a, b) => a - b).join()
+    if (h === played) {
+      hintFollowed++
+      continue
+    }
+    hintDiffs.push({
+      where: `局${rounds.indexOf(r) + 1} 墩${p.trick + 1}`,
+      hint: p.hintCards.map(nameOf).join(' '),
+      played: p.cards.map(nameOf).join(' '),
+      sameAsAi: played === aiKey,
+    })
+  }
+}
+if (hintGiven > 0) {
+  console.log(
+    `\n【提示 vs 你的选择】看提示 ${hintGiven} 次 · 按提示出 ${hintFollowed}（${pct(hintFollowed / hintGiven)}）` +
+      ` · 没按提示 ${hintDiffs.length}`,
+  )
+  for (const d of hintDiffs.slice(0, 10)) {
+    console.log(
+      `  ${d.where} 提示 ${d.hint} ｜ 你出 ${d.played}${d.sameAsAi ? '（= L3 的建议）' : ''}`,
+    )
+  }
+  if (hintDiffs.length > 10) console.log(`  …还有 ${hintDiffs.length - 10} 条`)
+}
 
 const show = (n: number): void => {
   console.log(`\n【分歧明细（前 ${Math.min(n, diffs.length)} 条）】`)

@@ -124,7 +124,27 @@ describe('roundLog · 人类决策（影子对比）', () => {
     finishRound(atSettle(s))
     const h = loggedRounds()[0]!.human
     expect(h).toHaveLength(1)
-    expect(h[0]).toEqual({ trick: 0, cards: [0], ai: [1], hint: true })
+    expect(h[0]).toMatchObject({ trick: 0, cards: [0], ai: [1], hint: true })
+  })
+
+  it('**记下提示当时选中了哪几张**（与 L3 建议分开）', () => {
+    const s = atPlay()
+    beginRound(s)
+    // 提示给了 5、L3 建议 7、玩家出了 3
+    noteHumanPlay(s, cards(3), cards(7), true, [5])
+    finishRound(atSettle(s))
+    const h = loggedRounds()[0]!.human[0]!
+    expect(h.hintCards).toEqual([5])
+    expect(h.cards).toEqual([3])
+    expect(h.ai).toEqual([7])
+  })
+
+  it('没看提示时 hintCards 是空数组', () => {
+    const s = atPlay()
+    beginRound(s)
+    noteHumanPlay(s, cards(0), cards(1), false)
+    finishRound(atSettle(s))
+    expect(loggedRounds()[0]!.human[0]!.hintCards).toEqual([])
   })
 
   it('没看提示时 hint = false', () => {

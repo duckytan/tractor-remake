@@ -41,6 +41,16 @@ export interface LoggedHumanPlay {
   readonly ai: readonly number[]
   /** 出这一手之前有没有看提示 */
   readonly hint: boolean
+  /**
+   * **提示实际选中了哪几张**（牌值）。
+   *
+   * 与 `ai` 的区别：`ai` 是「同局面 L3 会出什么」（影子决策，恒为最强档）；
+   * 这里记的是**玩家真的点了提示、界面上高亮的那一手** —— 默认是「稳妥」风格，
+   * 与 L3 往往不同。想分析「提示准不准」必须看这一项。
+   *
+   * 老日志没有这个字段（undefined），分析脚本要能容错。
+   */
+  readonly hintCards?: readonly number[]
 }
 
 export interface RoundLog {
@@ -137,6 +147,8 @@ export function noteHumanPlay(
   /** 这一手之前有没有点过提示 —— **必须由调用方显式给**：
    *  点牌会 `setSelection` 清掉 `hintIds`，等到出牌时再读它永远是空的（实测踩到） */
   hintUsed: boolean,
+  /** 提示当时高亮的那几张（牌值）；没看提示传 `[]` */
+  hintCards: readonly number[] = [],
 ): void {
   if (pending === null) return
   pending.human.push({
@@ -144,6 +156,7 @@ export function noteHumanPlay(
     cards: values(cards),
     ai: values(ai),
     hint: hintUsed,
+    hintCards: [...hintCards],
   })
 }
 

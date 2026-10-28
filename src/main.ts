@@ -103,6 +103,8 @@ const DEAL_INTERVAL_MS = 55
  * 换墩就清（提示是对"这一手"的参考，不该跨墩继承）。
  */
 let hintUsedThisTurn = false
+/** 这一手提示高亮的那几张（牌值）；点牌会清掉 `hintIds`，所以必须在 `showHint` 那一刻抓 */
+let hintCardsThisTurn: number[] = []
 
 function step(a: Action): void {
   const prev = state
@@ -124,16 +126,24 @@ function step(a: Action): void {
   if (prev.phase === 'contract' && (state.phase === 'bury' || state.phase === 'play')) {
     beginRound(state)
   }
-  if (a.type === 'showHint') hintUsedThisTurn = true
+  if (a.type === 'showHint' || a.type === 'hintSelect') {
+    hintUsedThisTurn = true
+    // id = value*2 + copy（见 core/deck），所以 value = id >> 1
+    hintCardsThisTurn = a.ids.map((id) => id >> 1)
+  }
   if (a.type === 'playSelected' && prev.phase === 'play' && state !== prev) {
     const hand = prev.hands[HUMAN_SEAT] as readonly Card[]
     const picked = hand.filter((c) => prev.selected.includes(c.id))
     if (picked.length > 0) {
-      noteHumanPlay(prev, picked, choosePlay(prev, HUMAN_SEAT, 3, { peek: true }), hintUsedThisTurn)
+      noteHumanPlay(prev, picked, choosePlay(prev, HUMAN_SEAT, 3, { peek: true }), hintUsedThisTurn, hintCardsThisTurn)
     }
     hintUsedThisTurn = false
+    hintCardsThisTurn = []
   }
-  if (prev.trick !== state.trick) hintUsedThisTurn = false
+  if (prev.trick !== state.trick) {
+    hintUsedThisTurn = false
+    hintCardsThisTurn = []
+  }
 }
 
 function scheduleAi(): void {
