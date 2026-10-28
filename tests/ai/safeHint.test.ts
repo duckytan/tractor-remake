@@ -144,6 +144,9 @@ describe('safeHint · 稳妥提示', () => {
       if (standing === null || standing.winner.seat !== 2) continue
       const cards = chooseSafePlay(s, HUMAN_SEAT)
       if (cards.length === 0) continue
+      // 预条件：**合法候选里**有 0 分的（必须跟花色时可能全是分牌，那不是策略问题）
+      const cands = legalCandidates(s)
+      if (!cands.some((c) => cardsScore(c) === 0)) continue
       checked++
       // 「最小的一手」= 0 分优先、牌力最低 —— 至少不能是带分的大牌
       expect(cardsScore(cards), `队友赢着却垫了 ${cardsScore(cards)} 分`).toBe(0)

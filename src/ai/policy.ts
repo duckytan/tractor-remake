@@ -110,6 +110,18 @@ export const L3_WEIGHTS = {
   control: 0.55,
   /** 首出后「下一墩主动权」的溢价 */
   followUp: 0.2,
+  /**
+   * 副牌顶牌「先兑现」的溢价（v1.3.36）。
+   *
+   * 为什么需要它（用户反馈：「有 A 居然不先出 A，有对 K 也不先出，反而出小牌」）：
+   * 打分里 `-powerCost` 只知道「留大牌好」，看不到**副牌顶牌真正的风险不是被压、是留到
+   * 后面被毙掉 / 被垫掉**。人类打牌的第一原则就是「有把握的牌先跑掉」。
+   * 只对「非主牌槽 + 是我手里这门最大的那张（且 ≥ K 级）+ 压得住」生效 ——
+   * 主牌顶牌不急（它可以等），王另算（有 JOKER_KEEP_COST 的留存溢价，不能再加一条反着推）。
+   */
+  cashTop: 0.55,
+  /** 首出「压得住的牌」时，牌力成本打的折（兑现不是浪费，但也不是免费） */
+  cashDiscount: 0.6,
 }
 
 export interface AiDecisionInput {
@@ -325,7 +337,14 @@ function bestUnitPower(
 ): number {
   const same = hand.filter((c) => suitSlotOf(c.value, ctx.power) === slot)
   let best = unitPowerOf(same, ctx, pairs)
-  if (slot !== 4) {
+  // 副牌还要看「能不能毙」—— 但**只有这门已经跟不出牌的人才能毙**。
+  //
+  // v1.3.36 修：旧实现无条件把主牌也算进来，于是只要对手手里有任意一张主
+  //（几乎永远成立），任何副牌首出都会被判成「可能被压」—— 包括 ♦A。
+  // 连锁后果：`exactOverLead` 每手都扣 → AI 从不敢兑现副牌大牌，
+  // 首出恒选最小的一张（用户反馈「有 A 居然不先出 A」）。
+  // 规则上「有该花色就必须跟该花色」，不可能一边跟牌一边毙牌。
+  if (slot !== 4 && same.length === 0) {
     const trumps = hand.filter((c) => suitSlotOf(c.value, ctx.power) === 4)
     best = Math.max(best, unitPowerOf(trumps, ctx, pairs))
   }
@@ -686,12 +705,39 @@ function scoreCandidate(
     score -= points * 0.02 // 首出别急着甩分
 
     // ④ 前瞻：首出这手，对手能不能压？（L2 只比牌力，L3 精确判结构）
+    //
+    // **必须先算**：它同时决定下面两项 ——
+    //   · 「省牌」要不要打折（压得住的牌现在出是兑现，不是浪费）
+    //   · 副牌顶牌要不要给「先兑现」溢价
+    // 旧实现把省钱无条件扣满，于是「有 A 却先出小牌」成了默认行为（用户反馈）。
     let beaten = false
     if (isL2Plus) {
       beaten = willBeBeaten(cards, a, ctx, input, level, partnerLeading, memo)
       if (beaten) score -= isL3 ? L3_WEIGHTS.exactOverLead : L2_WEIGHTS.overLead
       // ⑤ 有连对的长套优先 —— 把拖拉机先兑现
       if (slot !== -1 && hasTractor(hand, slot, ctx)) score += L2_WEIGHTS.tractor
+
+      if (!beaten) {
+        // ⑥ 兑现：压得住的牌现在出不亏，牌力成本打折（**王的留存溢价不参与打折**，
+        //    那条是 v1.3.29 专门为「首出王 11.8%」加的，打折会把它打回原形）
+        const powerPart =
+          cards.reduce((n, c) => n + ctx.power.get(c.value) / 80, 0) / cards.length
+        score += avgLeadCost - powerPart * L3_WEIGHTS.cashDiscount
+
+        // ⑦ 副牌顶牌先兑现：副牌 A/K 真正的风险不是被压，是留到后面**被毙掉 / 被垫掉**。
+        //    `-powerCost` 只看得到「留大牌好」，看不到这一层，所以人类会觉得「有 A 不出 A」很蠢。
+        if (slot !== -1 && slot !== 4 && a.keyCard !== null && a.keyCard.value < 52) {
+          const mine = hand.filter(
+            (c) => c.value < 52 && Math.floor(c.value / 13) === slot,
+          )
+          const myMax = mine.reduce((m, c) => Math.max(m, ctx.power.get(c.value)), 0)
+          const p = ctx.power.get(a.keyCard.value)
+          // 副牌的牌力就是**这门里的名次**（2→0 … K→10、A→11），不是 0..80 的连续值
+          // （踩过的坑：一度按 64 做阈值，结果这条加分永远不触发）。
+          // ≥10 即 K 及以上；并且必须是「我手里这门最大的那张」，不是随便一张大牌。
+          if (p >= myMax && p >= 10) score += L3_WEIGHTS.cashTop
+        }
+      }
     }
 
     if (isL3) {
