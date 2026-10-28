@@ -8,7 +8,7 @@ import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
 import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
-import { aiCanAct, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce } from '@app/game'
+import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
@@ -42,6 +42,8 @@ state = {
   showOppHands: prefs.showOppHands,
   hintSelects: prefs.hintSelects,
   hintStyle: prefs.hintStyle,
+  autoPlay: prefs.autoPlay,
+  autoLevel: prefs.autoLevel,
   showCounter: prefs.showCounter,
   aiPeekHands: prefs.aiPeekHands,
   pendingConfig: prefs.ruleConfig,
@@ -95,16 +97,54 @@ function step(a: Action): void {
 
 function scheduleAi(): void {
   if (aiTimer !== null) return
-  if (!aiCanAct(state)) return
+  // 两条链共用一个定时器：AI 对手出牌（aiStep）与挂机代打人类（autoStep）。
+  // **问一次 autoAction 再决定排不排** —— 没有可做的动作就绝不排，
+  // 否则「定时器发现没事可做 → 直接返回 → 没人再排下一次」是安全的，
+  // 但「排了 → 动作被拒 → 状态没变 → 又排」就是无限空转（下面的守卫兜底）。
+  const auto = state.autoPlay ? autoAction(state) : null
+  const byAi = aiCanAct(state)
+  if (!byAi && auto === null) return
   // 悔牌后的一次性停顿（见 UNDO_AI_HOLD_MS），与 AI 常规速度取较大者
   const hold = aiHoldMs
   aiHoldMs = 0
+  const kind: 'ai' | 'auto' = byAi ? 'ai' : 'auto'
   aiTimer = window.setTimeout(() => {
     aiTimer = null
-    if (!aiCanAct(state)) return
-    step({ type: 'aiStep' })
+    const now = kind === 'ai' ? aiCanAct(state) : state.autoPlay && autoAction(state) !== null
+    if (!now) return
+    if (kind === 'ai') {
+      step({ type: 'aiStep' })
+    } else {
+      const before = state
+      step({ type: 'autoStep' })
+      // 失败守卫：自动动作被规则拒绝时状态引用会整片不变，
+      // 这时链条会每 aiSpeedMs 重试一次 ⇒ 无限空转（历史坑，见 aiCanAct 注释）。
+      if (sameProgress(before, state)) {
+        autoStall++
+        if (autoStall >= 3) {
+          autoStall = 0
+          state = { ...state, autoPlay: false, notice: '挂机已停止（自动操作失败）' }
+        }
+      } else {
+        autoStall = 0
+      }
+    }
     afterChange()
   }, Math.max(hold, state.aiSpeedMs))
+}
+
+/** 挂机连续「状态没变」的次数（失败守卫用，见 scheduleAi） */
+let autoStall = 0
+
+/**
+ * 这一步有没有真的推进局面。
+ *
+ * 只比**会被出牌/发牌改动的四个引用**：`reduce` 是不可变更新的，
+ * 被拒绝时这些字段原样返回（同一引用）；而 `notice` / `hintIds` 之类的
+ * 视觉字段会换新对象，拿来判断会永远「有变化」。
+ */
+function sameProgress(a: GameState, b: GameState): boolean {
+  return a.hands === b.hands && a.phase === b.phase && a.trick === b.trick && a.revealed === b.revealed
 }
 
 /**
@@ -159,6 +199,8 @@ function afterChange(): void {
     showOppHands: state.showOppHands,
     hintSelects: state.hintSelects,
     hintStyle: state.hintStyle,
+    autoPlay: state.autoPlay,
+    autoLevel: state.autoLevel,
     showCounter: state.showCounter,
     aiPeekHands: state.aiPeekHands,
     musicTheme: state.musicTheme,

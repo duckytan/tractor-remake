@@ -334,6 +334,14 @@ const AI_GRAB_SUIT_MIN = 3
 /** AI 抢主意愿百分比。100 = 抢到就亮，不犹豫 */
 const AI_GRAB_PCT = 100
 
+/**
+ * 挂机反主的门槛：反过去那门至少 5 张。
+ *
+ * 与 `aiWantsCounter` 同一个数、同一个理由 —— 只有 2 张级牌但那门只有 1 张牌时反主，
+ * 等于把主牌拱手送人。**两处必须一起改**（将来若抽成常量请共用这一份）。
+ */
+const AUTO_COUNTER_SUIT_MIN = 5
+
 /** 已揭示的牌里能亮的花色（发牌中途暂停用；不含无将） */
 function declareOptionsIn(s: GameState): Trump[] {
   if (s.forcedNT) return []
@@ -490,6 +498,8 @@ const PREF_FIELDS = [
   'volumeMaster',
   'volumeBgm',
   'volumeSfx',
+  'autoPlay',
+  'autoLevel',
 ] as const
 
 type PrefField = (typeof PREF_FIELDS)[number]
@@ -768,6 +778,23 @@ function resolveContract(s: GameState): GameState {
 }
 
 /**
+ * 扣底选牌：按牌力留最强 25 张，其余 8 张扣掉。
+ *
+ * 抽出来给三处共用：AI 庄家自动扣底、人类庄家手动扣底时的「挂机」代选、
+ * 以及将来任何需要「机器替庄家扣底」的场合 —— 三份实现迟早会漂移。
+ *
+ * **必须用牌力序而不是展示序**：埋底要留「最强 25 张」，
+ * 展示序会把整门 ♥ 排在 ♠ 前面，与强弱无关。
+ */
+export function chooseBuryIds(s: GameState, seat: Seat): number[] {
+  const ctx = ctxOf(s)
+  const hand = s.hands[seat] as readonly Card[]
+  const sorted = sortByPowerDesc(hand, ctx)
+  const keep = new Set(sorted.slice(0, HAND_SIZE).map((c) => c.id))
+  return hand.filter((c) => !keep.has(c.id)).map((c) => c.id)
+}
+
+/**
  * 定约结束：庄家埋底（人类手动 / AI 自动）。
  *
  * 庄家的手牌在**发牌时就是 33 张**（四家各 25 + 庄家多拿 8，见 `core/deal.ts`），
@@ -786,13 +813,9 @@ function proceedAfterContract(s: GameState): GameState {
   if (s.dealer === HUMAN_SEAT) {
     return { ...withTrump, phase: 'bury', notice: '你是庄家，选 8 张牌扣底' }
   }
-  // AI 庄家自动扣底：留大牌、扣小牌与非分牌
-  // 注意用牌力序而非展示序：埋底要留「最强 25 张」，
-  // 展示序会把整门 ♥ 排在 ♠ 前面，与强弱无关。
-  const ctx = ctxOf({ ...withTrump, levelRank: s.levelRank })
-  const sorted = sortByPowerDesc(withTrump.hands[s.dealer] as Card[], ctx)
-  const keep = new Set(sorted.slice(0, HAND_SIZE).map((c) => c.id))
-  const buried = (withTrump.hands[s.dealer] as Card[]).filter((c) => !keep.has(c.id))
+  // AI 庄家自动扣底（与「人类庄家挂机代扣」共用同一套启发式，见 chooseBuryIds）
+  const buriedIds = new Set(chooseBuryIds(withTrump, s.dealer))
+  const buried = (withTrump.hands[s.dealer] as Card[]).filter((c) => buriedIds.has(c.id))
   return finishBury(withTrump, withTrump.hands.map((h) => h.slice()), buried)
 }
 
@@ -1160,6 +1183,116 @@ export function chooseSafePlay(s: GameState, seat: Seat): readonly Card[] {
   })
 }
 
+/* ============================================================
+   挂机（v1.3.34）：让 AI 代打「人类座位」
+   ------------------------------------------------------------
+   与 `aiPlayFor` 的区别：那个是**替别的座位**出牌（AI 对手/队友），
+   这个是把「人类这一侧的每一个待办」逐个交给机器 —— 选牌、出牌、
+   抢主、反主、加固、扣底、下一局。
+
+   为什么要单独一层 `autoAction`（而不是在 main.ts 里 if-else）：
+   这些分支都在和状态机打交道（`phase` / 各种 pending 标记），
+   写在 main.ts 里就永远测不到（单测跑不到 DOM 入口）。抽成纯函数后
+   可以逐分支断言，见 `tests/app/autoPlay.test.ts`。
+   ============================================================ */
+
+/**
+ * 挂机时「人类座位」下一步该派发什么 action；没得做返回 `null`。
+ *
+ * `null` 是 main.ts 停止排定时器的**唯一信号** —— 所以每个分支都必须
+ * 在「确实有事可做」时才返回 action，否则定时器链条会空转。
+ */
+export function autoAction(s: GameState): Action | null {
+  if (!s.autoPlay) return null
+  // 回放期间必须停手：玩家在看历史墩，局面不该自己往前走
+  if (s.replayAt !== null) return null
+
+  if (s.phase === 'contract') {
+    // ---- 反主 / 加固面板 ----
+    if (s.counterPending) {
+      // 加固是纯增益（把反主门槛抬到 2 张级牌 ⇒ 不可达），能做就做
+      if (s.guardOption) return { type: 'guard' }
+      const counter = autoCounterTrump(s)
+      return counter !== null ? { type: 'declareTrump', trump: counter } : { type: 'passCounter' }
+    }
+    // ---- 亮主：摸到级牌的中途暂停，或整副发完等定主 ----
+    const waiting = s.dealPrompt || s.revealed >= DEAL_TOTAL
+    if (!waiting) return null // 还在逐张发牌，交给 revealTick
+    const declare = autoDeclareTrump(s)
+    if (declare !== null) return { type: 'declareTrump', trump: declare }
+    // 一手牌一门都亮不了：中途面板只能「继续发牌」，发完后面板会放行无将
+    return s.dealPrompt ? { type: 'passDeal' } : null
+  }
+
+  if (s.phase === 'bury') {
+    // 人类坐庄要扣底 —— 与 AI 庄家同一套启发式
+    return { type: 'bury', ids: chooseBuryIds(s, HUMAN_SEAT) }
+  }
+
+  if (s.phase === 'play') {
+    if (seatToPlay(s) !== HUMAN_SEAT) return null // 轮到别人，走 aiStep
+    return { type: 'autoPlayTurn' }
+  }
+
+  // 结算页「下一局」也交给机器，否则挂机得有人守着点按钮
+  if (s.phase === 'settle' || s.phase === 'over') return { type: 'nextRound' }
+
+  return null
+}
+
+/** 挂机期间没法亮主时挑哪门：手牌张数最多的一门（无将只作兜底） */
+function autoDeclareTrump(s: GameState): Trump | null {
+  // `declareOptions` 是「已发到手」的合法清单（发牌中途），
+  // `humanDeclareOptions` 按整手牌算 —— 两者取有值的那个，优先前者。
+  const pool = s.declareOptions.length > 0 ? s.declareOptions : humanDeclareOptions(s)
+  if (pool.length === 0) return null
+  const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+  let best: Trump | null = null
+  let bestN = -1
+  for (const t of pool) {
+    if (t === 'NT') continue // 无将没有「张数」可比，只在没有花色可亮时兜底
+    const n = hand.filter((c) => suitOfValue(c.value) === t).length
+    if (n > bestN) {
+      bestN = n
+      best = t
+    }
+  }
+  if (best !== null) return best
+  return pool.includes('NT') ? 'NT' : null
+}
+
+/**
+ * 挂机期间要不要反主：**只在「反过去那门 ≥5 张」时才反**。
+ *
+ * 与 AI 自己的门槛一致（`aiWantsCounter`）—— 手里只有 2 张级牌、这门却只有 1 张牌时
+ * 反主等于把主牌交给对手，比不反更差。宁可 `过`。
+ */
+function autoCounterTrump(s: GameState): Trump | null {
+  const hand = s.hands[HUMAN_SEAT] as readonly Card[]
+  let best: Trump | null = null
+  let bestN = AUTO_COUNTER_SUIT_MIN - 1
+  for (const t of s.counterOptions) {
+    if (t === 'NT') continue
+    const n = hand.filter((c) => suitOfValue(c.value) === t).length
+    if (n > bestN) {
+      bestN = n
+      best = t
+    }
+  }
+  return best
+}
+
+/**
+ * 把 `autoAction` 算出来的一步真正落下去。
+ *
+ * 与 `autoAction` 分开：main.ts 需要先问「有没有事可做」再决定要不要排定时器
+ * （没有可做动作就不排，这是防空转的硬保证），测试则想直接看到结果。
+ */
+export function autoStep(s: GameState): GameState {
+  const action = autoAction(s)
+  return action === null ? s : reduce(s, action)
+}
+
 /* ---------- AI ---------- */
 
 /**
@@ -1344,6 +1477,24 @@ export function reduce(s: GameState, action: Action): GameState {
       return { ...s, hintSelects: !s.hintSelects }
     case 'setHintStyle':
       return { ...s, hintStyle: action.style }
+
+    case 'toggleAutoPlay': {
+      // 关掉挂机时顺手清掉提示高亮：那些高亮是机器上一手留下的，容易让人以为还能出
+      const on = !s.autoPlay
+      return { ...s, autoPlay: on, ...(on ? {} : { hintIds: [], selected: [] }) }
+    }
+
+    case 'setAutoLevel':
+      return { ...s, autoLevel: action.level }
+
+    case 'autoStep':
+      return autoStep(s)
+
+    case 'autoPlayTurn': {
+      // 只有「轮到你 + 出牌阶段」才代打；否则原样返回（防御：UI 按键与定时器可能竞态）
+      if (s.phase !== 'play' || seatToPlay(s) !== HUMAN_SEAT) return s
+      return playCards(s, HUMAN_SEAT, choosePlay(s, HUMAN_SEAT, s.autoLevel))
+    }
 
     case 'toggleShowCounter':
       return { ...s, showCounter: !s.showCounter }

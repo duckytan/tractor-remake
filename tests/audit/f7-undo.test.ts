@@ -49,7 +49,7 @@ describe('F7 · 悔牌不吞掉设置（C5-01）', () => {
     expect(restored.step).toBe(snapshot.step)
   })
 
-  it('pickPrefs 覆盖的字段清单与 PREF_FIELDS 一致（含 16 项）', () => {
+  it('pickPrefs 覆盖的字段清单与 PREF_FIELDS 一致（含 18 项）', () => {
     const s = toPlay()
     const picked = pickPrefs(s)
     expect(Object.keys(picked).sort()).toEqual(
@@ -70,6 +70,8 @@ describe('F7 · 悔牌不吞掉设置（C5-01）', () => {
         'volumeBgm',
         'volumeMaster',
         'volumeSfx',
+        'autoPlay',
+        'autoLevel',
       ].sort(),
     )
   })

@@ -70,6 +70,10 @@ export interface Prefs {
   readonly hintSelects: boolean
   /** 提示策略：稳妥人类风格 / 最强 AI */
   readonly hintStyle: HintStyle
+  /** 挂机模式（AI 代打人类座位的所有操作） */
+  readonly autoPlay: boolean
+  /** 挂机代打的 AI 档位 */
+  readonly autoLevel: AiLevel
   /** 记牌器 */
   readonly showCounter: boolean
   /** AI 是否读牌（关掉后 AI 只用公开信息推断，更公平但更弱） */
@@ -96,6 +100,8 @@ const DEFAULT_PREFS: Prefs = {
   showOppHands: false,
   hintSelects: false,
   hintStyle: 'safe',
+  autoPlay: false,
+  autoLevel: 3,
   showCounter: false,
   aiPeekHands: true,
   musicTheme: 'spring',
@@ -202,6 +208,13 @@ export function loadPrefs(): Prefs {
       hintSelects: o.hintSelects === true,
       // 提示风格：只有显式存了 'ai' 才认，其余（含老档）一律稳妥风格
       hintStyle: o.hintStyle === 'ai' ? 'ai' : 'safe',
+      // 挂机默认关；档位非法（0..3 之外）回落超强
+      autoPlay: o.autoPlay === true,
+      // 非法档位回落超强（0..3 之外的值当成没存过）
+      autoLevel:
+        o.autoLevel === 0 || o.autoLevel === 1 || o.autoLevel === 2 || o.autoLevel === 3
+          ? o.autoLevel
+          : DEFAULT_PREFS.autoLevel,
       showCounter: o.showCounter === true,
       // 缺字段按「读牌」处理：旧存档没有这个字段，默认行为不能变
       aiPeekHands: o.aiPeekHands !== false,
@@ -486,6 +499,9 @@ export function loadStateDetailed(): LoadResult {
     showOppHands: o.showOppHands === true,
     hintSelects: o.hintSelects === true,
     hintStyle: o.hintStyle === 'ai' ? 'ai' : 'safe',
+    // 挂机是纯偏好，但**读档一律从偏好走**（`main.ts` 会用 prefs 覆盖），这里只做形状兜底
+    autoPlay: o.autoPlay === true,
+    autoLevel: 3,
     showCounter: o.showCounter === true,
     animation: o.animation !== false,
   }

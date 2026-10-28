@@ -299,6 +299,20 @@ const SETTINGS_TABS: readonly { key: SettingsTab; label: string }[] = [
  */
 const handCardCache = new Map<number, { el: HTMLElement; sig: string }>()
 
+/**
+ * 「挂机」按钮（在手牌操作条上，悔牌左侧）。
+ *
+ * 按钮文案随状态变：`挂机` ⇄ `挂机中`。用 `aria-pressed` 同步状态，
+ * 读屏用户也能知道现在是不是在挂机（不只靠文字颜色）。
+ */
+function autoBtn(s: GameState): string {
+  return `<button class="btn${s.autoPlay ? ' btn--on' : ''}" data-act="autoPlay" aria-pressed="${
+    s.autoPlay ? 'true' : 'false'
+  }" title="${s.autoPlay ? '挂机中：所有操作由 AI 代打，点一下取消' : '挂机：让 AI 替你出牌、抢主、扣底'}">${
+    s.autoPlay ? '挂机中' : '挂机'
+  }</button>`
+}
+
 export function render(root: HTMLElement, s: GameState, act: Actions): void {
   ensureDefs()
   // 体验档位挂在 <html> 上：styles.css 里用的是 :root[...] 选择器，
@@ -603,6 +617,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     const bar = q('handbar')
     if (s.phase === 'bury') {
       bar.innerHTML = `
+        ${autoBtn(s)}
         <span class="hint-text" data-slot="hint-text">选 8 张扣底（已选 ${esc(s.selected.length)} / 8）</span>
         <button class="btn btn--primary" data-act="bury" ${s.selected.length === 8 ? '' : 'disabled'}>扣底</button>`
     } else if (s.phase === 'play') {
@@ -628,6 +643,7 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
           myTurn ? esc(hint?.text ?? '轮到你了') : `${esc(SEAT_LABEL[turn ?? 0])} 出牌中…`
         }</span>
         <span data-slot="legality">${legalityBadge(s)}</span>
+        ${autoBtn(s)}
         <button class="btn" data-act="undo" ${act.canUndo ? '' : 'disabled'}>悔牌</button>
         <button class="btn" data-act="clear" ${s.selected.length ? '' : 'disabled'}>取消</button>
         <button class="btn" data-act="hint" ${myTurn ? '' : 'disabled'} title="${hint ? esc(hint.detail) : '给出一手建议（与 AI 同一个决策引擎）'}">提示</button>
@@ -1039,6 +1055,10 @@ export function settingsPanel(s: GameState): string {
           AI_LEVEL_OPTS.map((o) => ({ ...o, on: s.aiLevelOpponent === Number(o.v) })),
           'opponent',
         )}
+      </div>
+      <div class="set-row">
+        <span>挂机 AI<small class="set-desc">开启挂机后，代你出牌 / 抢主 / 扣底的强度</small></span>
+        ${seg('setAutoLevel', '挂机 AI 难度', AI_LEVEL_OPTS.map((o) => ({ ...o, on: s.autoLevel === Number(o.v) })))}
       </div>
       <div class="set-row">
         <span>AI 出牌速度<small class="set-desc">快一点更好打；想看清每张牌就调慢</small></span>
@@ -1614,6 +1634,14 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
         break
       case 'setHintStyle':
         if (val === 'safe' || val === 'ai') act.dispatch({ type: 'setHintStyle', style: val })
+        break
+      case 'autoPlay':
+        act.dispatch({ type: 'toggleAutoPlay' })
+        break
+      case 'setAutoLevel':
+        if (val === '0' || val === '1' || val === '2' || val === '3') {
+          act.dispatch({ type: 'setAutoLevel', level: Number(val) as AiLevel })
+        }
         break
       case 'toggleShowCounter':
         act.dispatch({ type: 'toggleShowCounter' })

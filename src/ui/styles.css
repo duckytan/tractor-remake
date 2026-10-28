@@ -140,6 +140,13 @@ html, body {
 .btn--primary { background: #1d9e75; border-color: #1d9e75; color: #fff; }
 .btn--primary:hover:not(:disabled) { background: #23b586; border-color: #23b586; }
 .btn--ghost { background: transparent; }
+/* 「挂机中」态：不用 .btn--primary（那是绿色主按钮，会和「出牌」抢注意力），
+   改用暖金描边 —— 表达「这是个开着的开关」，不是「这是当前该点的主操作」。 */
+.btn--on {
+  background: rgba(240, 198, 116, 0.16);
+  border-color: rgba(240, 198, 116, 0.55);
+  color: #f0c674;
+}
 /* 记录面板里每墩的「回放」小按钮 */
 .btn--mini { padding: 1px 8px; font-size: 11px; border-radius: 6px; }
 /* 焦点框：浏览器默认是 `auto 1px` 的深色描边，在深绿顶栏上几乎看不见。

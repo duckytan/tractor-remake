@@ -219,6 +219,21 @@ export interface GameState {
    * 纯偏好，不影响规则与 AI 自己的出牌。
    */
   readonly hintStyle: HintStyle
+  /**
+   * 挂机模式：开启后**人类座位**的所有操作交给 AI（选牌 / 出牌 / 抢主 / 反主 / 扣底 / 下一局）。
+   *
+   * **作为偏好持久化**（不是瞬时状态）。原因：抢主发生在 `phase === 'contract'`，
+   * 那一刻手牌操作条被定主面板整块盖住、点不到挂机按钮 —— 只有在出牌阶段打开挂机
+   * 并让它跨局保留，下一局的抢主才可能自动进行。刷新后也保持，符合「挂机」的语义。
+   */
+  readonly autoPlay: boolean
+  /**
+   * 挂机时替人类出牌用哪一档 AI（弱 / 中 / 强 / 超强）。
+   *
+   * 与 `aiLevelPartner` / `aiLevelOpponent` 分开：那两档是「对手有多强」，
+   * 这一档是「代打有多强」，玩家可能想「对手弱一点、我的代打强一点」。
+   */
+  readonly autoLevel: AiLevel
   /* ---------------- 声音（v1.4） ----------------
      全部是纯偏好，不参与任何规则判定。音频模块只读它们。 */
 
@@ -286,6 +301,10 @@ export type Action =
   | { readonly type: 'toggleShowOppHands' }
   | { readonly type: 'toggleHintSelects' }
   | { readonly type: 'setHintStyle'; readonly style: HintStyle }
+  | { readonly type: 'toggleAutoPlay' }
+  | { readonly type: 'setAutoLevel'; readonly level: AiLevel }
+  | { readonly type: 'autoStep' }
+  | { readonly type: 'autoPlayTurn' }
   | { readonly type: 'toggleShowCounter' }
   | { readonly type: 'toggleAiPeek' }
   | { readonly type: 'setMusicTheme'; readonly theme: ThemeKey }
@@ -389,6 +408,8 @@ export const emptyState = (): GameState => ({
   showOppHands: false,
   hintSelects: false,
   hintStyle: 'safe',
+  autoPlay: false,
+  autoLevel: 3,
   settingsOpen: false,
   logOpen: false,
   hintIds: [],

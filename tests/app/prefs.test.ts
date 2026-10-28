@@ -16,7 +16,7 @@ import { newGame, reduce } from '@app/game'
 import { emptyState } from '@app/state'
 import type { GameState } from '@app/state'
 
-/** 全部 16 个偏好字段，逐个设成**非默认值** */
+/** 全部 18 个偏好字段，逐个设成**非默认值** */
 const NON_DEFAULT: Pick<
   GameState,
   | 'fourColor'
@@ -35,6 +35,8 @@ const NON_DEFAULT: Pick<
   | 'volumeMaster'
   | 'volumeBgm'
   | 'volumeSfx'
+  | 'autoPlay'
+  | 'autoLevel'
 > = {
   fourColor: true,
   cardSize: 'L',
@@ -52,6 +54,8 @@ const NON_DEFAULT: Pick<
   volumeMaster: 30,
   volumeBgm: 20,
   volumeSfx: 90,
+  autoPlay: true,
+  autoLevel: 0,
 }
 
 const PREF_KEYS = Object.keys(NON_DEFAULT) as (keyof typeof NON_DEFAULT)[]
@@ -78,8 +82,8 @@ const settle = (): SettleResult => ({
 })
 
 describe('重开游戏保留玩家偏好（PREF_FIELDS 契约）', () => {
-  it('清单覆盖 16 个偏好字段（加字段时若忘了加进清单，这条会红）', () => {
-    expect(PREF_KEYS).toHaveLength(16)
+  it('清单覆盖 18 个偏好字段（加字段时若忘了加进清单，这条会红）', () => {
+    expect(PREF_KEYS).toHaveLength(18)
     // 每个偏好字段在 emptyState 里都应存在（防止改名后清单变成死字符串）
     const base = emptyState() as unknown as Record<string, unknown>
     for (const k of PREF_KEYS) {
@@ -87,7 +91,7 @@ describe('重开游戏保留玩家偏好（PREF_FIELDS 契约）', () => {
     }
   })
 
-  it('newGame（新游戏）保留全部 16 项', () => {
+  it('newGame（新游戏）保留全部 18 项', () => {
     const src = customized()
     const next = newGame(DEFAULT_RULE_CONFIG, 1, 420, 7, src)
     expectPrefsKept(next, src)
@@ -96,7 +100,7 @@ describe('重开游戏保留玩家偏好（PREF_FIELDS 契约）', () => {
     expect(next.phase).toBe('contract')
   })
 
-  it('over → nextRound（游戏结束再来一局）保留全部 16 项', () => {
+  it('over → nextRound（游戏结束再来一局）保留全部 18 项', () => {
     const src: GameState = {
       ...customized(),
       phase: 'over',
@@ -107,7 +111,7 @@ describe('重开游戏保留玩家偏好（PREF_FIELDS 契约）', () => {
     expectPrefsKept(next, src)
   })
 
-  it('settle → nextRound（普通下一局）保留全部 16 项', () => {
+  it('settle → nextRound（普通下一局）保留全部 18 项', () => {
     const src: GameState = {
       ...customized(),
       phase: 'settle',

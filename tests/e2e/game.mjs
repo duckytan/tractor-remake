@@ -386,6 +386,36 @@ try {
       )
       await page.screenshot({ path: `${SHOTS}/03-play.png` })
     }
+
+    /* ---------- P2d 挂机（v1.3.34） ----------
+       点「挂机」后按钮变「挂机中」，且**人类手牌会自己减少**（AI 代打）。
+       这是唯一能证明「挂机真的接上了调度链」的黑盒证据 —— 只断言按钮文案不够。 */
+    {
+      const beforeAuto = await page.locator('#app .hand .card').count()
+      await page.click('[data-act="autoPlay"]')
+      await sleep(300)
+      const labelOn = (await page.locator('[data-act="autoPlay"]').innerText()).trim()
+      // 最多等 20 秒：要等到轮到人类、且 AI 代打把它打出去
+      let autoPlayed = false
+      for (let i = 0; i < 100; i++) {
+        const n = await page.locator('#app .hand .card').count()
+        if (n < beforeAuto) {
+          autoPlayed = true
+          break
+        }
+        await sleep(200)
+      }
+      const handAfterAuto = await page.locator('#app .hand .card').count()
+      await page.click('[data-act="autoPlay"]')
+      await sleep(300)
+      const labelOff = (await page.locator('[data-act="autoPlay"]').innerText()).trim()
+      rec(
+        'P2d 挂机：按钮变「挂机中」且 AI 真的代打（手牌自己减少），再点变回「挂机」',
+        labelOn === '挂机中' && autoPlayed && labelOff === '挂机',
+        `on="${labelOn}" hand ${beforeAuto}->${handAfterAuto} replayed=${autoPlayed} off="${labelOff}"`,
+      )
+      await page.screenshot({ path: `${SHOTS}/04-auto.png` })
+    }
   }
 
   /* ---------- P2 设置面板 + Esc ---------- */

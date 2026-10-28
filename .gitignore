@@ -13,6 +13,9 @@ coverage/
 # 临时目录
 .tmp/
 
+# AI 助手的工作数据（记忆 / 会话），不进仓库
+.workbuddy-ai/
+
 # 规则基准的第三方仓库（smallnest/Tractor，约 123MB，只作对照阅读，不随本仓库提交）
 # 文档里的 `reference/smallnest-Tractor` 指的就是它
 reference/
