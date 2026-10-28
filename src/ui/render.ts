@@ -20,7 +20,7 @@ import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
 import { hintExplain } from '@app/hintView'
 import { statsLine } from '@app/stats'
-import { exportRounds, logSummary } from '@app/roundLog'
+import { clearRoundLogs, exportRounds, logSummary } from '@app/roundLog'
 import {
   counterView,
   dealtCardsFor,
@@ -48,6 +48,13 @@ const SEAT_CLASS: Record<Seat, string> = { 0: 'center', 1: 'west', 2: 'north', 3
 
 /** 各家出牌区里显示最近几墩的历史小牌（v1.2.3：3 → 5，用户反馈「只留 3 墩，新的把旧的顶走」） */
 const PAST_DEPTH = 5
+/**
+ * 侧家（西/东）在窄屏的历史墩数。
+ *
+ * 侧家出牌区是横排的，横向空间又被明牌牌墙吃掉一大块 —— 5 墩横排能伸到 460px，
+ * 在 1366px 宽的窗口里会顶到南家出牌区上。南北两家有整行宽度，不受这个限制。
+ */
+const SIDE_PAST_DEPTH = 3
 /** 历史小牌宽度占卡宽的比例（M 档 150 × 0.24 = 36px。
  *  v1.3.4：0.16（24px）用户反馈「牌太小了看不清」—— 24px 的牌 Rank/花色基本不可读，提到 36px） */
 const TINY_RATIO = 0.32
@@ -86,19 +93,27 @@ const NORTH_BACK_RATIO = 0.307
 const SIDE_MIN_STEP = 0.18
 
 /* ---------- 明牌作弊（showOppHands）的几何 ----------
-   三家各 25 张要全部摊开（牌背模式只露 10 张），所以牌面必须比牌背小一号，
-   否则一列 25 张纵向能到 500px、直接盖住出牌区。 */
-/** 明牌小牌宽度占卡宽的比例（窄屏再压一档：北家横排 25 张才铺得下） */
-const REVEAL_RATIO = 0.34
+   三家各 25 张要全部摊开（牌背模式只露 10 张），所以牌面比玩家手牌小一号。 */
+/**
+ * 明牌小牌宽度占卡宽的比例。
+ *
+ * v1.3.45：0.34 → 0.51（**×1.5**，用户要求「另外三家手牌放大 1.5 倍」）。
+ * 代价是折列变多：牌宽 51 → 77、牌高 71 → 108，而侧家可用高度只有 ~180px，
+ * 一列从 6 张掉到 3 张 ⇒ 21 张要折 7 列、横向从 219px 涨到 ~570px。
+ * 两侧的横向空间本来就是空的（中间没人用），这个代价可以接受。
+ */
+const REVEAL_RATIO = 0.51
 const REVEAL_RATIO_NARROW = 0.26
 /**
  * 北家（横排）明牌宽度比例。
  *
- * 北家那一行**跨满整行**后可用宽度接近整个视口（实测 1831px），
- * 没道理还按侧家的 0.34 缩着 —— 16 张牌铺开也只占 1100px。
- * 牌面大一号，点数 / 花色一眼可读（v1.3.43）。
+ * 北家那一行**跨满整行**后可用宽度接近整个视口（实测 1871px），
+ * 没道理还按侧家的比例缩着。
+ *
+ * v1.3.45：0.46 → 0.69（**×1.5**）。21 张时 21×104 = 2184px 略超可用宽度，
+ * 会按 REVEAL_STEP_RATIO 压一点重叠（step 81 / 牌宽 104，露 78%），仍然清晰。
  */
-const REVEAL_RATIO_NORTH = 0.46
+const REVEAL_RATIO_NORTH = 0.69
 /** 横排（北家）每张露出的宽度比例：左上角标约占 24%，45% 既能看清点数又留足重叠 */
 const REVEAL_STEP_RATIO = 0.45
 /**
@@ -233,7 +248,14 @@ function fillPlays(
   // leadSeat 由 view 层的 leadingSeat() 算（走 trickStanding，能排除垫牌）。
   now.classList.toggle('plays__now--lead', leadSeat === seat && play !== undefined)
   if (!s.showHistory) return
-  const { nos, tricks } = pastPlaysView(s, seat, PAST_DEPTH)
+  // 侧家（西/东）在窄屏只留 3 墩历史。
+  //
+  // 原因：侧家出牌区是**横排**的（竖排会溢出，见 styles.css 里 .plays--side 的注释），
+  // 而明牌放大 1.5 倍后牌墙本身就占了 30%+ 视口宽 —— 再横排 5 墩历史牌，
+  // 出牌区会一直伸到桌心，和南家出牌区撞上（实测 1366×768 重叠 16×44px）。
+  // 南北两家不受影响：它们有整行宽度可用。
+  const depth = (seat === 1 || seat === 3) && window.innerWidth < 1500 ? SIDE_PAST_DEPTH : PAST_DEPTH
+  const { nos, tricks } = pastPlaysView(s, seat, depth)
   tricks.forEach((cards, i) => {
     if (cards.length === 0) return
     const g = document.createElement('div')
@@ -286,6 +308,23 @@ export type SettingsTab = 'game' | 'view' | 'sound' | 'rule'
  * 点击时同步改 DOM（不 dispatch，所以切换是瞬时的、不丢滚动位置）。
  */
 let settingsTab: SettingsTab = 'game'
+
+/**
+ * 「清空对局数据」是否已进入确认态（第一次点击之后）。
+ *
+ * 清空会连带删掉 localStorage 里最近 30 局的完整留档，且**不可恢复**，
+ * 所以做成两步：第一次点只换按钮文案，第二次才真清。
+ *
+ * 放模块级（不进 state）的理由同 `settingsTab`：这是纯 UI 的中间态，
+ * 写进 state 会连带触发存档写入。render 重建时读它，保证重绘后确认态不丢
+ * —— 对局还在跑的时候 AI 每出一张牌都会重绘，确认态若只存在 DOM 里会瞬间复位，
+ * 玩家第二次点击就变成「又一次第一次点击」，永远清不掉（或更糟：以为清了没清）。
+ */
+let clearLogsArmed = false
+/** 确认态的自动复位定时器：挂着不管会让「清空」长期处于一触即发的状态 */
+let clearLogsTimer: number | null = null
+/** 确认态保持多久后自动退回（毫秒） */
+const CLEAR_LOGS_ARM_MS = 5000
 
 /** 标签页定义（顺序 = 展示顺序） */
 const SETTINGS_TABS: readonly { key: SettingsTab; label: string }[] = [
@@ -1205,17 +1244,45 @@ function logPanel(s: GameState): string {
     )
     .join('')
 
+  // 已记录的**完整对局**数（跨局，存 localStorage）—— 与上面「本局打完几墩」不是一回事
+  const logged = logSummary().rounds
+  // 清空是破坏性操作且不可撤销（30 局历史一并没了），走两步确认：
+  // 第一次点击只把按钮换成红色「确认清空 N 局？」，再点一次才真清。
+  // 确认态用模块级变量 + 直接改 DOM（同 settingsTab 的做法），不触发整棵重绘。
+  const clearBtn = clearLogsArmed
+    ? `<button class="btn btn--danger" data-act="clearLogs">确认清空 ${logged} 局？</button>`
+    : `<button class="btn btn--danger-soft" data-act="clearLogs"${logged === 0 ? ' disabled' : ''}>清空对局数据</button>`
+
   return `<div class="panel panel--wide" role="dialog" aria-label="对局记录">
     <h2>对局记录</h2>
     <p class="muted">已打完 ${s.history.length} 墩（仅内存，不写存档）</p>
     ${items ? `<div class="log-list">${items}</div>` : '<div class="log-empty">还没有打完的墩</div>'}
     <div class="panel-foot">
       <!-- 导出完整对局数据（开局手牌 + 每墩 + 你的每个决策 vs AI 的建议），
-           交给分析脚本用；已记录 ${logSummary().rounds} 局 -->
-      <button class="btn" data-act="exportLogs">导出对局数据（${logSummary().rounds} 局）</button>
+           交给分析脚本用；已记录 ${logged} 局 -->
+      <div class="foot-row">
+        <button class="btn" data-act="exportLogs">导出对局数据（${logged} 局）</button>
+        ${clearBtn}
+      </div>
       <button class="btn btn--primary" data-act="toggleLog">关闭</button>
     </div>
   </div>`
+}
+
+/**
+ * 把「清空对局数据」按钮复位成未确认态（文案 + 配色 + 禁用态）。
+ *
+ * 只改 DOM、不 dispatch —— 与进入确认态的方式对称。为了换一行字重绘整棵树
+ * 会把面板的滚动位置和焦点都打断，而这里两次点击之间玩家什么都没做。
+ */
+function resetClearLogsButton(root: HTMLElement): void {
+  const btn = root.querySelector<HTMLElement>('[data-act="clearLogs"]')
+  if (btn === null) return
+  btn.classList.remove('btn--danger')
+  btn.classList.add('btn--danger-soft')
+  btn.textContent = '清空对局数据'
+  // 清空之后局数是 0，按钮该保持不可点（否则点了也什么都不发生，像坏了）
+  if (logSummary().rounds === 0) btn.setAttribute('disabled', '')
 }
 
 /**
@@ -1448,30 +1515,28 @@ function fitSideStack(box: HTMLElement, count: number, cardW: number): void {
 /**
  * 竖排明牌的步长求解（纯函数，`fillRevealRow` 与 `refitRevealCols` 共用）。
  *
- * **步长优先保可读，列数跟着让位**（v1.3.43）。
+ * 取值 = `clamp(理想步长, minStep, fit)`：
+ * - 空间宽裕（fit 很大）时用理想步长（露 45%，点数 + 花色完整）—— 再大就太散
+ * - 空间紧张时用 fit（刚好铺满），但**不低于 minStep**（再小就只剩点数、认不出花色），
+ *   剩下的靠折列解决
  *
- * 旧逻辑是「步长尽量贴 fit、压到 minStep 为止」⇒ 一列塞得越多越好、列数越少，
- * 代价是每张只露 21px（牌宽的 41%），16 张并排看上去就是一根竖条，花色认不出来。
- * 而侧家两侧的横向空间本来是空的（中间 1300px 没人用）。
- * 所以反过来：先给到 REVEAL_STEP_RATIO（露 45%，点数 + 花色完整），
- * 装不下就折更多列 —— 但列数超过上限（占视口宽 18%）时再退回去压步长。
+ * v1.3.45 改过一次：原先是「先试理想步长，列数超过视口 18% 才退回 fit」的二选一。
+ * 而列数对 `avail` 极其敏感 —— 东西两家的 col-h 只差 8px 就可能一个走理想步长、
+ * 一个走 fit，同屏出现 3 列和 5 列两种牌墙（实测 241px vs 323px，明显不对称）。
+ * 改成连续取值后两边自然一致。
  */
 function solveRevealSideStep(
   count: number,
   gapN: number,
   gapPx: number,
-  w: number,
   h: number,
   avail: number,
 ): number {
   const minStep = Math.round(h * REVEAL_MIN_STEP_RATIO)
-  if (count < 2 || avail <= 0) return Math.max(minStep, Math.round(h * REVEAL_STEP_RATIO))
-  const fit = (avail - h - gapN * gapPx) / (count - 1)
   const idealStep = Math.max(minStep, Math.round(h * REVEAL_STEP_RATIO))
-  const colsAt = (s: number): number =>
-    Math.max(1, Math.ceil((count * s + gapN * gapPx) / Math.max(1, avail)))
-  const maxCols = Math.max(2, Math.floor((window.innerWidth * 0.18) / (w + 2)))
-  return colsAt(idealStep) <= maxCols ? idealStep : Math.max(minStep, Math.round(fit))
+  if (count < 2 || avail <= 0) return idealStep
+  const fit = (avail - h - gapN * gapPx) / (count - 1)
+  return Math.min(idealStep, Math.max(minStep, Math.round(fit)))
 }
 
 /**
@@ -1485,15 +1550,24 @@ function revealSideAvail(box: HTMLElement): number {
   const seatEl = box.closest('.seat') as HTMLElement | null
   if (seatEl === null) return 0
   const tagH = seatEl.querySelector('.seat-tag')?.getBoundingClientRect().height ?? 0
-  return Math.max(120, Math.round(seatEl.clientHeight - tagH - 6))
+  // 返回**真实**可用高度（可能很小、也可能是 0）—— 兜底交给调用方：
+  // `fillRevealRow` 在容器还没布局时要按 120 起步，而 `refitRevealCols`
+  // 拿到的是真实值，这里若硬兜 120，L 档那种「中间行只剩 70px」的情况
+  // 会被伪装成 120，列高算大、直接压到手牌上（v1.3.45 实测踩到）。
+  return Math.max(0, Math.round(seatEl.clientHeight - tagH - 6))
 }
 
 /**
  * 竖排明牌折列的列高求解（纯函数，`fillRevealRow` 与 `refitRevealCols` 共用）。
  *
  * **列高按「均分」反算**，否则 25 张会排成 19+6 那种一头沉的形状 ——
- * 先算需要几列，再把牌平均分到各列。分组间隔按张数摊到每张上，
- * 列高留 10px 余量（否则刚好卡边界会多折一列）。
+ * 先算出「一列实际能放几张」，再把牌平均分到各列。
+ *
+ * v1.3.45 修过一次算法：旧公式是 `perCol * step`，把**第一张**也只算成 `step` 高。
+ * 实际上第一张要占满 `h`（后面的才是 step 的间距），再叠加分组间隔 ——
+ * 21 张 / 牌高 108 / step 32 时，旧公式算出列高 270（以为能放 7 张），
+ * 实际 7 张要 408px，于是 flex 只能塞 4~5 张、悄悄多折两列，
+ * 东西两家还因为 8px 的 col-h 差异折出不同的列数（241px vs 323px，明显不对称）。
  *
  * @returns 列高（px）；`avail <= 0`（容器还没布局）时返回 0，调用方应跳过写入
  */
@@ -1502,14 +1576,20 @@ function solveRevealColH(
   step: number,
   gapN: number,
   gapPx: number,
+  h: number,
   avail: number,
 ): number {
   if (count < 1 || avail <= 0) return 0
-  const need = count * step + gapN * gapPx
-  const cols = Math.max(1, Math.ceil(need / avail))
-  const perCol = Math.ceil(count / cols)
-  const gapShare = (perCol * gapN * gapPx) / count
-  return Math.min(avail, Math.ceil(perCol * step + gapShare) + 10)
+  /** 一列放 n 张需要的高度：第一张占满 h，之后每张 step，分组间隔按张数摊 */
+  const needFor = (n: number): number =>
+    h + (n - 1) * step + Math.round((n * gapN * gapPx) / count)
+  // 从多到少找「一列塞得下的最大张数」
+  let perCol = count
+  while (perCol > 1 && needFor(perCol) > avail - 10) perCol--
+  const need = needFor(perCol)
+  // need 仍超出 avail 说明连一张都放不下（牌比可用高度还高）—— 交给 refit 缩牌，
+  // 这里先返回 avail 让容器不溢出
+  return Math.min(avail, Math.ceil(need) + 10)
 }
 
 /**
@@ -1523,20 +1603,39 @@ function solveRevealColH(
  * 只改 `--mini-col-h`，靠 CSS 的 `flex-flow: column wrap` 自动重排列数，不重建 DOM。
  */
 function refitRevealCols(root: HTMLElement): void {
-  for (const box of root.querySelectorAll<HTMLElement>('.reveal-row--side')) {
+  const boxes = [...root.querySelectorAll<HTMLElement>('.reveal-row--side')]
+  // **东西两家必须用同一个可用高度**（v1.3.45）。
+  // 两家的座位高度会差几像素（座位标签换行、局面不同），而「一列放几张」是阶梯函数 ——
+  // 实测差 7px 就让西家折 4 列、东家折 3 列，同屏出现 323px 和 241px 两块不等宽牌墙。
+  // 取两者较小值统一，牌墙宽度就一致了。
+  const avails = boxes.map((b) => revealSideAvail(b)).filter((v) => v > 0)
+  const sharedAvail = avails.length > 0 ? Math.min(...avails) : 0
+
+  for (const box of boxes) {
     const count = box.querySelectorAll('.card').length
     if (count < 2) continue
     const cs = getComputedStyle(box)
-    const w = Number.parseFloat(cs.getPropertyValue('--mini-w')) || 0
-    const h = Number.parseFloat(cs.getPropertyValue('--mini-h')) || 0
+    const w0 = Number.parseFloat(cs.getPropertyValue('--mini-w')) || 0
+    let h = Number.parseFloat(cs.getPropertyValue('--mini-h')) || 0
     const gapPx = Number.parseFloat(cs.getPropertyValue('--mini-gap')) || 0
-    if (w <= 0 || h <= 0) continue
+    if (w0 <= 0 || h <= 0) continue
     const gapN = box.querySelectorAll('.card--gap').length
-    const avail = revealSideAvail(box)
+    const avail = sharedAvail
+    let w = w0
+    // 牌比可用高度还高时**先缩牌**（v1.3.45）。
+    // L 档 / 矮屏下中间行可能只剩 70~120px，而明牌牌高 108 起 ——
+    // 不缩的话一列连一张都放不下，col-h 只能取最小值，牌直接压到手牌上。
+    // 留 15% 余量给座位标签和列间距。
+    if (avail > 0 && h > avail * 0.85) {
+      h = Math.max(48, Math.floor(avail * 0.85))
+      w = Math.max(REVEAL_MIN_W, Math.round(h / 1.4))
+      box.style.setProperty('--mini-w', `${w}px`)
+      box.style.setProperty('--mini-h', `${h}px`)
+    }
     // 步长也要重算：填明牌时 avail 偏大，`colsAt` 会低估列数，
     // 真实高度一进来就可能超上限（表现为列数多到压住手牌）。
-    const step = solveRevealSideStep(count, gapN, gapPx, w, h, avail)
-    const colH = solveRevealColH(count, step, gapN, gapPx, avail)
+    const step = solveRevealSideStep(count, gapN, gapPx, h, avail)
+    const colH = solveRevealColH(count, step, gapN, gapPx, h, avail)
     if (colH <= 0) continue
     box.style.setProperty('--mini-step', `${step}px`)
     box.style.setProperty('--mini-col-h', `${colH}px`)
@@ -1555,10 +1654,16 @@ function fillRevealRow(
   box.className = side ? 'reveal-row reveal-row--side' : 'reveal-row'
 
   const narrow = window.innerWidth <= 900
+  // 明牌尺寸基线**不跟 L 档放大**（v1.3.45）。
+  //
+  // L 档卡宽 190，若明牌按 0.69 算，牌宽 131 / 牌高 183 —— 北家一行就把中间行
+  // 从 200px 压到 33px，侧家一张牌都放不下（实测 col-h 被兜底成 120 直接压手牌）。
+  // 明牌是辅助信息，跟玩家手牌一样大没有意义，所以基线取 min(卡宽, 150)：
+  // S 档按自己的 120 走（保持原有比例），M / L 档统一按 150。
+  const revealBase = Math.min(cardW, 150)
   const ratio = narrow ? REVEAL_RATIO_NARROW : side ? REVEAL_RATIO : REVEAL_RATIO_NORTH
-  const w = Math.max(REVEAL_MIN_W, Math.round(cardW * ratio))
+  const w = Math.max(REVEAL_MIN_W, Math.round(revealBase * ratio))
   const h = Math.round(w * 1.4)
-  const minStep = Math.round(h * REVEAL_MIN_STEP_RATIO)
   const items = handView(cards, ctx)
 
   // 步长 = 每张露出的长度（px）。先定容器变量，再塞牌，避免中途 reflow 两次。
@@ -1568,11 +1673,13 @@ function fillRevealRow(
   if (side) {
     // 竖排：可用高度 = 座位总高 - 座位标签（`.seat` 是 grid item，被拉伸到整行高，
     // 而明牌容器自身在 flex 里是内容高度，量它只会得到 0 —— v1.3.30 踩过）。
-    const avail = revealSideAvail(box)
-    step = solveRevealSideStep(items.length, gapN, gapPx, w, h, avail)
+    // 这一趟（填牌阶段）手牌还没渲染，量到的值偏大，**只是初值**；
+    // 真实值由 render 末尾的 `refitRevealCols` 覆盖。所以这里给个 120 起步兜底，
+    // 避免容器未布局时算出 0 列高、退回单列把牌堆成一根长条。
+    const avail = Math.max(120, revealSideAvail(box))
+    step = solveRevealSideStep(items.length, gapN, gapPx, h, avail)
     // 一列塞不下就靠 `flex-flow: column wrap` 折到下一列（顺序仍是「先上后下、先左后右」）。
-    // avail 为 0（容器还没布局）时不写列高，退回 CSS 的 auto（单列，不会把牌压成 0 高）
-    const colH = solveRevealColH(items.length, step, gapN, gapPx, avail)
+    const colH = solveRevealColH(items.length, step, gapN, gapPx, h, avail)
     if (colH > 0) box.style.setProperty('--mini-col-h', `${colH}px`)
   } else {
     // 横排（北家）：这一行**跨满整行**（CSS `grid-template-areas: 'north north north'`），
@@ -1738,6 +1845,12 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
         act.dispatch({ type: 'closeSettings' })
         break
       case 'toggleLog':
+        // 关面板时顺手把确认态复位，避免下次打开还挂着红色按钮
+        clearLogsArmed = false
+        if (clearLogsTimer !== null) {
+          window.clearTimeout(clearLogsTimer)
+          clearLogsTimer = null
+        }
         act.dispatch({ type: 'toggleLog' })
         break
       case 'exportLogs': {
@@ -1753,6 +1866,41 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
         a.download = `tractor-logs-${stamp}.json`
         a.click()
         URL.revokeObjectURL(url)
+        break
+      }
+      case 'clearLogs': {
+        const rounds = logSummary().rounds
+        if (rounds === 0) break
+        if (!clearLogsArmed) {
+          // 第一步：只换成确认态，数据一个字节都不动
+          clearLogsArmed = true
+          if (clearLogsTimer !== null) window.clearTimeout(clearLogsTimer)
+          clearLogsTimer = window.setTimeout(() => {
+            clearLogsArmed = false
+            clearLogsTimer = null
+            resetClearLogsButton(root)
+          }, CLEAR_LOGS_ARM_MS)
+          // 直接改 DOM（不 dispatch）：重绘会把面板的滚动位置和焦点都打断
+          const btn = target.closest<HTMLElement>('[data-act="clearLogs"]')
+          if (btn !== null) {
+            btn.textContent = `确认清空 ${rounds} 局？`
+            btn.classList.remove('btn--danger-soft')
+            btn.classList.add('btn--danger')
+          }
+          break
+        }
+        // 第二步：真清
+        clearRoundLogs()
+        clearLogsArmed = false
+        if (clearLogsTimer !== null) {
+          window.clearTimeout(clearLogsTimer)
+          clearLogsTimer = null
+        }
+        resetClearLogsButton(root)
+        // 导出按钮上的局数就地改成 0（不整棵重绘）—— 面板上半部分显示的是
+        // 「本局打完几墩」，与被清掉的跨局留档无关，所以面板内容不该跟着变。
+        const exp = root.querySelector<HTMLElement>('[data-act="exportLogs"]')
+        if (exp !== null) exp.textContent = '导出对局数据（0 局）'
         break
       }
       case 'toggleAnimation':

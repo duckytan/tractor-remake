@@ -239,3 +239,41 @@ describe('roundLog · 导出', () => {
     expect(o.rounds[0]!.hands).toHaveLength(4)
   })
 })
+
+describe('roundLog · 清空（记录面板的「清空对局数据」）', () => {
+  it('内存、localStorage 一起清，导出变 0 局', () => {
+    const s = atPlay()
+    beginRound(s)
+    finishRound(atSettle(s))
+    expect(logSummary().rounds).toBe(1)
+
+    clearRoundLogs()
+
+    expect(logSummary().rounds).toBe(0)
+    expect(loggedRounds()).toHaveLength(0)
+    expect(store.getItem('tractor.logs.v1')).toBeNull()
+    expect(JSON.parse(exportRounds()).rounds).toHaveLength(0)
+  })
+
+  it('清空后当前局仍能正常留档（清的是历史，不是这一局）', () => {
+    clearRoundLogs()
+    const s = atPlay()
+    beginRound(s)
+    finishRound(atSettle(s))
+    expect(logSummary().rounds).toBe(1)
+  })
+
+  it('清空会丢弃进行中的局（pending），不会在下次落库时又冒出来', () => {
+    // 先记一局，再开一局但不结算 —— 此时 pending 里挂着这一局
+    const first = atPlay()
+    beginRound(first)
+    finishRound(atSettle(first))
+    expect(logSummary().rounds).toBe(1)
+
+    beginRound(atPlay())
+    clearRoundLogs()
+
+    expect(logSummary().rounds).toBe(0)
+    expect(store.getItem('tractor.logs.v1')).toBeNull()
+  })
+})

@@ -140,6 +140,39 @@ html, body {
 .btn--primary { background: #1d9e75; border-color: #1d9e75; color: #fff; }
 .btn--primary:hover:not(:disabled) { background: #23b586; border-color: #23b586; }
 .btn--ghost { background: transparent; }
+/* 破坏性操作（清空对局数据）：红色描边 + 浅红底。
+   刻意不做纯红实心 —— 它不是「该点的下一步」，而是「想清楚了才点」的备选，
+   不能跟绿色的主按钮抢注意力。 */
+.btn--danger {
+  border-color: #c0392b;
+  background: #fdeceb;
+  color: #a4271c;
+}
+.btn--danger:hover:not(:disabled) {
+  background: #fbdbd8;
+  border-color: #a4271c;
+}
+/* 面板内的 .btn 配色规则特异性更高（0,4,0），这里必须同档覆盖，否则红色会被冲掉 */
+.panel .btn.btn--danger:not(.btn--primary):not(.trump-btn) {
+  border-color: #c0392b;
+  background: #fdeceb;
+  color: #a4271c;
+}
+.panel .btn.btn--danger:not(.btn--primary):not(.trump-btn):hover:not(:disabled) {
+  background: #fbdbd8;
+  border-color: #a4271c;
+}
+/* 未进入确认态时的破坏性按钮：只把文字染红，底色仍是中性。
+   目的是「一眼看出这按钮会删东西」，但不至于像确认态那样刺眼 ——
+   两者要能区分，否则玩家分不清自己点到了第几步。 */
+.panel .btn.btn--danger-soft:not(.btn--primary):not(.trump-btn) {
+  color: #a4271c;
+}
+.panel .btn.btn--danger-soft:not(.btn--primary):not(.trump-btn):hover:not(:disabled) {
+  background: #fbeeed;
+  border-color: #e0b4b0;
+  color: #8e1f16;
+}
 /* 「挂机中」态：不用 .btn--primary（那是绿色主按钮，会和「出牌」抢注意力），
    改用暖金描边 —— 表达「这是个开着的开关」，不是「这是当前该点的主操作」。 */
 .btn--on {
@@ -180,7 +213,7 @@ html, body {
   grid-row: 4;
   grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
-  /* 北家**跨满整行**（v1.3.43）。
+  /* 北家**跨满整行**（v1.3.44）。
      以前是 `'. north .'` —— 北家被锁在中间的 auto 列里，可用宽度由内容自己撑出来，
      于是明牌行只能在 ~490px 里塞 16 张（每张露 23px），挤成一条看不清点数的碎色带。
      跨满后明牌能按视口宽度铺开，牌面才认得出来。 */
@@ -201,6 +234,26 @@ html, body {
   background-size: 3px 3px;
   pointer-events: none;
 }
+/* 桌心光斑：四家的牌都贴着边缘，中间会空出一大片 —— 加一层极淡的椭圆光，
+   视线才有落点，不至于「中间像塌了一块」。
+   纯装饰：不接收指针事件，也不参与布局。 */
+.felt::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: min(48%, 760px);
+  aspect-ratio: 16 / 9;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.045) 40%,
+    rgba(255, 255, 255, 0) 72%
+  );
+  pointer-events: none;
+}
 .felt > * { position: relative; z-index: 1; }
 
 .seat { display: flex; flex-direction: column; align-items: center; gap: 5px; }
@@ -215,7 +268,49 @@ html, body {
 .seat--north { grid-area: north; }
 .seat--west { grid-area: west; justify-self: start; }
 .seat--east { grid-area: east; justify-self: end; }
+
+/* ---------- 北家 / 南家的出牌区：浮起来，不占布局高度（v1.3.45） ----------
+   背景：这两块各占 118px（一张 --played-w 牌的高度），而牌桌中间那一行总共只有
+   ~240px。明牌放大 1.5 倍后北家明牌行涨到 144px，中间行被压到 83px ——
+   侧家牌高 108px 根本放不下，只能被 refit 缩回原尺寸（等于没放大）。
+   改成绝对定位后，中间行回到 ~350px，侧家能按 1.5 倍显示。
+
+   视觉上也不吃亏：它们本来就该「摆在桌前」，浮在桌面上比把牌桌撑高更自然，
+   而且中间行空出来的部分正好给桌心光斑用。横向居中、两侧是空的，
+   不会和贴边的侧家牌墙相撞。 */
+.seat--north .plays {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 6px;
+  z-index: 1;
+}
+.south { justify-content: flex-end; }
+[data-slot='plays-mine'] {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 6px;
+  z-index: 1;
+}
+/* 侧家的 seat-body 撑满座位剩余高度，明牌牌墙才能用 `max-height: 100%` 兜底。
+   不撑满的话它是内容高度，百分比高度没有参照物、`max-height` 形同虚设。 */
+.seat--west .seat-body,
+.seat--east .seat-body { flex: 1 1 auto; min-height: 0; }
 .seat--center { grid-area: center; justify-self: center; align-self: center; }
+/* 桌心的座位信息做成一小块「牌子」。
+   四家的牌都贴着边缘，中间只飘一行 11px 灰字会显得空落落的；
+   给个半透明底 + 圆角，视线在桌心有个落点（牌堆发牌时它仍是独立元素，不受影响）。 */
+.seat--center .seat-tag {
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 12px;
+  letter-spacing: 0.4px;
+}
 
 .seat-tag {
   font-size: 11px;
@@ -224,6 +319,9 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 不许换行：「东 · 19 张 · 闲」在窄屏会折成两行，标签一高，座位可用高度就少 15px，
+     而明牌列高是阶梯函数 —— 差这 15px 就能多折一列出来（实测东西两家一块 3 列一块 4 列）。 */
+  white-space: nowrap;
 }
 .seat-tag.is-win { color: #f0c674; }
 /* 座位角色：庄（庄家本人，金色高亮）/ 友（庄家的队友）/ 闲（闲家）。
@@ -329,62 +427,105 @@ html, body {
   align-content: flex-start;
   align-items: center;
   height: var(--mini-col-h, auto);
+  /* 兜底：`--mini-col-h` 是 render 末尾按真实高度算的，但牌局中途 south 的高度会变
+     （南家本墩有牌 vs 没牌差 92px），中间那一行跟着缩，座位也变矮 ——
+     算好的列高可能比座位还高一点（实测 1366×768 下压到手牌 23px）。
+     这里硬顶住父级高度，宁可多折一列也不越界。 */
+  max-height: 100%;
+  /* **不许被压缩**：右边是 `width: max-content` 的出牌区（5 墩历史牌能到 400px），
+     flex 空间不够时默认 flex-shrink:1 会把牌墙挤窄，而 column wrap 的第 3、4 列
+     就溢出到容器外、正好被出牌区盖住（实测西家 23 张只看得见 15 张）。 */
+  flex-shrink: 0;
+  /* 硬上限：L 档 + 1366×768 这种极端组合下，中间行只剩 48px，
+     侧家牌高被压到 40 出头、24 张要折 9 列 = 706px 宽 —— 两侧加起来 1412px
+     超过视口，两块牌墙会互相压住。这里限死单侧最多 32vw（两侧 64%），
+     宁可裁掉最后一列也不让它们撞在一起。M 档（默认）1915 下实测 323px，远不到上限。 */
+  max-width: 32vw;
+  overflow: hidden;
   min-width: calc(var(--mini-w) + 2px);
   /* 折列后列与列之间要留缝：不留缝时 3 列会连成一片，
      看上去像一张被竖着切开的怪牌，而不是「三列牌」 */
   column-gap: 5px;
+  /* 最后一列往往不满（16 张 ÷ 3 列 = 6+6+4）。垂直居中让那点空档上下均分，
+     而不是全堆在底下、看着像底板露了一大截。 */
+  justify-content: center;
+  /* 半透明底板：把折开的几列收成**一块牌墙**。
+     顺带掩盖「每列张数不同 ⇒ 列底参差不齐」—— 底板按统一列高铺满，
+     视觉上列底就是齐的（不用给 padding，padding 会吃掉列高、多折一列）。 */
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
 }
 .reveal-row--side .card { margin-bottom: calc(var(--mini-step) - var(--mini-h)); }
 .reveal-row--side .card--gap {
   margin-bottom: calc(var(--mini-step) - var(--mini-h) + var(--mini-gap));
 }
+/* 明牌牌的宽度统一跟容器的 `--mini-w` 走，而不是每张牌自己的内联 `--card-w`。
+   原因：`refitRevealCols` 会按**真实**可用高度回缩 `--mini-w`（L 档 / 矮屏下
+   中间行只剩 70~120px，牌高 108 起就放不下一列），内联值不跟着变的话
+   牌还是原来那么大，缩了个寂寞 —— 列高变小、牌没变小，直接压到手牌上。 */
+.reveal-row .card { width: var(--mini-w); }
 
 /* 侧家出牌区：牌背与桌心之间，**沿水平方向朝桌心展开**。
-   ── v1.3.43 重做，原因是「竖向堆叠」必然溢出 ──
-   旧实现是本墩牌竖排、5 墩历史小牌也竖排，一个侧家出牌区实测高 366~513px，
-   而中间那一行只分到 179~253px ⇒ 出牌区一路垂到 y=850，把手牌（y=628）整块盖住。
-   牌桌左右两侧的**横向**空间反而是空的（中间 1400px 没人用），所以改成横排：
-   本墩牌 + 历史小牌都沿 x 轴排开，高度只占一张牌，彻底不再压手牌。
+   ── v1.3.44 重做 ──
+   两个问题一起解决的：
+
+   ① **竖向堆叠必然溢出**。旧实现是本墩牌竖排、5 墩历史小牌也竖排，
+      一个侧家出牌区实测高 366~513px，而中间那一行只分到 179~253px
+      ⇒ 出牌区一路垂到 y=850，把手牌（y=628）整块盖住。
+      牌桌左右两侧的**横向**空间反而是空的（中间 1400px 没人用），所以改成横排：
+      本墩牌 + 历史小牌都沿 x 轴排开，高度只占一张牌，彻底不再压手牌。
+
+   ② **牌不再 rotate(±90°)，改成正立**。
+      旋转不改变布局盒：84px 宽的牌转完视觉上是 118px 宽，左右各溢出 17px。
+      于是每张牌都要额外补 margin 才能「看起来并排」，而这些补偿又会把邻居推出去
+      （实测 1366px 宽下东家明牌列被推出牌桌右边界、整列裁掉）。
+      正立之后布局盒 = 视觉盒，没有一处需要补偿，牌也不用歪着头看。
+      代价是少了「牌顶朝桌心」的牌桌感 —— 用间距和墩间分隔线补回来。
+
    宽度按内容自适应（max-content），因为「本墩有没有出牌 / 历史几墩」都会改宽度。 */
 .plays--side {
-  flex-direction: row;
+  /* **本墩在上、历史在下**（v1.3.46）。
+     上一版是全部横排成一行，实测一条能拉到 466px 宽 —— 左右两条「长龙」把桌心
+     夹得只剩一条缝，桌心徽章像卡在两根棍子中间。改成纵向两块后宽度由最宽的那块决定
+     （本墩最多 4 张 = 336px），历史牌在下面折行，横向省下 100px 以上。 */
+  flex-direction: column;
   align-items: center;
   gap: var(--play-gap);
   width: max-content;
+  max-width: 40vw;
   min-width: calc(var(--played-w) * 1.4);
 }
-/* 东家镜像：本墩贴着右侧牌背，历史小牌往左（桌心）展开 */
-.seat--east .plays--side { flex-direction: row-reverse; }
-/* 本墩的一手牌（对子 / 拖拉机）也横排 —— 竖排 4 张拖拉机要 216px 高，同样会溢出。
-   旋转 90° 后布局盒仍是 --played-w 宽，相邻两张的布局间距必须补到 1.4 倍才是
-   「视觉上不重叠」，否则会像旧版那样两张牌叠成一张（用户反馈「看不出是对子」）。 */
+/* 本墩的一手牌（对子 / 拖拉机）横排 —— 竖排 4 张拖拉机要 216px 高，会溢出。
+   正立后相邻两张按自然间距并排，不再需要任何负 margin。 */
 .plays--side .plays__now { flex-direction: row; align-items: center; }
-.plays--side .plays__now .card + .card { margin-top: 0; margin-left: calc(var(--played-w) * 0.4); }
-.plays--side .cards { flex-direction: row; align-items: center; gap: calc(var(--played-w) * 0.4); }
+.plays--side .plays__now .card + .card { margin-top: 0; margin-left: var(--play-gap); }
+.plays--side .cards { flex-direction: row; align-items: center; gap: var(--play-gap); }
 
-
-/* 明牌模式下侧家出牌区无需特殊处理 —— v1.3.43 起 `.plays--side` 本身就按内容定宽，
-   不再有「定宽 118px 装不下多张牌」的问题（旧版这条规则就是为了打这个补丁）。 */
-
-/* 侧家历史小牌：**横向**铺开（同上，竖向 5 墩 = 335px 会压住手牌）。
-   小牌也 rotate(±90°)，布局盒仍是 --tiny-w 宽、视觉宽是 1.4 倍，
-   所以相邻两张必须补 0.4×--tiny-w 的间距，视觉上才是「并排」而不是「叠在一起」。 */
-.plays--side .plays__past { flex-direction: row; align-items: center; gap: var(--play-gap); }
+/* 侧家历史小牌：**横向**铺开（竖向 5 墩 = 335px 会压住手牌）。
+   组内多张（对子 / 拖拉机）轻微叠压，省一半横向长度 —— 小牌本来就只用来认牌型。
+   `max-width` + `flex-wrap`：5 墩横排一条线能拉到 460px 宽，把桌心挤没了
+   （明牌放大 1.5 倍后牌墙本身又宽了一截）。限宽后折成两行，
+   高度 2×67 = 134px 仍在可用范围内，横向省掉一半。 */
+.plays--side .plays__past {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: var(--play-gap);
+  max-width: calc(var(--tiny-w, 48px) * 4.6);
+}
 .plays--side .past__trick { flex-direction: row; align-items: center; }
-.plays--side .plays__past .card + .card { margin-left: calc(var(--tiny-w, 48px) * 0.4); }
+.plays--side .plays__past .card + .card { margin-left: calc(var(--tiny-w, 48px) * -0.25); }
 /* 墩与墩之间保留竖分隔线：横排后没有这条线，几墩的牌会连成一长串看不出分界 */
 .plays--side .past__trick + .past__trick {
   border-left: 1px solid rgba(255, 255, 255, 0.12);
   padding-left: var(--play-gap);
 }
-/* 旋转方向 = 牌顶朝向桌心（斗地主等通行做法，也是本块注释一贯的口径）：
-   西家在左 ⇒ 桌心在右 ⇒ rotate(90deg)（顺时针，牌顶转向右）；
-   东家在右 ⇒ 桌心在左 ⇒ rotate(-90deg)。
-   （v1.3.4 之前两边是反的：牌顶朝外、背离桌心，与注释不符。） */
-.seat--west .plays--side .plays__now .card,
-.seat--west .plays--side .plays__past .card { transform: rotate(90deg); }
-.seat--east .plays--side .plays__now .card,
-.seat--east .plays--side .plays__past .card { transform: rotate(-90deg); }
+/* 侧家出牌区的牌**不再旋转**（v1.3.44）。
+   以前是「牌顶朝向桌心」的 rotate(±90°)：西家 rotate(90deg)、东家 rotate(-90deg)。
+   问题不在方向，而在于旋转让布局盒和视觉盒错开 1.4 倍 —— 每张牌都要补 margin，
+   补偿又会把邻居推出边界（1366px 下东家整列明牌被裁掉）。正立后一处补偿都不用，
+   牌也不必歪着头看。这条注释保留历史，免得以后有人「顺手把旋转加回来」。 */
+
 /* ---------- 各家出牌区：本墩的牌 + 最近几墩的历史小牌 ---------- */
 /* 现实里打完的牌摆在自己面前 ⇒ 每家一个出牌区，统一朝向桌心。 */
 .plays { display: flex; align-items: center; justify-content: center; gap: var(--play-gap); }
@@ -866,6 +1007,10 @@ html, body {
   box-shadow: 0 -10px 14px rgba(255, 255, 255, 0.96);
 }
 .panel-foot > .btn { width: 100%; }
+/* 底部「次要操作」并排一行（记录面板：导出 / 清空）。
+   主操作（关闭 / 完成）仍独占一整行 —— 它才是玩家 90% 情况下要点的。 */
+.foot-row { display: flex; gap: 10px; margin-bottom: 10px; }
+.foot-row > .btn { flex: 1; }
 
 /* ---------- 设置：标签页 ---------- */
 /* 分段控件样式的 tab 条。切 tab 只改 .panel 的 data-settings-tab，
