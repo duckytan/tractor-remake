@@ -330,6 +330,9 @@ html, body {
   align-items: center;
   height: var(--mini-col-h, auto);
   min-width: calc(var(--mini-w) + 2px);
+  /* 折列后列与列之间要留缝：不留缝时 3 列会连成一片，
+     看上去像一张被竖着切开的怪牌，而不是「三列牌」 */
+  column-gap: 5px;
 }
 .reveal-row--side .card { margin-bottom: calc(var(--mini-step) - var(--mini-h)); }
 .reveal-row--side .card--gap {
@@ -360,14 +363,9 @@ html, body {
 .plays--side .cards { flex-direction: row; align-items: center; gap: calc(var(--played-w) * 0.4); }
 
 
-/* 明牌模式（作弊）下侧家出牌区按内容自适应宽度。
-   多张牌的牌组（对子 / 拖拉机）旋转 90° 后横排会比定宽容器宽 40~90px，
-   平时两侧都是空地，溢出看不出来；明牌列一进来就会被整块盖住（实测重叠 80×84）。
-   只在 `felt--reveal` 下放开，正常对局仍然保持东西镜像的定宽。 */
-.felt--reveal .plays--side {
-  width: max-content;
-  min-width: calc(var(--played-w) * 1.4);
-}
+/* 明牌模式下侧家出牌区无需特殊处理 —— v1.3.43 起 `.plays--side` 本身就按内容定宽，
+   不再有「定宽 118px 装不下多张牌」的问题（旧版这条规则就是为了打这个补丁）。 */
+
 /* 侧家历史小牌：**横向**铺开（同上，竖向 5 墩 = 335px 会压住手牌）。
    小牌也 rotate(±90°)，布局盒仍是 --tiny-w 宽、视觉宽是 1.4 倍，
    所以相邻两张必须补 0.4×--tiny-w 的间距，视觉上才是「并排」而不是「叠在一起」。 */

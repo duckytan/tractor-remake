@@ -91,6 +91,14 @@ const SIDE_MIN_STEP = 0.18
 /** 明牌小牌宽度占卡宽的比例（窄屏再压一档：北家横排 25 张才铺得下） */
 const REVEAL_RATIO = 0.34
 const REVEAL_RATIO_NARROW = 0.26
+/**
+ * 北家（横排）明牌宽度比例。
+ *
+ * 北家那一行**跨满整行**后可用宽度接近整个视口（实测 1831px），
+ * 没道理还按侧家的 0.34 缩着 —— 16 张牌铺开也只占 1100px。
+ * 牌面大一号，点数 / 花色一眼可读（v1.3.43）。
+ */
+const REVEAL_RATIO_NORTH = 0.46
 /** 横排（北家）每张露出的宽度比例：左上角标约占 24%，45% 既能看清点数又留足重叠 */
 const REVEAL_STEP_RATIO = 0.45
 /**
@@ -790,6 +798,10 @@ export function render(root: HTMLElement, s: GameState, act: Actions): void {
     }
   }
 
+  // 所有元素（含手牌 / 操作条）都填完之后，再按**真实**高度复算一次侧家明牌列高。
+  // 填明牌时手牌还没渲染，侧家拿到的是偏大的可用高度，直接用它算列高会压到手牌上。
+  refitRevealCols(root)
+
   bind(root, s, act)
 }
 
@@ -1433,6 +1445,104 @@ function fitSideStack(box: HTMLElement, count: number, cardW: number): void {
  *   点数就认不出来了。所以侧家改成「竖排 + 牌面正立」，每张露左上角标。
  * - 侧家 25 张要按可用高度反算步长（思路同 `fitSideStack`），否则会溢出到出牌区上。
  */
+/**
+ * 竖排明牌的步长求解（纯函数，`fillRevealRow` 与 `refitRevealCols` 共用）。
+ *
+ * **步长优先保可读，列数跟着让位**（v1.3.43）。
+ *
+ * 旧逻辑是「步长尽量贴 fit、压到 minStep 为止」⇒ 一列塞得越多越好、列数越少，
+ * 代价是每张只露 21px（牌宽的 41%），16 张并排看上去就是一根竖条，花色认不出来。
+ * 而侧家两侧的横向空间本来是空的（中间 1300px 没人用）。
+ * 所以反过来：先给到 REVEAL_STEP_RATIO（露 45%，点数 + 花色完整），
+ * 装不下就折更多列 —— 但列数超过上限（占视口宽 18%）时再退回去压步长。
+ */
+function solveRevealSideStep(
+  count: number,
+  gapN: number,
+  gapPx: number,
+  w: number,
+  h: number,
+  avail: number,
+): number {
+  const minStep = Math.round(h * REVEAL_MIN_STEP_RATIO)
+  if (count < 2 || avail <= 0) return Math.max(minStep, Math.round(h * REVEAL_STEP_RATIO))
+  const fit = (avail - h - gapN * gapPx) / (count - 1)
+  const idealStep = Math.max(minStep, Math.round(h * REVEAL_STEP_RATIO))
+  const colsAt = (s: number): number =>
+    Math.max(1, Math.ceil((count * s + gapN * gapPx) / Math.max(1, avail)))
+  const maxCols = Math.max(2, Math.floor((window.innerWidth * 0.18) / (w + 2)))
+  return colsAt(idealStep) <= maxCols ? idealStep : Math.max(minStep, Math.round(fit))
+}
+
+/**
+ * 侧家明牌列可用的竖向高度（px）。
+ *
+ * 必须量 `.seat`（grid item，被拉伸到整行高）而不是明牌容器本身 ——
+ * 后者在 flex 里是内容高度，量它只会得到 0（v1.3.30 踩过）。
+ * 再扣掉座位标签和 6px 余量。
+ */
+function revealSideAvail(box: HTMLElement): number {
+  const seatEl = box.closest('.seat') as HTMLElement | null
+  if (seatEl === null) return 0
+  const tagH = seatEl.querySelector('.seat-tag')?.getBoundingClientRect().height ?? 0
+  return Math.max(120, Math.round(seatEl.clientHeight - tagH - 6))
+}
+
+/**
+ * 竖排明牌折列的列高求解（纯函数，`fillRevealRow` 与 `refitRevealCols` 共用）。
+ *
+ * **列高按「均分」反算**，否则 25 张会排成 19+6 那种一头沉的形状 ——
+ * 先算需要几列，再把牌平均分到各列。分组间隔按张数摊到每张上，
+ * 列高留 10px 余量（否则刚好卡边界会多折一列）。
+ *
+ * @returns 列高（px）；`avail <= 0`（容器还没布局）时返回 0，调用方应跳过写入
+ */
+function solveRevealColH(
+  count: number,
+  step: number,
+  gapN: number,
+  gapPx: number,
+  avail: number,
+): number {
+  if (count < 1 || avail <= 0) return 0
+  const need = count * step + gapN * gapPx
+  const cols = Math.max(1, Math.ceil(need / avail))
+  const perCol = Math.ceil(count / cols)
+  const gapShare = (perCol * gapN * gapPx) / count
+  return Math.min(avail, Math.ceil(perCol * step + gapShare) + 10)
+}
+
+/**
+ * 按**真实**布局高度重算侧家明牌列高（render 末尾调用）。
+ *
+ * 为什么需要二次复算：`fillRevealRow` 跑的时候 `.hand` 还没渲染（south 的高度≈0），
+ * 中间那一行 `1fr` 拿到的是「手牌未占位」时的富余高度 —— 实测算出的列高 265px，
+ * 而手牌渲染完之后座位只剩 179px 可用。明牌列于是被压扁、底部长长地伸出去，
+ * 正好压在手牌上（用户反馈的「有遮挡」就是这个）。
+ *
+ * 只改 `--mini-col-h`，靠 CSS 的 `flex-flow: column wrap` 自动重排列数，不重建 DOM。
+ */
+function refitRevealCols(root: HTMLElement): void {
+  for (const box of root.querySelectorAll<HTMLElement>('.reveal-row--side')) {
+    const count = box.querySelectorAll('.card').length
+    if (count < 2) continue
+    const cs = getComputedStyle(box)
+    const w = Number.parseFloat(cs.getPropertyValue('--mini-w')) || 0
+    const h = Number.parseFloat(cs.getPropertyValue('--mini-h')) || 0
+    const gapPx = Number.parseFloat(cs.getPropertyValue('--mini-gap')) || 0
+    if (w <= 0 || h <= 0) continue
+    const gapN = box.querySelectorAll('.card--gap').length
+    const avail = revealSideAvail(box)
+    // 步长也要重算：填明牌时 avail 偏大，`colsAt` 会低估列数，
+    // 真实高度一进来就可能超上限（表现为列数多到压住手牌）。
+    const step = solveRevealSideStep(count, gapN, gapPx, w, h, avail)
+    const colH = solveRevealColH(count, step, gapN, gapPx, avail)
+    if (colH <= 0) continue
+    box.style.setProperty('--mini-step', `${step}px`)
+    box.style.setProperty('--mini-col-h', `${colH}px`)
+  }
+}
+
 function fillRevealRow(
   box: HTMLElement,
   cards: readonly Card[],
@@ -1445,10 +1555,8 @@ function fillRevealRow(
   box.className = side ? 'reveal-row reveal-row--side' : 'reveal-row'
 
   const narrow = window.innerWidth <= 900
-  const w = Math.max(
-    REVEAL_MIN_W,
-    Math.round(cardW * (narrow ? REVEAL_RATIO_NARROW : REVEAL_RATIO)),
-  )
+  const ratio = narrow ? REVEAL_RATIO_NARROW : side ? REVEAL_RATIO : REVEAL_RATIO_NORTH
+  const w = Math.max(REVEAL_MIN_W, Math.round(cardW * ratio))
   const h = Math.round(w * 1.4)
   const minStep = Math.round(h * REVEAL_MIN_STEP_RATIO)
   const items = handView(cards, ctx)
@@ -1460,31 +1568,29 @@ function fillRevealRow(
   if (side) {
     // 竖排：可用高度 = 座位总高 - 座位标签（`.seat` 是 grid item，被拉伸到整行高，
     // 而明牌容器自身在 flex 里是内容高度，量它只会得到 0 —— v1.3.30 踩过）。
-    const seatEl = box.closest('.seat') as HTMLElement | null
-    const tagH = seatEl?.querySelector('.seat-tag')?.getBoundingClientRect().height ?? 0
-    const avail = seatEl ? Math.max(120, Math.round(seatEl.clientHeight - tagH - 6)) : 0
-    const fit =
-      items.length > 1 && avail > 0
-        ? (avail - h - gapN * gapPx) / (items.length - 1)
-        : h * REVEAL_STEP_RATIO
-    step = Math.max(minStep, Math.min(Math.round(h * 0.5), Math.round(fit)))
+    const avail = revealSideAvail(box)
+    step = solveRevealSideStep(items.length, gapN, gapPx, w, h, avail)
     // 一列塞不下就靠 `flex-flow: column wrap` 折到下一列（顺序仍是「先上后下、先左后右」）。
-    // **列高按「均分」反算**，否则 25 张会排成 19+6 那种一头沉的形状 ——
-    // 先算需要几列，再把牌平均分到各列。
-    const need = items.length * step + gapN * gapPx
-    const cols = avail > 0 ? Math.max(1, Math.ceil(need / avail)) : 1
-    const perCol = Math.ceil(items.length / cols)
-    // 分组间隔按张数摊到每张上，列高留 10px 余量（否则刚好卡边界会多折一列）
-    const gapShare = (perCol * gapN * gapPx) / items.length
-    const colH = Math.min(avail, Math.ceil(perCol * step + gapShare) + 10)
     // avail 为 0（容器还没布局）时不写列高，退回 CSS 的 auto（单列，不会把牌压成 0 高）
-    if (avail > 0) box.style.setProperty('--mini-col-h', `${colH}px`)
+    const colH = solveRevealColH(items.length, step, gapN, gapPx, avail)
+    if (colH > 0) box.style.setProperty('--mini-col-h', `${colH}px`)
   } else {
-    // 横排：北家那一行宽度由内容决定（grid 里是 auto 列），
-    // 所以按「最多占视口一半、且不超过 680px」反算，避免把东西两家挤没。
-    const maxW = Math.min(680, Math.max(240, window.innerWidth * 0.52))
-    const fit = items.length > 1 ? (maxW - w) / (items.length - 1) : w
-    step = Math.round(Math.max(w * 0.2, Math.min(w * REVEAL_STEP_RATIO, fit)))
+    // 横排（北家）：这一行**跨满整行**（CSS `grid-template-areas: 'north north north'`），
+    // 可用宽度 = 视口宽减两侧留白。
+    //
+    // 旧实现按「最多占视口一半、且不超过 680px」反算 —— 那是因为北家当时被锁在中间的
+    // auto 列里，宽度由内容自己撑，只能用这种保守上限避免把东西两家挤没。
+    // 实测那会儿北家只有 491px，16 张明牌每张露 23px（重叠 55%），
+    // 点数被下一张盖掉一半，整行看上去就是一条碎色带。
+    //
+    // 现在上限直接放到 `w`（**不重叠**）：牌够宽时按原尺寸一张挨一张排开，
+    // 不够宽才压缩重叠，但保底 REVEAL_STEP_RATIO（角标可读的下限）。
+    // 可用宽度直接量 `.seat--north` —— 它跨满整行，clientWidth 就是牌桌内容宽。
+    // 不写死 px：牌桌 padding 以后调整时这里不会跟着失效。
+    const seatEl = box.closest('.seat') as HTMLElement | null
+    const maxW = Math.max(320, seatEl?.clientWidth || window.innerWidth - 80)
+    const fit = items.length > 1 ? (maxW - w - gapN * gapPx) / (items.length - 1) : w
+    step = Math.round(Math.max(w * REVEAL_STEP_RATIO, Math.min(w, fit)))
   }
   box.style.setProperty('--mini-w', `${w}px`)
   box.style.setProperty('--mini-h', `${h}px`)
