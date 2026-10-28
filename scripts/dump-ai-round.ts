@@ -27,6 +27,7 @@ import {
   analyze,
   analyzeHand,
   cardScore,
+  checkPlay,
   rankOfValue,
   suitOfValue,
   teamOf,
@@ -306,9 +307,28 @@ function driveRound(seed: number, level = 3): RoundDump {
         // **必须过滤空候选**：`pointsOf([]) === 0`，一个空的 `[]` 会让
         // 「本可出 0 分牌」永远为真（实测把「手里只剩 ♠10 ♠5 ♥5 全分牌」
         // 误判成「本可出 0 分牌」）。
-        const nonEmpty = cands.filter((cs) => cs.length > 0)
-        zeroAlt = nonEmpty.some((cs) => pointsOf(cs) === 0)
-        pointAlt = nonEmpty.some((cs) => pointsOf(cs) > 0)
+        //
+        // v1.3.39 再修（三司会审 P2）：**还必须过 `checkPlay`**。
+        // `enumeratePlays` 只负责"给候选"，不保证合法（跟对子时可能给出两张散牌）。
+        // 不过滤的话「本可带分」会混进非法出法 —— 实测复核 40 局，
+        // 「队友赢着、我出 0 分」的 304 次决策里 **291 次合法候选根本没有分牌**，
+        // 也就是说这个指标被高估了约 25 倍，之前报的「该垫没垫」几乎全是误报。
+        const board = [0, 1, 2, 3]
+          .filter((x) => x !== seat)
+          .map((x) => before.hands[x as Seat] as readonly Card[])
+        const legal = cands.filter(
+          (cs) =>
+            cs.length > 0 &&
+            checkPlay({
+              hand,
+              cards: cs,
+              ctx,
+              lead: { cards: lead.cards, analysis: lead.analysis },
+              opponents: board,
+            }).ok,
+        )
+        zeroAlt = legal.some((cs) => pointsOf(cs) === 0)
+        pointAlt = legal.some((cs) => pointsOf(cs) > 0)
       }
 
       // 出牌前后的「谁最大」——判定「在抢」还是「在送」的关键

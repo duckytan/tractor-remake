@@ -1064,7 +1064,7 @@ export function settingsPanel(s: GameState): string {
         <span>AI 出牌速度<small class="set-desc">快一点更好打；想看清每张牌就调慢</small></span>
         ${seg('setAiSpeed', 'AI 出牌速度', AI_SPEED_OPTS.map((o) => ({ ...o, on: o.v === nearestSpeed(s.aiSpeedMs) })))}
       </div>
-      ${swAct('toggleAiPeek', 'AI 读牌', '开启时 AI 能看到你的手牌（默认，强度更高）；关闭后只用公开信息推断，更公平但会变弱', s.aiPeekHands)}
+      ${swAct('toggleAiPeek', 'AI 读牌', '开启时对手 AI 能看到你的手牌（默认，强度更高）；关闭后对手只用公开信息推断。只影响对手，不影响你的提示', s.aiPeekHands)}
       ${swAct('toggleShowOppHands', '查看别人手牌', '作弊：其他三家手牌以明牌显示（排序与你的手牌一致）。只影响画面，不改变规则与 AI 行为', s.showOppHands)}`,
     )}
 

@@ -464,8 +464,14 @@ function hintIdsFor(s: GameState): number[] {
   // ① 主路径：按设置选策略
   //    'safe'（默认）= 稳妥人类风格：不首出带分牌、能赢才抢、队友赢着垫最小
   //    'ai'          = 最强 AI（L3 + 残局搜索），胜率更高但线路更像机器
+  //
+  // **提示恒用全信息**（v1.3.39 · 三司会审 F2）：「AI 读牌」这个开关的语义是
+  // 「对手 AI 能不能看到我的手牌」，不该顺带决定**我的助手**有多强。
+  // 之前没显式传 peek，于是玩家为公平关掉读牌时，提示也一起变弱（实测 L3 只剩 26.9%）。
   const best = verify(
-    s.hintStyle === 'ai' ? choosePlay(s, HUMAN_SEAT, 3) : chooseSafePlay(s, HUMAN_SEAT),
+    s.hintStyle === 'ai'
+      ? choosePlay(s, HUMAN_SEAT, 3, { peek: true })
+      : chooseSafePlay(s, HUMAN_SEAT),
   )
   if (best !== null) return best
 

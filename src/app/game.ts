@@ -1496,7 +1496,14 @@ export function reduce(s: GameState, action: Action): GameState {
     case 'autoPlayTurn': {
       // 只有「轮到你 + 出牌阶段」才代打；否则原样返回（防御：UI 按键与定时器可能竞态）
       if (s.phase !== 'play' || seatToPlay(s) !== HUMAN_SEAT) return s
-      return playCards(s, HUMAN_SEAT, choosePlay(s, HUMAN_SEAT, s.autoLevel))
+      // 挂机 = **你自己在打**，所以信息规则跟对手一致（`peek` 跟随设置）。
+      // 这里显式写出来，而不是让 `choosePlay` 的默认值静默继承 —— 三司会审 F2 的教训：
+      // 一个开关同时决定「对手能不能看我」和「我的助手有多强」时，行为会变得不可解释。
+      return playCards(
+        s,
+        HUMAN_SEAT,
+        choosePlay(s, HUMAN_SEAT, s.autoLevel, { peek: s.aiPeekHands }),
+      )
     }
 
     case 'toggleShowCounter':

@@ -550,6 +550,34 @@ function rivalIsSafe(
 }
 
 /**
+ * 概率版「队友这一手守不守得住」：只用公开信息。
+ *
+ * 与 `rivalIsSafe` 是同一个问题在两种信息假设下的答案 —— 关掉「AI 读牌」时
+ * 没有四家手牌，只能用 `beatChance` 估「还有对手能压」的概率，低于阈值就当安全。
+ * 没有它，「垫分」在两种设置下会是两套行为（三司会审 F1）。
+ */
+function rivalLikelySafe(
+  rival: { readonly seat: Seat; readonly analysis: PlayAnalysis },
+  ctx: RuleContext,
+  belief: Belief,
+  remaining: readonly Seat[] | undefined,
+): boolean {
+  if (rival.analysis.keyCard === null) return true
+  const pairs = pairsNeededOf(rival.analysis)
+  if (pairs < 0) return true
+  return (
+    beatChance({
+      belief,
+      ctx,
+      mySlot: rival.analysis.suitSlot,
+      pairs,
+      myPower: ctx.power.get(rival.analysis.keyCard.value),
+      remaining,
+    }) < BEAT_THRESHOLD
+  )
+}
+
+/**
  * 「我这手会不会被对手压」——**唯一入口**。
  *
  * 有 `belief` 时走概率推断（只用公开信息）；没有时退回旧的全信息精确判定。
@@ -737,11 +765,13 @@ function scoreCandidate(
       //（`scripts/dump-ai-round.ts` 的 missed-points）。对手还在、但压不住队友的那一手时，
       // 垫分同样零风险 —— 那正是人类说的「对家已经最大了，有分就垫」。
       const oppLeft = (input.remainingSeats ?? []).some((x) => teamOf(x) !== teamOf(input.seat))
+      const rival = input.currentWinner
       const safe =
         !oppLeft ||
-        (input.belief === undefined &&
-          input.currentWinner !== null &&
-          rivalIsSafe(input.currentWinner, ctx, opponents, input.remainingSeats, input.seat, memo))
+        (rival !== null &&
+          (input.belief === undefined
+            ? rivalIsSafe(rival, ctx, opponents, input.remainingSeats, input.seat, memo)
+            : rivalLikelySafe(rival, ctx, input.belief, input.remainingSeats)))
       if (safe) score += 0.4 + points * 0.15
       else score += iAmWinning ? -0.5 : 0.4 + points * 0.1
     } else if (iAmWinning) {
