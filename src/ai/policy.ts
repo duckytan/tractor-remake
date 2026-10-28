@@ -665,7 +665,15 @@ function scoreCandidate(
       // （L2vsL1 56.3% / L3vsL2 60.3%）。因为决策只取最高分，
       // 只要「垫分牌 > 垫废牌」的序关系成立，具体数值不影响选择。
       // 所以这类「单调偏好」参数不必精调，方向对就行。
-      score += iAmWinning ? -0.5 : 0.4 + points * 0.1
+      //
+      // v1.3.37 修：旧实现把「垫分奖励」写在 else 分支里，一旦这张分牌比队友的牌大
+      //（= 会抢过队友），奖励就被整段跳过 —— 于是「队友赢着、手里有 10，却垫最小的牌」。
+      // 而「抢过队友」到底亏不亏，取决于**还有没有对手没出牌**：
+      //   · 对手都出完了 ⇒ 这一墩已经锁定是我方的，抢不抢都是我们的分，垫分纯赚；
+      //   · 还有对手 ⇒ 抢过去反而可能被反压，这时才该收着打（旧的 -0.5 惩罚是对的）。
+      const oppLeft = (input.remainingSeats ?? []).some((x) => teamOf(x) !== teamOf(input.seat))
+      if (!oppLeft) score += 0.4 + points * 0.15
+      else score += iAmWinning ? -0.5 : 0.4 + points * 0.1
     } else if (iAmWinning) {
       // 我能压过当前最大：吃分是好事
       score += 0.6 + points * 0.08

@@ -135,24 +135,46 @@ describe('safeHint · 稳妥提示', () => {
     expect(checked).toBeGreaterThan(3)
   })
 
-  it('跟牌队友赢着时出最小的一手', () => {
+  it('队友赢着、**还有对手没出** → 收着打（垫最小，不送分）', () => {
     let checked = 0
     for (const s of SAMPLES) {
       if (s.trick.plays.length === 0) continue
       const ctx = ctxOf(s)
       const standing = trickStanding(s.trick.plays, ctx)
       if (standing === null || standing.winner.seat !== 2) continue
-      const cards = chooseSafePlay(s, HUMAN_SEAT)
-      if (cards.length === 0) continue
-      // 预条件：**合法候选里**有 0 分的（必须跟花色时可能全是分牌，那不是策略问题）
+      // 预条件：还有敌方座位没出牌（否则那是「锁定」局面，见下一条）
+      const enemyLeft = [0, 1, 2, 3]
+        .filter((x) => x !== HUMAN_SEAT && (x % 2) !== (HUMAN_SEAT % 2))
+        .some((x) => !s.trick.plays.some((p) => p.seat === x))
+      if (!enemyLeft) continue
       const cands = legalCandidates(s)
       if (!cands.some((c) => cardsScore(c) === 0)) continue
+      const cards = chooseSafePlay(s, HUMAN_SEAT)
+      if (cards.length === 0) continue
       checked++
-      // 「最小的一手」= 0 分优先、牌力最低 —— 至少不能是带分的大牌
-      expect(cardsScore(cards), `队友赢着却垫了 ${cardsScore(cards)} 分`).toBe(0)
+      expect(cardsScore(cards), `对手还没出却垫了 ${cardsScore(cards)} 分`).toBe(0)
     }
-    if (checked === 0) console.log('  --  样本里没有「队友赢着」的跟牌局面，跳过')
-    else expect(checked).toBeGreaterThan(0)
+    if (checked === 0) console.log('  --  样本里没有「队友赢着但对手未出完」的跟牌局面，跳过')
+  })
+
+  it('队友赢着、**对手都出完了** → 有分就垫（这一墩已锁定是我方的）', () => {
+    let checked = 0
+    for (const s of SAMPLES) {
+      if (s.trick.plays.length === 0) continue
+      const ctx = ctxOf(s)
+      const standing = trickStanding(s.trick.plays, ctx)
+      if (standing === null || standing.winner.seat !== 2) continue
+      const enemyLeft = [1, 3].some((x) => !s.trick.plays.some((p) => p.seat === x))
+      if (enemyLeft) continue
+      const cands = legalCandidates(s)
+      const pts = cands.filter((c) => cardsScore(c) > 0)
+      if (pts.length === 0) continue
+      const cards = chooseSafePlay(s, HUMAN_SEAT)
+      if (cards.length === 0) continue
+      checked++
+      expect(cardsScore(cards), `锁定局面却没垫分（出的是 ${cardsScore(cards)} 分）`).toBeGreaterThan(0)
+    }
+    if (checked === 0) console.log('  --  样本里没有「队友赢着且对手已出完」的跟牌局面，跳过')
   })
 
   it('与「最强 AI」策略确实不同（否则这个开关没意义）', () => {

@@ -23,7 +23,7 @@
  * 这里**绝不自己判规则**（分层铁律，见 docs/07）。
  */
 
-import { analyze, canBeat, cardsScore, checkPlay } from '@core'
+import { analyze, canBeat, cardsScore, checkPlay, teamOf } from '@core'
 import type { Card, PlayAnalysis, RuleContext, Seat } from '@core'
 import { enumeratePlays } from './enumerate'
 import type { PlayContext } from './enumerate'
@@ -91,8 +91,19 @@ export function safeHint(input: SafeHintInput): Card[] {
 
   /* ---------------- 跟牌 ---------------- */
   if (input.play.kind === 'follow') {
-    // ① 队友已经赢着：别抢，出最小的一手（0 分优先 —— 抢队友的墩没有意义）
-    if (input.partnerLeading) return (sorted[0] as Card[]).slice()
+    // ① 队友已经赢着
+    if (input.partnerLeading) {
+      // 对手**都出完了** ⇒ 这一墩已经锁定是我方，有分就往里垫（人类最标准的打法）。
+      // 对手还没出 ⇒ 收着打，垫最小的牌：这时候把 10 甩上去，被对手一张 A 反压就白送。
+      const enemyLeft = input.remainingSeats.some((x) => teamOf(x) !== teamOf(input.seat))
+      if (!enemyLeft) {
+        const withPoints = candidates.filter((c) => cardsScore(c) > 0)
+        if (withPoints.length > 0) {
+          return [...withPoints].sort((a, b) => cardsScore(b) - cardsScore(a))[0]!.slice()
+        }
+      }
+      return (sorted[0] as Card[]).slice()
+    }
 
     const winner = input.currentWinner
     const winners =
