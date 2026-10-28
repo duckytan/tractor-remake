@@ -1129,6 +1129,9 @@ export function choosePlay(
       ) as Seat[],
       // 概率推断（只吃公开信息）。`peek` 时不给，退回旧的全信息判定。
       ...(peek ? {} : { belief: buildBelief(s, seat) }),
+      // 本墩已经落在桌面上的分 —— 定价「赢下这墩值不值」要用整墩的分，
+      // 不是只有当前最大那一手的分（见 policy.ts 的 trickPointsSoFar）。
+      trickPoints: s.trick.plays.reduce((n, p) => n + cardsScore(p.cards as readonly Card[]), 0),
     },
     level,
     rngFor(s.seed, s.step + 1000),
@@ -1595,7 +1598,7 @@ export { TRUMP_POWER_BASE, advanceLevel, levelsFor, nextSeat, partnerOf }
    ============================================================ */
 
 /** 接管阈值：四家手牌总数 ≤ 这个值才做完全搜索（8 = 最多 2 墩） */
-export const ENDGAME_MAX_CARDS = 8
+export const ENDGAME_MAX_CARDS = 12
 /** 节点上限：超了就放弃（返回已找到的最好一手，或 null） */
 const ENDGAME_NODE_BUDGET = 120_000
 /** 时间上限（ms）：兜底，防止慢机器上卡住主线程 */

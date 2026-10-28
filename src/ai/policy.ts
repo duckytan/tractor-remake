@@ -163,6 +163,14 @@ export interface AiDecisionInput {
    * 那是规则要求（甩牌不合法会当场失败），不是 AI 的策略选择。
    */
   readonly belief?: Belief
+  /**
+   * 本墩**已经落在桌面上**的总分（首出 + 已跟过的牌之和）。
+   *
+   * 只用于「赢下这墩值不值」的定价（`L3_WEIGHTS.trickEv`）。
+   * 不传则退回旧口径（只算当前最大那一手的分）—— 旧口径会漏掉别人垫进来的分，
+   * 实测 30% 的跟牌局面被低估、平均少 9.4 分。
+   */
+  readonly trickPoints?: number
 }
 
 export interface AiDecision {
@@ -215,7 +223,13 @@ function slotCount(hand: readonly Card[], slot: number, ctx: RuleContext): numbe
 function trickPointsSoFar(
   currentWinner: { readonly analysis: PlayAnalysis } | null,
   play: PlayContext,
+  /** 已经落在桌面上的总分（调用方从 `s.trick.plays` 求和） */
+  trickPoints: number | undefined,
 ): number {
+  // 优先用**整墩**已出的分。旧实现只取「当前最大那一手」的分：
+  // 别人垫进来的 10 分不算，于是「这墩值不值得花大牌去抢」被系统性低估
+  //（实测 30% 的跟牌局面少算，平均少 9.4 分）。
+  if (trickPoints !== undefined) return trickPoints
   if (currentWinner) return currentWinner.analysis.score
   return play.kind === 'follow' ? play.leadAnalysis.score : 0
 }
@@ -246,14 +260,22 @@ function canBeOverturned(
   const mySlot = mine.suitSlot
 
   for (const hand of opponents) {
-    // 对手能出的最大牌：主牌槽里最大的，或同花色槽里最大的
+    // 对手能出的最大牌：同花色槽里最大的；**只有缺这门的人**才能用主牌毙。
+    // v1.3.38：旧实现无条件把主牌算进来（`slot === 4 ? mySlot !== 4 : ...`），
+    // 于是只要对手有任意一张主（几乎永远成立），任何副牌首出都被判「会被压」——
+    // 与 bestUnitPower 里修过的是同一个错，L2 这条路径漏改了（实测 4% 误判）。
     let best = -1
+    let hasSuit = false
     for (const c of hand) {
       const slot = suitSlotOf(c.value, ctx.power)
-      // 主牌能压一切；副牌只能压同花色
-      const canBeat =
-        slot === 4 ? mySlot !== 4 : slot === mySlot
-      if (canBeat) {
+      if (slot !== mySlot) continue
+      hasSuit = true
+      const p = ctx.power.get(c.value)
+      if (p > best) best = p
+    }
+    if (mySlot !== 4 && !hasSuit) {
+      for (const c of hand) {
+        if (suitSlotOf(c.value, ctx.power) !== 4) continue
         const p = ctx.power.get(c.value)
         if (p > best) best = p
       }
@@ -489,6 +511,45 @@ function leadFollowUp(
 
 
 /**
+ * 队友当前这一手，**剩下的对手压得住吗**？
+ *
+ * 专门服务「队友赢着时该不该垫分」：只在「压得住」时才需要收着打。
+ * 判据与 `exactBeatable` 同源（结构 + 缺门才能毙），但对象换成**队友打出的那一手**
+ * 而不是我准备出的这一手 —— 所以这里按 `analysis` 判，不重新分析牌面。
+ *
+ * 信息假设：只有全信息（`belief === undefined`，即「AI 读牌」开着）时才算得准；
+ * 概率推断下没有「队友这手守不守得住」的对应模型，调用方应退回保守分支。
+ */
+function rivalIsSafe(
+  rival: { readonly seat: Seat; readonly analysis: PlayAnalysis },
+  ctx: RuleContext,
+  opponents: readonly (readonly Card[])[],
+  remaining: readonly Seat[] | undefined,
+  mySeat: Seat,
+  memo?: Map<string, number>,
+): boolean {
+  const pairs = pairsNeededOf(rival.analysis)
+  if (pairs < 0) return true // 甩牌：规则上每组都大于三家，压不了
+  if (rival.analysis.keyCard === null) return true
+  if (rival.analysis.suitSlot === -1) return true // 混槽：规则上不可能出现，按「压不了」处理
+  const myPower = ctx.power.get(rival.analysis.keyCard.value)
+  const oppSeats = seatsOpponentOf(mySeat)
+  for (let i = 0; i < opponents.length; i++) {
+    const s = oppSeats[i]
+    if (s === undefined || s === rival.seat) continue // 队友自己不是威胁
+    if (remaining !== undefined && !remaining.includes(s)) continue
+    const key = `r|${i}|${rival.analysis.suitSlot}|${pairs}`
+    let p = memo?.get(key)
+    if (p === undefined) {
+      p = bestUnitPower(opponents[i]!, ctx, rival.analysis.suitSlot, pairs)
+      memo?.set(key, p)
+    }
+    if (p > myPower) return false
+  }
+  return true
+}
+
+/**
  * 「我这手会不会被对手压」——**唯一入口**。
  *
  * 有 `belief` 时走概率推断（只用公开信息）；没有时退回旧的全信息精确判定。
@@ -671,8 +732,17 @@ function scoreCandidate(
       // 而「抢过队友」到底亏不亏，取决于**还有没有对手没出牌**：
       //   · 对手都出完了 ⇒ 这一墩已经锁定是我方的，抢不抢都是我们的分，垫分纯赚；
       //   · 还有对手 ⇒ 抢过去反而可能被反压，这时才该收着打（旧的 -0.5 惩罚是对的）。
+      // 能不能放心垫分 = 「这一墩还会不会被对手抢走」，而不是「还有没有对手没出牌」。
+      // v1.3.38：只有「对手都出完」才允许垫 → 实测 12 局里仍有 7 次「该垫没垫」
+      //（`scripts/dump-ai-round.ts` 的 missed-points）。对手还在、但压不住队友的那一手时，
+      // 垫分同样零风险 —— 那正是人类说的「对家已经最大了，有分就垫」。
       const oppLeft = (input.remainingSeats ?? []).some((x) => teamOf(x) !== teamOf(input.seat))
-      if (!oppLeft) score += 0.4 + points * 0.15
+      const safe =
+        !oppLeft ||
+        (input.belief === undefined &&
+          input.currentWinner !== null &&
+          rivalIsSafe(input.currentWinner, ctx, opponents, input.remainingSeats, input.seat, memo))
+      if (safe) score += 0.4 + points * 0.15
       else score += iAmWinning ? -0.5 : 0.4 + points * 0.1
     } else if (iAmWinning) {
       // 我能压过当前最大：吃分是好事
@@ -690,7 +760,8 @@ function scoreCandidate(
       // ② 赢墩价值：这一墩已有的分越多，越值得花代价去赢
       if (iAmWinning && !partnerLeading) {
         score +=
-          trickPointsSoFar(currentWinner, play) * (isL3 ? L3_WEIGHTS.trickEv : L2_WEIGHTS.trick)
+          trickPointsSoFar(currentWinner, play, input.trickPoints) *
+            (isL3 ? L3_WEIGHTS.trickEv : L2_WEIGHTS.trick)
       }
     }
 
