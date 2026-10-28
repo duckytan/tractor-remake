@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { solveHandFit } from '@ui/render'
+import { fitHandGeometry, solveHandFit } from '@ui/render'
 
 /** 三档卡宽（S/M/L） */
 const SIZES = [120, 150, 190] as const
@@ -107,5 +107,75 @@ describe('solveHandFit', () => {
 
   it('牌数不足 2 张时不做排布', () => {
     expect(solveHandFit(1404, 150, 1, 0)).toEqual({ gap: 0, step: STEP_MAX })
+  })
+})
+
+/**
+ * `fitHandGeometry` —— 在 `solveHandFit` 外面再套一层「卡宽收缩」。
+ *
+ * 为什么需要：步长有硬下限，触到下限还放不下时旧实现直接溢出，
+ * 而 `.felt` 是 `overflow: hidden` ⇒ 溢出的牌被裁到屏幕外，扣底时点不到。
+ * 这里锁两件事：① 现实窗口尺寸下**必须放得下**；② 收缩有下限、不是无脑缩。
+ */
+describe('fitHandGeometry', () => {
+  /** 硬下限步长下，n 张牌铺开所需的最小宽度（含分组间隔） */
+  const needOf = (cardW: number, count: number, gapCount: number) =>
+    cardW * (1 + (count - 1) * STEP_HARD_MIN + gapCount * GAP_MIN_RATIO)
+
+  it('放得下时原样返回档位卡宽（不触发收缩）', () => {
+    const g = fitHandGeometry(1871, 190, 25, 4)
+    expect(g.scaled).toBe(false)
+    expect(g.cardW).toBe(190)
+    expect(g.step).toBeGreaterThan(STEP_HARD_MIN)
+  })
+
+  it('庄家 33 张 + L 档 + 窄窗口：收缩卡宽后不再溢出（v1.3.47 修的就是这个）', () => {
+    // 修复前：190px 卡宽 / 33 张 / 可用 1236px ⇒ 溢出 69px；1100px 窗口溢出 159px
+    for (const avail of [1236, 1056, 956]) {
+      const g = fitHandGeometry(avail, 190, 33, 4)
+      expect(g.scaled, `可用 ${avail}`).toBe(true)
+      expect(g.cardW, `可用 ${avail}`).toBeLessThan(190)
+      const total = g.cardW + g.step * 32 * g.cardW + 4 * g.gap
+      expect(total, `可用 ${avail}：总宽 ${total.toFixed(1)} 溢出了`).toBeLessThanOrEqual(avail + 2)
+      expect(g.step, `可用 ${avail}`).toBeGreaterThanOrEqual(STEP_HARD_MIN - 1e-6)
+    }
+  })
+
+  it('M 档 33 张在 1280 窗口本来就放得下，不该白缩一圈', () => {
+    const g = fitHandGeometry(1236, 150, 33, 4)
+    expect(g.scaled).toBe(false)
+    expect(g.cardW).toBe(150)
+  })
+
+  it('收缩有下限：极窄窗口下不再缩到看不清', () => {
+    // 320px 窗口 + 33 张 ⇒ 按比例要缩到 ~42px，被下限 48px 挡住
+    const g = fitHandGeometry(300, 190, 33, 4)
+    expect(g.cardW).toBe(48)
+    expect(g.scaled).toBe(true)
+    // 这种情况下溢出是必然的（物理约束），只要求「不再往下缩」
+    expect(needOf(g.cardW, 33, 4)).toBeGreaterThan(300)
+  })
+
+  it('收缩结果不会比档位卡宽更大（手机档 L 的卡宽本身只有 60px）', () => {
+    // 390×844：L 档被 CSS 媒体查询压到 60px，33 张仍放不下
+    const g = fitHandGeometry(378, 60, 33, 4)
+    expect(g.scaled).toBe(true)
+    expect(g.cardW).toBeLessThanOrEqual(60)
+  })
+
+  it('收缩后手牌总宽永远不超过「不收缩时的总宽」', () => {
+    for (const baseW of SIZES) {
+      for (const avail of [600, 800, 956, 1056, 1236, 1404]) {
+        for (const count of [25, 33] as const) {
+          const g = fitHandGeometry(avail, baseW, count, 4)
+          const raw = baseW + STEP_HARD_MIN * (count - 1) * baseW + 4 * Math.floor(baseW * GAP_MIN_RATIO)
+          const total = g.cardW + g.step * (count - 1) * g.cardW + 4 * g.gap
+          expect(
+            total,
+            `卡宽 ${baseW} / 可用 ${avail} / ${count} 张：收缩后反而更宽`,
+          ).toBeLessThanOrEqual(Math.max(raw, avail) + 2)
+        }
+      }
+    }
   })
 })

@@ -26,7 +26,7 @@
 | **AI 三档难度** | ✅ 完成（M5）—— 随机 / 启发式 / 评估+前瞻 |
 | **打磨与稳定性** | ✅ 完成（M6）—— 动画开关 / 键盘全操作 / 连续 10 局零 error |
 
-**验收状态**（截至 v1.3.34，本机实跑）：44 个测试文件 / **536 例**全通过、浏览器端到端 **18/18** 场景通过（零 console error）、`typecheck` 与 `build` 均通过。
+**验收状态**（截至 v1.3.47，本机实跑）：51 个测试文件 / **600 例**全通过、浏览器端到端 **19/19** 场景通过（零 console error）、`typecheck` 与 `build` 均通过。
 
 线上演示：https://tractor-remake.vercel.app
 
@@ -37,7 +37,7 @@
 ```bash
 npm install
 npm run dev       # http://localhost:5173
-npm test          # 单元测试 + 集成测试（536 例）
+npm test          # 单元测试 + 集成测试（600 例）
 npm run build     # 产出 dist/
 npm run test:e2e  # 浏览器端到端（需先 npm run preview）
 ```

@@ -78,6 +78,17 @@ const HAND_STEP_MAX = 0.58
 const HAND_STEP_MIN = 0.28
 /** 极端拥挤时步长的硬下限：宁可切掉角标的一个数字，也不让手牌横向溢出整张牌 */
 const HAND_STEP_HARD_MIN = 0.18
+/**
+ * 手牌卡宽收缩的下限（px）。
+ *
+ * 触到硬下限步长还放不下时，`fitHandGeometry` 会整手按比例缩小卡宽。
+ * 但缩到 48px 以下角标就真的糊了 —— 那时宁可溢出（320px 窗口 + 庄家 33 张这种极端组合），
+ * 也不做「缩到看不清但确实没溢出」这种自欺欺人的处理。
+ *
+ * 取值依据：手机档（S 档卡宽 46px）是**唯一一档在 390×844 下能放下 33 张**的档位，
+ * 所以 48px 是「还能看清角标」与「手机上真的放得下」的交点。
+ */
+const HAND_MIN_CARD_W = 48
 /** 侧家（西/东）竖向牌背最多显示几张 —— 竖向更吃高度，比北家的 13 少 */
 const SIDE_SHOW = 10
 /**
@@ -1399,6 +1410,13 @@ export interface HandFit {
   readonly step: number
 }
 
+export interface HandGeometry extends HandFit {
+  /** 实际使用的卡宽（px）—— 放不下时会小于档位卡宽 */
+  readonly cardW: number
+  /** 是否触发了卡宽收缩 */
+  readonly scaled: boolean
+}
+
 /**
  * 手牌排布求解：给定可用宽度与卡宽，算出「分组间隔」和「重叠步长」。
  *
@@ -1454,18 +1472,75 @@ export function solveHandFit(
   return { gap: gapCount > 0 ? Math.round(gap) : 0, step: Math.min(HAND_STEP_MAX, step) }
 }
 
+/**
+ * 手牌卡宽的自适应收缩（v1.3.47）。
+ *
+ * `solveHandFit` 的步长有硬下限 `HAND_STEP_HARD_MIN`（角标还看得见的最低重叠），
+ * 一旦触到它**还是放不下**，旧实现就放任溢出 —— `docs/15` 末条把它记成
+ * 「物理约束，三选二」，实测后果比记录的更糟：
+ *
+ * | 场景 | 溢出 |
+ * |---|---|
+ * | L 档 1280×800 · 庄家 33 张 | **69px** |
+ * | L 档 1100×800 · 庄家 33 张 | **159px** |
+ * | L 档 1000×800 · 庄家 33 张 | **194px** |
+ * | M 档 1000×800 · 庄家 33 张 | **53px** |
+ *
+ * 而 `.felt` 是 `overflow: hidden` ⇒ 溢出的那几张**直接被裁到屏幕外**，
+ * 而扣底阶段恰恰要逐张点选 8 张牌 —— 被裁掉的牌点不到，这是功能问题，不是观感问题。
+ *
+ * 所以补一档：**整手牌的卡宽按比例缩小**，直到硬下限步长刚好放得下。
+ * 只缩手牌（`--card-w` 写在 `.hand` 上，靠 CSS 变量继承），牌桌与出牌区的尺寸不受影响。
+ *
+ * 抽成纯函数是为了能单测（与 `solveHandFit` 同一套路，见 `tests/ui/handFit.test.ts`）。
+ */
+export function fitHandGeometry(
+  avail: number,
+  baseW: number,
+  count: number,
+  gapCount: number,
+): HandGeometry {
+  if (count <= 1 || !avail || !baseW) {
+    return { cardW: baseW, gap: 0, step: HAND_STEP_MAX, scaled: false }
+  }
+  // 硬下限步长下所需的最小宽度
+  const need = baseW * (1 + (count - 1) * HAND_STEP_HARD_MIN + gapCount * SUIT_GAP_MIN_RATIO)
+  if (need <= avail) {
+    return { cardW: baseW, ...solveHandFit(avail, baseW, count, gapCount), scaled: false }
+  }
+  // 卡宽本身也有下限：再小就只剩一条色带，宁可溢出也不做无意义的缩。
+  // 同时**不能比档位卡宽更大** —— 手机档 L 的卡宽本身只有 60px（CSS 媒体查询压过），
+  // 若这里按 64px 的下限往上抬，反而比不缩更宽（实测 390×844 溢出 29 → 43px）。
+  const cardW = Math.min(
+    baseW,
+    Math.max(HAND_MIN_CARD_W, Math.floor((avail / need) * baseW)),
+  )
+  return { cardW, ...solveHandFit(avail, cardW, count, gapCount), scaled: true }
+}
+
 /** 把求解结果写到 `.hand` 的 CSS 变量上（DOM 侧只做这一件事） */
 function fitHand(hand: HTMLElement, count: number, gapCount: number): void {
   if (count <= 1) return
-  const cardW = hand.firstElementChild
-    ? (hand.firstElementChild as HTMLElement).getBoundingClientRect().width
-    : 92
+  const baseW = cardWidthPx()
   const avail = hand.clientWidth
-  if (!avail || !cardW) return
+  if (!avail || !baseW) return
 
-  const { gap, step } = solveHandFit(avail, cardW, count, gapCount)
-  hand.style.setProperty('--hand-gap', `${gap}px`)
-  hand.style.setProperty('--hand-step', step.toFixed(3))
+  const g = fitHandGeometry(avail, baseW, count, gapCount)
+  // 卡高 / 抬起量 / 圆角都从 `--card-w` 派生，但它们是**在 :root 上算完再继承**的
+  // （自定义属性里的 var() 在定义处就代换掉了）⇒ 只改 `--card-w` 会得到
+  // 「变窄不变矮」的怪牌。缩放手牌时这几个变量必须一起写。
+  const scaledVars: readonly [string, string][] = [
+    ['--card-w', `${g.cardW}px`],
+    ['--card-h', `${Math.round(g.cardW * 1.4)}px`],
+    ['--sel-raise', `${Math.round(g.cardW * 1.4 * 0.1)}px`],
+    ['--card-radius', `${(g.cardW * 0.06).toFixed(1)}px`],
+  ]
+  for (const [k, v] of scaledVars) {
+    if (g.scaled) hand.style.setProperty(k, v)
+    else hand.style.removeProperty(k)
+  }
+  hand.style.setProperty('--hand-gap', `${g.gap}px`)
+  hand.style.setProperty('--hand-step', g.step.toFixed(3))
 }
 
 /**
