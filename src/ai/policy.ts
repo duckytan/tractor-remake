@@ -711,11 +711,18 @@ export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDeci
  *   ② `handControl`：出牌后的主牌控制力损失（只在「这手白花」时计入）
  *   ③ `leadFollowUp`：首出后我方能否续庄
  */
+/** 打分明细的一项（供 `explainPlay` 与离线分析用） */
+export interface ScorePart {
+  readonly name: string
+  readonly value: number
+}
+
 function scoreCandidate(
   cards: readonly Card[],
   input: AiDecisionInput,
   level: AiLevel,
   memo?: Map<string, number>,
+  trace?: ScorePart[],
 ): number {
   const { ctx, play, currentWinner, partnerLeading, hand, opponents } = input
   const a = analyze(cards, ctx)
@@ -728,10 +735,15 @@ function scoreCandidate(
   const isL2Plus = level >= 2
 
   let score = 0
+  /** 记一项分并把分数加进去（trace 为空时等价于原来的 score += v） */
+  const add = (name: string, v: number): void => {
+    score += v
+    if (trace !== undefined) trace.push({ name, value: v })
+  }
   // ---- 基础：省牌（牌力越低越好）----
   // **首出和跟牌用不同口径**：首出时王是「白花」（墩里还没有分），要计留存溢价；
   // 跟牌时王是「用来赢这墩的分」的，溢价会让 AI 该毙不毙。
-  score -= play.kind === 'follow' ? avgPower : avgLeadCost
+  add(play.kind === 'follow' ? '省牌(跟)' : '省牌(首出)', -(play.kind === 'follow' ? avgPower : avgLeadCost))
 
   if (play.kind === 'follow') {
     // 比较对象必须是**本墩当前最大牌**，不是首出牌。
@@ -772,31 +784,33 @@ function scoreCandidate(
           (input.belief === undefined
             ? rivalIsSafe(rival, ctx, opponents, input.remainingSeats, input.seat, memo)
             : rivalLikelySafe(rival, ctx, input.belief, input.remainingSeats)))
-      if (safe) score += 0.4 + points * 0.15
-      else score += iAmWinning ? -0.5 : 0.4 + points * 0.1
+      if (safe) add('队友赢着·放心垫分', 0.4 + points * 0.15)
+      else add(iAmWinning ? '队友赢着·抢过队友(罚)' : '队友赢着·垫分', iAmWinning ? -0.5 : 0.4 + points * 0.1)
     } else if (iAmWinning) {
       // 我能压过当前最大：吃分是好事
-      score += 0.6 + points * 0.08
+      add('我能压过·吃分', 0.6 + points * 0.08)
     } else {
       // 压不过：垫牌时别送分
-      score -= points * 0.15
+      add('压不过·别送分', -(points * 0.15))
     }
 
     if (isL2Plus) {
       // ① 前瞻：这一手能不能守住？
       //    L2 只比牌力；L3 换精确判定（看结构、看出牌顺序、队友领先时免防守）
       const beaten = willBeBeaten(cards, a, ctx, input, level, partnerLeading, memo)
-      if (beaten) score -= isL3 ? L3_WEIGHTS.exactOver : L2_WEIGHTS.over
+      if (beaten) add('会被压(跟)', -(isL3 ? L3_WEIGHTS.exactOver : L2_WEIGHTS.over))
       // ② 赢墩价值：这一墩已有的分越多，越值得花代价去赢
       if (iAmWinning && !partnerLeading) {
-        score +=
+        add(
+          '赢墩溢价',
           trickPointsSoFar(currentWinner, play, input.trickPoints) *
-            (isL3 ? L3_WEIGHTS.trickEv : L2_WEIGHTS.trick)
+            (isL3 ? L3_WEIGHTS.trickEv : L2_WEIGHTS.trick),
+        )
       }
     }
 
     // ③ L3：压不过还花主牌，才是真的丢控制力（赢了就不算亏）
-    if (isL3 && !iAmWinning) score -= L3_WEIGHTS.control * controlLoss(cards, hand, ctx)
+    if (isL3 && !iAmWinning) add('控制力损失(跟)', -(L3_WEIGHTS.control * controlLoss(cards, hand, ctx)))
   } else {
     // 首出：长套优先（同一槽牌多），大牌留手
     const slot = a.suitSlot
@@ -809,9 +823,9 @@ function scoreCandidate(
       // 「省牌」决定，L1 于是有 53.2% 的首出是「手里最小的那张」（docs/32 B-3）。
       // 提到 0.07 后长套最多贡献 0.7，能与省牌项抗衡，又不至于把「主牌多」变成
       // 「永远出主牌」—— 试过 0.10，L2 的首出王从 1.6% 涨到 4.2%。
-      score += Math.min(slotCount(hand, slot, ctx), 10) * 0.07
+      add('长套优先', Math.min(slotCount(hand, slot, ctx), 10) * 0.07)
     }
-    score -= points * 0.02 // 首出别急着甩分
+    add('首出别甩分', -(points * 0.02))
 
     // ④ 前瞻：首出这手，对手能不能压？（L2 只比牌力，L3 精确判结构）
     //
@@ -822,16 +836,16 @@ function scoreCandidate(
     let beaten = false
     if (isL2Plus) {
       beaten = willBeBeaten(cards, a, ctx, input, level, partnerLeading, memo)
-      if (beaten) score -= isL3 ? L3_WEIGHTS.exactOverLead : L2_WEIGHTS.overLead
+      if (beaten) add('会被压(首出)', -(isL3 ? L3_WEIGHTS.exactOverLead : L2_WEIGHTS.overLead))
       // ⑤ 有连对的长套优先 —— 把拖拉机先兑现
-      if (slot !== -1 && hasTractor(hand, slot, ctx)) score += L2_WEIGHTS.tractor
+      if (slot !== -1 && hasTractor(hand, slot, ctx)) add('有拖拉机·先兑现', L2_WEIGHTS.tractor)
 
       if (!beaten) {
         // ⑥ 兑现：压得住的牌现在出不亏，牌力成本打折（**王的留存溢价不参与打折**，
         //    那条是 v1.3.29 专门为「首出王 11.8%」加的，打折会把它打回原形）
         const powerPart =
           cards.reduce((n, c) => n + ctx.power.get(c.value) / 80, 0) / cards.length
-        score += avgLeadCost - powerPart * L3_WEIGHTS.cashDiscount
+        add('压得住·省牌打折', avgLeadCost - powerPart * L3_WEIGHTS.cashDiscount)
 
         // ⑦ 副牌顶牌先兑现：副牌 A/K 真正的风险不是被压，是留到后面**被毙掉 / 被垫掉**。
         //    `-powerCost` 只看得到「留大牌好」，看不到这一层，所以人类会觉得「有 A 不出 A」很蠢。
@@ -844,7 +858,7 @@ function scoreCandidate(
           // 副牌的牌力就是**这门里的名次**（2→0 … K→10、A→11），不是 0..80 的连续值
           // （踩过的坑：一度按 64 做阈值，结果这条加分永远不触发）。
           // ≥10 即 K 及以上；并且必须是「我手里这门最大的那张」，不是随便一张大牌。
-          if (p >= myMax && p >= 10) score += L3_WEIGHTS.cashTop
+          if (p >= myMax && p >= 10) add('副牌顶牌·先兑现', L3_WEIGHTS.cashTop)
         }
       }
     }
@@ -869,9 +883,9 @@ function scoreCandidate(
               ? 1 // 合法甩牌：默认续庄
               : 0
           : leadFollowUp(cards, ctx, opponents, input.seat, input.remainingSeats, memo)
-      score += L3_WEIGHTS.followUp * followUp
+      add('续庄溢价', L3_WEIGHTS.followUp * followUp)
       // ⑦ 控制力损耗：只在「这手会被压」时才算白花
-      if (beaten) score -= L3_WEIGHTS.control * controlLoss(cards, hand, ctx)
+      if (beaten) add('控制力损失(首出)', -(L3_WEIGHTS.control * controlLoss(cards, hand, ctx)))
     }
   }
 
@@ -919,3 +933,19 @@ function runLenOf(a: PlayAnalysis): number {
 }
 
 export { handStrength }
+
+/**
+ * 把「这一手」的打分拆成明细（离线分析 / 调试用）。
+ *
+ * 为什么要它：用户问「为什么 AI 这么出」，光看总分答不了 ——
+ * 必须看到每一项各贡献多少（省牌、长套、被压、续庄…）。
+ */
+export function explainPlay(
+  input: AiDecisionInput,
+  cards: readonly Card[],
+  level: AiLevel = 3,
+): { total: number; parts: readonly ScorePart[] } {
+  const trace: ScorePart[] = []
+  const total = scoreCandidate(cards, input, level, undefined, trace)
+  return { total, parts: trace }
+}
