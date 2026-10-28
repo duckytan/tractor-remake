@@ -46,3 +46,6 @@ pnpm-debug.log*
 .vite/
 .turbo/
 *.tsbuildinfo
+
+# 插件桥的决策日志（跑一局生成，不进仓库）
+tools/smallnest-bridge/out/
