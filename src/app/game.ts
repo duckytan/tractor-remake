@@ -38,6 +38,7 @@ import { isSameTeam,
   resolveTrick,
   settleRound,
   suitOfValue,
+  suitSlotOf,
   teamOf,
   trickStanding,
 } from '@core'
@@ -778,20 +779,85 @@ function resolveContract(s: GameState): GameState {
 }
 
 /**
- * 扣底选牌：按牌力留最强 25 张，其余 8 张扣掉。
+ * 扣底选牌（v1.3.43 重写）。
  *
- * 抽出来给三处共用：AI 庄家自动扣底、人类庄家手动扣底时的「挂机」代选、
- * 以及将来任何需要「机器替庄家扣底」的场合 —— 三份实现迟早会漂移。
+ * 旧实现只有一句「按牌力留最强 25 张」，实测两个硬伤（`docs/45` §6）：
+ *   · **绝门率只有 2%** —— 低牌分散在各门，垫完每门都还剩几张，等于白扔了毙牌权
+ *   · **垫分与主牌数反向**（主牌 ≤8 的局垫 11.7 分、≥13 的局只垫 8.2 分）——
+ *     因为 5 的牌力只有 2，永远排最后。而人类的经验是「主牌多才敢垫分」
  *
- * **必须用牌力序而不是展示序**：埋底要留「最强 25 张」，
- * 展示序会把整门 ♥ 排在 ♠ 前面，与强弱无关。
+ * 新做法：给每张牌算一个「垫它的意愿」，再在几个候选方案里挑总分最高的。
+ *
+ *   · 弱牌更愿意垫（`1 - power/80`）
+ *   · **主牌基本不垫**（-3）—— 控权/毙牌权比一张副牌 A 值钱
+ *   · 副牌 A 不垫（-1.5）
+ *   · **分牌按主牌数打折**：主牌 ≤8 时每分 -0.30、9~12 时 -0.15、≥13 时 -0.05
+ *     ⇒ 主牌越多越敢垫分（正是人类那句「王牌、主牌多时底牌可多垫分」）
+ *   · 成型组（对子/连对的一员）少垫（-0.6）—— 别把成型的牌拆了
+ *   · 孤张优先垫（+0.4）
+ *
+ * 候选方案 = 「纯按意愿垫 8 张」+「把某一门副牌整门垫掉（再用最差的牌补足）」，
+ * 后者额外给**绝门奖励**（每张 +0.5）—— 绝门换来的是"随时能毙"的权利。
+ *
+ * 抽出来给三处共用：AI 庄家自动扣底、人类庄家手动扣底时的「挂机」代选。
  */
 export function chooseBuryIds(s: GameState, seat: Seat): number[] {
   const ctx = ctxOf(s)
   const hand = s.hands[seat] as readonly Card[]
-  const sorted = sortByPowerDesc(hand, ctx)
-  const keep = new Set(sorted.slice(0, HAND_SIZE).map((c) => c.id))
-  return hand.filter((c) => !keep.has(c.id)).map((c) => c.id)
+  const need = hand.length - HAND_SIZE
+  if (need <= 0) return []
+
+  const slotOf = (c: Card): number => suitSlotOf(c.value, ctx.power)
+  const trumps = hand.filter((c) => slotOf(c) === 4)
+  const jokers = trumps.filter((c) => c.value >= 52).length
+  /** 主牌越多越敢垫分（人类经验：主牌/王牌多时底牌可多垫分） */
+  const pointWeight = trumps.length >= 13 || jokers >= 2 ? 0.05 : trumps.length >= 9 ? 0.15 : 0.3
+
+  /** 同一 value 在手里几张（判断孤张 / 成型组） */
+  const countOf = new Map<number, number>()
+  for (const c of hand) countOf.set(c.value, (countOf.get(c.value) ?? 0) + 1)
+
+  /** 垫它的意愿：越大越想垫 */
+  const willing = (c: Card): number => {
+    let w = 1 - ctx.power.get(c.value) / 80
+    const slot = slotOf(c)
+    if (slot === 4) w -= 3 // 主牌基本不垫
+    else if (c.value % 13 === 12) w -= 1.5 // 副牌 A
+    w -= cardsScore([c]) * pointWeight // 分牌按主牌数打折
+    if ((countOf.get(c.value) ?? 0) >= 2) w -= 0.6 // 别拆对子
+    else w += 0.4 // 孤张优先垫
+    return w
+  }
+
+  const scoreOf = (cards: readonly Card[]): number => cards.reduce((n, c) => n + willing(c), 0)
+  const byWilling = [...hand].sort((a, b) => willing(b) - willing(a))
+
+  // 方案 1：纯按意愿垫
+  let best = byWilling.slice(0, need)
+  let bestScore = scoreOf(best)
+
+  // 方案 2：把某一门副牌整门垫掉（再用意愿最高的牌补足），拿绝门奖励
+  for (const slot of [0, 1, 2, 3] as const) {
+    if (slot === ctx.trump) continue
+    const suitCards = hand.filter((c) => slotOf(c) === slot)
+    if (suitCards.length === 0 || suitCards.length > need) continue
+    const ids = new Set(suitCards.map((c) => c.id))
+    const plan = [...suitCards]
+    for (const c of byWilling) {
+      if (plan.length >= need) break
+      if (ids.has(c.id)) continue
+      plan.push(c)
+    }
+    if (plan.length !== need) continue
+    // 绝门奖励：整门垫掉的每张 +0.5（换来"随时能毙"的权利）
+    const score = scoreOf(plan) + suitCards.length * 0.5
+    if (score > bestScore) {
+      bestScore = score
+      best = plan
+    }
+  }
+
+  return best.map((c) => c.id)
 }
 
 /**
