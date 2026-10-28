@@ -10,6 +10,7 @@ import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
 import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
+import { initStats, recordRound } from '@app/stats'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
 import type { Prefs } from '@app/persist'
@@ -64,6 +65,9 @@ if (loaded.issue === 'version') {
   state = { ...state, notice: '存档内容已损坏，已重新开局' }
 }
 
+// 战绩缓存（跨局累计，与存档分开；只在这里读一次 localStorage）
+initStats()
+
 let aiTimer: number | null = null
 let dealTimer: number | null = null
 /** 悔牌快照栈（不持久化，见 app/undo.ts） */
@@ -93,6 +97,10 @@ function step(a: Action): void {
   const prev = state
   state = reduce(state, a)
   if (shouldPush(prev, state)) undoStore = pushUndo(undoStore, prev)
+  // 刚打完一局：记进战绩（跨局累计，是玩家自己判断"AI 强不强"的唯一外部依据）
+  const justSettled = prev.phase !== 'settle' && state.phase === 'settle'
+  const justOver = prev.phase !== 'over' && state.phase === 'over'
+  if (justSettled || justOver) recordRound(state)
 }
 
 function scheduleAi(): void {

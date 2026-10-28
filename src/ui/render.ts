@@ -19,6 +19,7 @@ import type { Action, CardSize, GameState } from '@app/state'
 import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
 import { hintExplain } from '@app/hintView'
+import { statsLine } from '@app/stats'
 import {
   counterView,
   dealtCardsFor,
@@ -846,9 +847,13 @@ export function settlePanel(s: GameState): string {
   rows.push(`<div class="row"><span>下一局</span><b>${esc(SEAT_LABEL[r.newDealer])}坐庄</b></div>`)
   rows.push(`<div class="row"><span>级牌</span><b>队A ${esc(levelLabel(r.newLevels.a))} · 队B ${esc(levelLabel(r.newLevels.b))}</b></div>`)
 
+  // 累计战绩：玩家自己判断"AI 强不强"的唯一外部依据（详见 app/stats.ts）
+  const line = statsLine()
+
   return `<div class="panel">
     <h2>${over ? `游戏结束 · ${r.winnerTeam === 0 ? '队A' : '队B'} 获胜` : '本局结算'}</h2>
     ${rows.join('')}
+    ${line ? `<div class="row row--stats"><span>战绩</span><b>${esc(line)}</b></div>` : ''}
     <div class="panel-actions">
       <!-- 结算弹层会盖住顶栏，「记录」按钮点不到 ⇒ 这里补一个入口，
            打完一局立刻能复盘（logOpen 优先级高于 settle，关闭后回到本面板） -->

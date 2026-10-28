@@ -1,0 +1,11 @@
+{
+  "id": "lead-ace-first",
+  "engine": "l3",
+  "desc": "有副牌 A 且这门短（没有长套理由），应该先把 A 兑现掉 —— 用户原话「有 A 居然不先出 A，反而出小牌」",
+  "trump": 2,
+  "level": 2,
+  "myHand": "♦A ♦3 ♥9 ♥5 ♣8 ♣2",
+  "trick": [],
+  "expect": ["♦A"],
+  "expectNot": ["♦3"]
+}

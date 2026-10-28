@@ -628,6 +628,10 @@ html, body {
 }
 .panel .row span { color: var(--ink-dim); }
 .panel .row b { font-weight: 600; }
+/* 累计战绩那一行：内容比其他行长得多，允许换行并压低字号，
+   否则会把「下一局」按钮挤出面板（窄屏尤其明显） */
+.panel .row--stats { align-items: baseline; }
+.panel .row--stats b { font-size: 12px; font-weight: 500; text-align: right; line-height: 1.5; }
 .panel > .btn { margin-top: 18px; width: 100%; background: #1d9e75; border-color: #1d9e75; color: #fff; }
 /* 结算面板的两个按钮并排（查看记录 / 下一局） */
 .panel-actions { display: flex; gap: 10px; margin-top: 18px; }
