@@ -20,6 +20,7 @@ import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
 import { hintExplain } from '@app/hintView'
 import { statsLine } from '@app/stats'
+import { exportRounds, logSummary } from '@app/roundLog'
 import {
   counterView,
   dealtCardsFor,
@@ -1196,7 +1197,12 @@ function logPanel(s: GameState): string {
     <h2>对局记录</h2>
     <p class="muted">已打完 ${s.history.length} 墩（仅内存，不写存档）</p>
     ${items ? `<div class="log-list">${items}</div>` : '<div class="log-empty">还没有打完的墩</div>'}
-    <div class="panel-foot"><button class="btn btn--primary" data-act="toggleLog">关闭</button></div>
+    <div class="panel-foot">
+      <!-- 导出完整对局数据（开局手牌 + 每墩 + 你的每个决策 vs AI 的建议），
+           交给分析脚本用；已记录 ${logSummary().rounds} 局 -->
+      <button class="btn" data-act="exportLogs">导出对局数据（${logSummary().rounds} 局）</button>
+      <button class="btn btn--primary" data-act="toggleLog">关闭</button>
+    </div>
   </div>`
 }
 
@@ -1628,6 +1634,21 @@ function bind(root: HTMLElement, s: GameState, act: Actions): void {
       case 'toggleLog':
         act.dispatch({ type: 'toggleLog' })
         break
+      case 'exportLogs': {
+        // 直接下载 JSON：玩家把文件拖进对话即可分析，不需要任何额外工具
+        const blob = new Blob([exportRounds()], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        // 用**本地时间**做文件名（toISOString 是 UTC，晚上导出会显示成上午）
+        const d = new Date()
+        const pad = (n: number): string => String(n).padStart(2, '0')
+        const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`
+        a.href = url
+        a.download = `tractor-logs-${stamp}.json`
+        a.click()
+        URL.revokeObjectURL(url)
+        break
+      }
       case 'toggleAnimation':
         act.dispatch({ type: 'toggleAnimation' })
         break

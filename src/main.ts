@@ -11,6 +11,7 @@ import type { Card, Play } from '@core'
 import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { initStats, recordRound } from '@app/stats'
+import { beginRound, finishRound, initRoundLog, noteHumanPlay } from '@app/roundLog'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
 import type { Prefs } from '@app/persist'
@@ -67,6 +68,8 @@ if (loaded.issue === 'version') {
 
 // 战绩缓存（跨局累计，与存档分开；只在这里读一次 localStorage）
 initStats()
+// 对局数据记录（复盘用，与战绩统计分开）
+initRoundLog()
 
 let aiTimer: number | null = null
 let dealTimer: number | null = null
@@ -93,6 +96,14 @@ const DEAL_INTERVAL_MS = 55
  * AI 与人类都走这里 —— 悔牌要把 AI 出的牌一起回退，
  * 所以压栈不能只挂在人类操作的 dispatch 上。
  */
+/**
+ * 这一手之前有没有点过「提示」。
+ *
+ * 不能等到出牌时读 `hintIds` —— 点牌会 `setSelection` 把它清掉，读出来永远是空。
+ * 换墩就清（提示是对"这一手"的参考，不该跨墩继承）。
+ */
+let hintUsedThisTurn = false
+
 function step(a: Action): void {
   const prev = state
   state = reduce(state, a)
@@ -100,7 +111,29 @@ function step(a: Action): void {
   // 刚打完一局：记进战绩（跨局累计，是玩家自己判断"AI 强不强"的唯一外部依据）
   const justSettled = prev.phase !== 'settle' && state.phase === 'settle'
   const justOver = prev.phase !== 'over' && state.phase === 'over'
-  if (justSettled || justOver) recordRound(state)
+  if (justSettled || justOver) {
+    recordRound(state)
+    finishRound(state)
+  }
+
+  /* ---- 对局数据记录（复盘用） ----
+     ① 定主刚结束、进入埋底/出牌时抓**开局手牌**：再晚就出过牌了，复盘看不到原始手牌。
+     ② 人类每出一手，额外算一次「同局面 L3 会出什么」（影子决策）——
+        这是分析"你和 AI 差在哪"的唯一依据，也是将来扩标注题库的素材。
+     ③ 结算时落库（幂等）。 */
+  if (prev.phase === 'contract' && (state.phase === 'bury' || state.phase === 'play')) {
+    beginRound(state)
+  }
+  if (a.type === 'showHint') hintUsedThisTurn = true
+  if (a.type === 'playSelected' && prev.phase === 'play' && state !== prev) {
+    const hand = prev.hands[HUMAN_SEAT] as readonly Card[]
+    const picked = hand.filter((c) => prev.selected.includes(c.id))
+    if (picked.length > 0) {
+      noteHumanPlay(prev, picked, choosePlay(prev, HUMAN_SEAT, 3, { peek: true }), hintUsedThisTurn)
+    }
+    hintUsedThisTurn = false
+  }
+  if (prev.trick !== state.trick) hintUsedThisTurn = false
 }
 
 function scheduleAi(): void {
@@ -170,7 +203,10 @@ function scheduleDeal(): void {
     dealTimer = null
     if (state.phase !== 'contract') return
     if (state.revealed >= DEAL_TOTAL || state.dealPrompt) return
-    state = reduce(state, { type: 'revealTick' })
+    // **必须走 `step`**：直接 `state = reduce(...)` 会绕过 `step` 里的记账
+    //（悔牌栈 / 战绩 / 对局记录）。发牌最后一张可能就把 `phase` 推到 `play`，
+    // 绕过时「开局快照」永远抓不到 ⇒ 整局的复盘数据没有手牌（v1.3.42 实测踩到）。
+    step({ type: 'revealTick' })
     afterChange()
   }, Math.round(DEAL_INTERVAL_MS * (ANIM_SPEED_SCALE[state.animSpeed] ?? 1)))
 }
