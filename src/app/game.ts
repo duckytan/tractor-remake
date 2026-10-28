@@ -930,7 +930,13 @@ export function buryCards(s: GameState, ids: readonly number[]): GameState {
 
 /* ---------- 出牌 ---------- */
 
-function playCards(s: GameState, seat: Seat, cards: readonly Card[]): GameState {
+/**
+ * 把「某座位出这几张牌」落到状态上（规则裁决入口）。
+ *
+ * 导出给**离线工具**用（`scripts/judge-divergences.ts` 按对局日志重放）：
+ * 重放别的座位不能走 `setSelection` + `playSelected` —— 那两个动作只作用于人类座位。
+ */
+export function playCards(s: GameState, seat: Seat, cards: readonly Card[]): GameState {
   const ctx = ctxOf(s)
   const isLead = s.trick.plays.length === 0
   const leadPlay = isLead ? undefined : (s.trick.plays[0] as Play)
