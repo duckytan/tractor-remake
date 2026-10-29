@@ -80,6 +80,8 @@ export class MusicEngine {
   keyShift = 0
   /** 最近一次实际使用的紧张度（平滑后） */
   private tensionCur = 0
+  /** 最近一次调度用的**实际移调量**（半音，含紧张度修正）—— 诊断用 */
+  lastTranspose = 0
 
   /** 发声实现：可热切换（原生 ↔ Tone），调度器本身不动 */
   private renderer: MusicRenderer
@@ -186,7 +188,18 @@ export class MusicEngine {
     const loopBar = bi % theme.loopBars
     const ci = loopBar % 4
     const chord = CHORDS[ci] ?? CHORDS[0]!
-    const tr = sc.tp + Math.round(-2 * t)
+    // **移调只由场景决定，不跟紧张度走**（v1.3.45 修）。
+    //
+    // 旧实现是 `sc.tp + Math.round(-2 * t)`：`t` 每 40ms 平滑更新一次，
+    // 而 `Math.round` 把它量化成**整半音**，于是整首曲子会在**乐句中间**突然降 1~2 个半音。
+    // 实测一轮 48 小节降了两个半音，其中第 21 小节那次落在「全奏」段的第 5 小节 ——
+    // 听起来就是"变调很突兀"（用户 2026-10-30 反馈）。
+    //
+    // 紧张感本来就有三条**渐变**通道在表达，不需要动音高：
+    //   · `bright`（+0.3t 的亮度）· 空拍加密（t>0.5 补十六分）· BPM +8%
+    // 音高是"调性"，一旦量化就必然突变 —— 调性要么不动，要么整段转。
+    const tr = sc.tp
+    this.lastTranspose = tr
     this.keyShift = sc.tp
 
     let sec = sectionAt(bi)

@@ -335,9 +335,23 @@ export function playSfx(rt: SfxRuntime, host: SfxHost, name: string, opts: SfxOp
   }
 }
 
-/** 音效音高：C 大调高两个八度 + 音级轮转 + 张力降调 + 段位移调 */
-export function nextPitch(rt: SfxRuntime, name: string, degree: number | undefined, tension: number, keyShift: number): number {
+/**
+ * 音效音高：C 大调高两个八度 + 音级轮转 + 段位移调。
+ *
+ * **不再跟紧张度变调**（v1.3.45）：旧实现有 `Math.round(-2 * tension)`，
+ * 于是音效会在半路整体降半音，和 BGM 一起"变调突兀"。
+ * 音效必须和 BGM 待在**同一个调**上，而 BGM 的调性现在只由场景决定。
+ *
+ * @param _tension 保留参数位（调用方仍在传），**不再参与音高计算**
+ */
+export function nextPitch(
+  rt: SfxRuntime,
+  name: string,
+  degree: number | undefined,
+  _tension: number,
+  keyShift: number,
+): number {
   const deg = degree ?? ((rt.rr.get(name) ?? 0) + 1) % 5
   if (degree === undefined) rt.rr.set(name, deg)
-  return 72 + (SCALE[deg % SCALE.length] as number) + Math.round(-2 * tension) + keyShift
+  return 72 + (SCALE[deg % SCALE.length] as number) + keyShift
 }
