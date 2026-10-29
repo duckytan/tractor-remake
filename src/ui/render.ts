@@ -901,7 +901,10 @@ export function settlePanel(s: GameState): string {
   const over = s.phase === 'over'
   const rows: string[] = []
   rows.push(`<div class="row"><span>闲家得分</span><b>${esc(r.defenderScore)}</b></div>`)
-  rows.push(`<div class="row"><span>${r.dealerChanged ? '闲家上台' : '庄家方继续'}</span><b>${esc(r.levels)} 级</b></div>`)
+  // 「应升」与实际不符时（必打截断 / 已到打王），第一行写成「应升 N 级」——
+  // 否则先读「升 1 级」再读下面「实际升 0 级」，两句互相打脸。
+  const gained = r.actualLevels === r.levels ? `${r.levels} 级` : `应升 ${r.levels} 级`
+  rows.push(`<div class="row"><span>${r.dealerChanged ? '闲家上台' : '庄家方继续'}</span><b>${esc(gained)}</b></div>`)
   if (r.actualLevels !== r.levels) {
     // 升级队是否已经在终点级（打王）：此时「应升 X 级」兑现不了，
     // 但这**不是必打截断**（没有 guardLevel），要说清是「到顶了」，
