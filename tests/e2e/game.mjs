@@ -10,18 +10,24 @@
  *   npm run test:e2e
  *
  * 环境变量：
- *   E2E_BASE    目标地址，默认 http://127.0.0.1:4173（本地 preview）
+ *   E2E_BASE    目标地址，默认 http://localhost:4173（本地 preview）
  *               也可指向线上：E2E_BASE=https://tractor-remake.vercel.app
  *   E2E_PROXY   代理地址，如 http://127.0.0.1:7890（访问线上时才需要）
  *
  * 注意：本机默认的 HTTPS_PROXY(11918) 对 github.com 不通，
  * 访问线上地址时必须显式设 E2E_PROXY=127.0.0.1:7890。
+ *
+ * **默认地址必须写 `localhost` 而不是 `127.0.0.1`**（v1.3.48）：
+ * `vite preview` 的 host 默认是 `localhost`，在 Windows 上 Node 会优先解析成 `::1`，
+ * 于是服务只监听 `[::1]:4173` —— 客户端连 `127.0.0.1` 直接 `ERR_CONNECTION_REFUSED`，
+ * `npm run test:e2e` 开箱即挂（实测 19 条全灭，报错看着像「没起服务」，其实是地址族不匹配）。
+ * `localhost` 由 Node 的 autoSelectFamily 双栈尝试，两种绑定都能连上。
  */
 
 import { chromium } from 'playwright'
 import { mkdirSync } from 'node:fs'
 
-const BASE = process.env.E2E_BASE ?? 'http://127.0.0.1:4173'
+const BASE = process.env.E2E_BASE ?? 'http://localhost:4173'
 const SHOTS = '.tmp/e2e-shots'
 const PROXY = process.env.E2E_PROXY
 mkdirSync(SHOTS, { recursive: true })
@@ -32,6 +38,27 @@ const rec = (name, ok, evidence) => {
   console.log(`${ok ? 'PASS' : 'FAIL'} | ${name} | ${evidence}`)
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * 预检目标地址：连不上时直接退出并给出可操作提示。
+ * 不加这一步的话，19 条用例会在第一次 goto 就集体抛错，
+ * 输出里只剩一坨 `page.goto: net::ERR_CONNECTION_REFUSED` —— 看起来像代码坏了。
+ */
+try {
+  // 设了代理时不做预检：Node 的 fetch 不认浏览器的 proxy 配置，
+  // 直连线上地址在本机大概率被墙，预检会误报「不可达」。
+  if (!PROXY) {
+    const res = await fetch(BASE, { signal: AbortSignal.timeout(5000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  }
+} catch (e) {
+  console.error(
+    `\n[e2e] 目标地址不可达：${BASE}（${e.message}）\n` +
+      `  本地跑：先开一个终端执行 \`npm run build && npm run preview\`，再执行本脚本\n` +
+      `  线上跑：E2E_BASE=https://tractor-remake.vercel.app E2E_PROXY=127.0.0.1:7890\n`,
+  )
+  process.exit(1)
+}
 
 /** 逐张点击手牌：每次状态变化都会整体重建 DOM，必须重新查询再点 */
 const clickHandCards = async (page, ids) => {

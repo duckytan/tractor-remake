@@ -14,6 +14,15 @@ export function nextLevel(cur: LevelRank, mode: 0 | 1): LevelRank {
 }
 
 /**
+ * 「打王」是终点级（ADR-011）：某队到打王后**只能靠坐庄赢下本局通关**，
+ * 级牌不会再往前推。`nextLevel` 里 18 → 2/3 那条只是原版的循环口径
+ * （原版没有终局判定），**结算路径必须夹住**，否则已到打王的队当闲家赢一局
+ * 会被打回 3 级 —— 实测 200 副连打里发生 134 次（每局约 0.67 次），
+ * 玩家攒到打王的进度会被一局抹掉，且永远等不到「打王坐庄」那一局。
+ */
+export const TERMINAL_LEVEL: LevelRank = 18
+
+/**
  * 该级牌是否受「必打」保护。
  *
  * 注意：**与出牌无关**。它约束的是升级时不能跳过这些级牌（ADR-010）。
@@ -49,6 +58,8 @@ export function advanceLevel(from: LevelRank, levels: number, config: RuleConfig
   // 循环次数就跟着失控 —— 实测「必打全关 + defenderScore=1e9」会跑 2500 万次 / 78ms。
   // 从 2 升到打王级最多 14 级，给 20 已经足够宽松。
   const n = Math.max(0, Math.min(Math.trunc(levels), 20))
+  // 已在打王：没有任何「再升一级」的余地，直接原地不动（不是截断，所以 stopped=false）
+  if (from === TERMINAL_LEVEL) return { to: TERMINAL_LEVEL, stopped: false, actualLevels: 0 }
   let cur = from
   let done = 0
   for (let i = 0; i < n; i++) {
@@ -57,6 +68,11 @@ export function advanceLevel(from: LevelRank, levels: number, config: RuleConfig
     done += 1
     if (isGuardedLevel(cur, config)) {
       return { to: cur, stopped: true, guardLevel: cur, actualLevels: done }
+    }
+    // 「打王必打」开关关掉时也要停在打王上（见 TERMINAL_LEVEL 注释）：
+    // 否则 A 升 3 级会 1→18→3→4 直接跨过终点级，那一队永远赢不了。
+    if (cur === TERMINAL_LEVEL) {
+      return { to: TERMINAL_LEVEL, stopped: true, guardLevel: TERMINAL_LEVEL, actualLevels: done }
     }
   }
   return { to: cur, stopped: false, actualLevels: done }

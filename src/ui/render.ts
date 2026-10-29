@@ -12,7 +12,7 @@
  */
 
 import type { Card, LevelRank, Play, PlayResult, RuleConfig, RuleContext, Seat, Trump } from '@core'
-import { DEAL_TOTAL, DECK_SIZE, GUARD_NEED, checkPlay, dealtCount, isSameTeam } from '@core'
+import { DEAL_TOTAL, DECK_SIZE, GUARD_NEED, TERMINAL_LEVEL, checkPlay, dealtCount, isSameTeam } from '@core'
 import type { AiLevel } from '@ai/policy'
 import { THEMES, THEME_ORDER, isThemeKey } from '@audio/scenes'
 import type { Action, CardSize, GameState } from '@app/state'
@@ -903,9 +903,21 @@ export function settlePanel(s: GameState): string {
   rows.push(`<div class="row"><span>闲家得分</span><b>${esc(r.defenderScore)}</b></div>`)
   rows.push(`<div class="row"><span>${r.dealerChanged ? '闲家上台' : '庄家方继续'}</span><b>${esc(r.levels)} 级</b></div>`)
   if (r.actualLevels !== r.levels) {
-    rows.push(
-      `<div class="row"><span>必打截断</span><b>实际升 ${esc(r.actualLevels)} 级${r.guardLevel ? `（停在 ${esc(levelLabel(r.guardLevel))}）` : ''}</b></div>`,
-    )
+    // 升级队是否已经在终点级（打王）：此时「应升 X 级」兑现不了，
+    // 但这**不是必打截断**（没有 guardLevel），要说清是「到顶了」，
+    // 否则玩家会看到一句没头没尾的「实际升 0 级」。
+    const leveledTo = r.levelUpTeam === 0 ? r.newLevels.a : r.newLevels.b
+    if (r.guardLevel) {
+      rows.push(
+        `<div class="row"><span>必打截断</span><b>实际升 ${esc(r.actualLevels)} 级（停在 ${esc(levelLabel(r.guardLevel))}）</b></div>`,
+      )
+    } else if (leveledTo === TERMINAL_LEVEL) {
+      rows.push(
+        `<div class="row"><span>打王</span><b>已是终点级 · 坐庄赢下即通关</b></div>`,
+      )
+    } else {
+      rows.push(`<div class="row"><span>升级</span><b>实际升 ${esc(r.actualLevels)} 级</b></div>`)
+    }
   }
   rows.push(`<div class="row"><span>下一局</span><b>${esc(SEAT_LABEL[r.newDealer])}坐庄</b></div>`)
   rows.push(`<div class="row"><span>级牌</span><b>队A ${esc(levelLabel(r.newLevels.a))} · 队B ${esc(levelLabel(r.newLevels.b))}</b></div>`)

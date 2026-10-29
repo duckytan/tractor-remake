@@ -209,6 +209,62 @@ describe('TC-901 终局判定', () => {
   })
 })
 
+/**
+ * 打王是终点级（ADR-011）。回归：v1.3.48 前 `advanceLevel` 会照 `nextLevel` 的
+ * 18 → 2/3 回卷，于是「已在打王的那队当闲家赢一局」会把 18 打回 3 级。
+ * 实测 200 副连打里发生 **134 次**（每局约 0.67 次），玩家攒到打王的进度被一局抹掉。
+ */
+describe('TC-901b 打王级不回卷', () => {
+  it('闲家已在打王、赢下本局 → 级牌保持打王，换庄而非倒退', () => {
+    const r = settleRound({
+      defenderScore: 120, // 闲家上台 +1 级
+      dealerSeat: 1, // 队 1 坐庄 ⇒ 闲家是队 0
+      levels: { a: 18, b: 5 },
+      config: noGuards,
+      mode: 1,
+    })
+    expect(r.levelUpTeam).toBe(0)
+    expect(r.newLevels.a).toBe(18) // 不能变成 3
+    expect(r.dealerChanged).toBe(true)
+    expect(r.newDealer).toBe(2)
+    expect(r.gameOver).toBe(false) // 上台而已，还要坐庄赢下才通关
+  })
+
+  it('打王队上台后再坐庄赢下 → 通关（回卷会让这条路径永远走不到）', () => {
+    const up = settleRound({
+      defenderScore: 120,
+      dealerSeat: 1,
+      levels: { a: 18, b: 5 },
+      config: noGuards,
+      mode: 1,
+    })
+    const win = settleRound({
+      defenderScore: 40, // 庄家方（队 0，座位 2）升 1 级 ⇒ 已在打王 ⇒ 通关
+      dealerSeat: up.newDealer,
+      levels: up.newLevels,
+      config: noGuards,
+      mode: 1,
+    })
+    expect(win.gameOver).toBe(true)
+    expect(win.winnerTeam).toBe(0)
+  })
+
+  it('advanceLevel(打王, n) 原地不动', () => {
+    const r = advanceLevel(18 as LevelRank, 3, noGuards, 1)
+    expect(r.to).toBe(18)
+    expect(r.actualLevels).toBe(0)
+    expect(r.stopped).toBe(false) // 没东西被截断，只是到顶了
+  })
+
+  it('关掉「打王必打」也不会跨过终点级（A 升 3 级停在打王）', () => {
+    const r = advanceLevel(1 as LevelRank, 3, noGuards, 0)
+    expect(r.to).toBe(18)
+    expect(r.actualLevels).toBe(1)
+    expect(r.stopped).toBe(true)
+    expect(r.guardLevel).toBe(18)
+  })
+})
+
 describe('TC-706~708 扣底', () => {
   const c = ctx({ trump: 0, levelRank: 2 })
 

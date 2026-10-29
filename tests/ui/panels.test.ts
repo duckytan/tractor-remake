@@ -61,6 +61,24 @@ describe('settlePanel', () => {
     expect(settlePanel(s)).toContain('必打截断')
   })
 
+  it('已在打王时赢下：说明「终点级」而不是含糊的「实际升 0 级」', () => {
+    const s: GameState = {
+      ...base(),
+      phase: 'settle',
+      // 闲家（队 0）已在打王，赢下只上台不升级 ⇒ actualLevels 0、无 guardLevel
+      lastSettle: settle({
+        levels: 1,
+        actualLevels: 0,
+        newLevels: { a: 18, b: 5 },
+        dealerChanged: true,
+      }),
+    }
+    const html = settlePanel(s)
+    expect(html).toContain('终点级')
+    expect(html).toContain('坐庄赢下即通关')
+    expect(html).not.toContain('必打截断')
+  })
+
   it('终局：标题改成「游戏结束 · X 队获胜」+ 再来一局', () => {
     const s: GameState = {
       ...base(),
