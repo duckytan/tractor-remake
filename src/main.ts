@@ -10,8 +10,9 @@ import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
 import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
-import { initStats, recordRound } from '@app/stats'
-import { beginRound, finishRound, initRoundLog, noteHumanPlay } from '@app/roundLog'
+import { initStats } from '@app/stats'
+import { beginRound, initRoundLog, noteHumanPlay } from '@app/roundLog'
+import { backfillSettled, recordSettled } from '@app/settleRecord'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
 import type { Prefs } from '@app/persist'
@@ -71,6 +72,16 @@ initStats()
 // 对局数据记录（复盘用，与战绩统计分开）
 initRoundLog()
 
+/**
+ * 存档落在结算页 ⇒ 这一局还没落库，补记一次（v1.3.50）。
+ *
+ * `step()` 的记录挂在「phase 刚跳到 settle/over」上，而刷新是**直接落在**结算页、
+ * 没有跳变 —— 不补这一下，在结算页刷新 / 关标签页的那局就永远进不了战绩与复盘导出。
+ * 两条记录都按 `(seed, round)` 幂等，所以与正常路径重复触发也安全。
+ * 必须在 `initStats` / `initRoundLog` **之后**：那两个函数会重建模块缓存。
+ */
+backfillSettled(state)
+
 let aiTimer: number | null = null
 let dealTimer: number | null = null
 /** 悔牌快照栈（不持久化，见 app/undo.ts） */
@@ -114,8 +125,7 @@ function step(a: Action): void {
   const justSettled = prev.phase !== 'settle' && state.phase === 'settle'
   const justOver = prev.phase !== 'over' && state.phase === 'over'
   if (justSettled || justOver) {
-    recordRound(state)
-    finishRound(state)
+    recordSettled(state)
   }
 
   /* ---- 对局数据记录（复盘用） ----

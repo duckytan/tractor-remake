@@ -8,6 +8,64 @@
 
 ---
 
+## [1.3.50] - 2026-10-31
+
+> **修「在结算页刷新，这一局就从战绩和复盘里消失」**
+
+### 现象
+
+打完一局停在结算页 → 刷新（或关掉标签页、手机切后台被回收）→ 再进来：
+结算界面还在，但这局**既不在「累计 N 局」里，也不在导出的复盘 JSON 里**。
+不是偶发：只要在结算页离开，这局就丢。
+
+### 根因 · 记录挂在「phase 跳变」上，而刷新没有跳变
+
+`main.ts` 的 `step()` 里：
+
+```ts
+const justSettled = prev.phase !== 'settle' && state.phase === 'settle'
+if (justSettled || justOver) { recordRound(state); finishRound(state) }
+```
+
+而刷新的路径是：
+
+1. `afterChange()` 每次状态变化都 `saveState()` —— 结算页当然也在存档里；
+2. `loadStateDetailed()` 只拒绝 `contract` 阶段，`settle` / `over` **允许恢复**；
+3. 恢复出来的 `phase` 已经是 `settle` ⇒ `prev.phase !== 'settle'` **恒为假**
+   ⇒ 那两条记录**一次都不会执行**。
+
+两个模块的幂等键（`stats` 的 `seed-round`、`roundLog` 的 `seed+round`）本来就是为
+「同一局被重复触发」设计的，但此前**没有任何路径在刷新后再次触发过**它们。
+
+### 为什么这次值得修
+
+`docs/44` §4 收集真人对局基线的做法是「连打 20~30 局后导出」。结算页恰好是最常见的
+离开时机 —— 丢的往往就是刚打完的那一局，而玩家完全看不出来（面板只是少了一条）。
+
+### 改法
+
+- 新增 `src/app/settleRecord.ts`：`recordSettled()`（战绩 + 复盘一起写，唯一入口）、
+  `backfillSettled()`（启动时对「落在结算页的存档」补记一次）
+- `main.ts`：`step()` 改调 `recordSettled()`；启动时在 `initStats` / `initRoundLog`
+  **之后**调 `backfillSettled(state)`（那两个函数会重建模块缓存）
+- 补记与正常路径共用同一入口，幂等键保证反复刷新也只记一条
+
+### 验证
+
+- 浏览器探针（`.tmp/probe-settle-refresh.mjs`）：抓一份真实结算存档 → 注入新上下文 +
+  空战绩 → 打开页面（等价于在结算页刷新）⇒ 战绩 1 条、复盘 1 条，分数与墩数和存档一致；
+  再刷一次仍是 1 条。**关掉补记后同一探针报 `战绩=0 复盘=0`**，确认探针能抓住缺陷
+- 新增 `tests/app/settleBackfill.test.ts`（4 例）、`tests/integration/sessionRecord.test.ts`
+  （连打 16 局、隔局模拟刷新，守「不重不漏 + 分数一致 + 级牌只进不退」）、
+  `tests/integration/saveFidelity.test.ts`（每步存档读回，终局必须与不中断的一局完全一致）
+- 全量 **616 例**（56 文件）通过，e2e **19/19**，`typecheck` / `build` 通过
+
+> **方法论**：`docs/15` §9 结尾那条「同类风险」写的就是这里 —— `stats` / `roundLog`
+> 只有「单次」口径的测试。这次不是靠读代码猜的，是问了一句
+> 「这个记录函数**还有哪条路径会走到结算页却没被调用**」。
+
+---
+
 ## [1.3.49] - 2026-10-30
 
 > **修「音乐变调突兀」**：整首曲子会在乐句中间突然降 1~2 个半音。
