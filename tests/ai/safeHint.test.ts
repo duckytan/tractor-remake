@@ -12,12 +12,13 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RULE_CONFIG, analyze, canBeat, cardsScore, checkPlay, trickStanding } from '@core'
-import type { Card } from '@core'
+import { DEFAULT_RULE_CONFIG, analyze, buildPowerTable, canBeat, cardsScore, checkPlay, trickStanding } from '@core'
+import type { Card, RuleContext } from '@core'
 import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
-import { isSureToHold } from '@ai/policy'
+import { isSureToHold, rivalIsSafe } from '@ai/policy'
 import { aiPlayFor, choosePlay, chooseSafePlay, newGame, reduce } from '@app/game'
+import { safeHint } from '@ai/safeHint'
 import { HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import type { GameState } from '@app/state'
 import { declareAndPass } from '../helpers/declare'
@@ -135,26 +136,59 @@ describe('safeHint · 稳妥提示', () => {
     if (checked === 0) console.log('  --  样本里没有「压不过且合法候选含 0 分牌」的跟牌局面，跳过')
   })
 
-  it('队友赢着、**还有对手没出** → 收着打（垫最小，不送分）', () => {
+  it('队友赢着、但**有人能压过队友** → 收着打（垫最小，不送分）', () => {
     let checked = 0
     for (const s of SAMPLES) {
       if (s.trick.plays.length === 0) continue
       const ctx = ctxOf(s)
       const standing = trickStanding(s.trick.plays, ctx)
       if (standing === null || standing.winner.seat !== 2) continue
-      // 预条件：还有敌方座位没出牌（否则那是「锁定」局面，见下一条）
-      const enemyLeft = [0, 1, 2, 3]
-        .filter((x) => x !== HUMAN_SEAT && (x % 2) !== (HUMAN_SEAT % 2))
-        .some((x) => !s.trick.plays.some((p) => p.seat === x))
-      if (!enemyLeft) continue
+      // 预条件：队友这一手**压不住**（rivalIsSafe === false）—— 这才是"别送分"的场合
+      const remaining = [1, 3].filter((x) => !s.trick.plays.some((p) => p.seat === x)) as never
+      const safe = rivalIsSafe(
+        { seat: 2, analysis: standing.winner.analysis },
+        ctx,
+        [1, 2, 3].map((x) => s.hands[x] as readonly Card[]),
+        remaining,
+        HUMAN_SEAT,
+      )
+      if (safe) continue
       const cands = legalCandidates(s)
       if (!cands.some((c) => cardsScore(c) === 0)) continue
       const cards = chooseSafePlay(s, HUMAN_SEAT)
       if (cards.length === 0) continue
       checked++
-      expect(cardsScore(cards), `对手还没出却垫了 ${cardsScore(cards)} 分`).toBe(0)
+      expect(cardsScore(cards), `队友压不住却垫了 ${cardsScore(cards)} 分`).toBe(0)
     }
-    if (checked === 0) console.log('  --  样本里没有「队友赢着但对手未出完」的跟牌局面，跳过')
+    if (checked === 0) console.log('  --  样本里没有「队友赢着但压不住」的跟牌局面，跳过')
+  })
+
+  it('队友赢着、**这手压得住**（哪怕对手还没出）→ 有分就垫', () => {
+    // 用户 2026-10-31 报的正是这个：队友 ♦A 拿下这墩、对手还没出，提示却让垫最小的。
+    // 判据是「队友这手会不会被抢走」，不是「对手都出完没有」。
+    let checked = 0
+    for (const s of SAMPLES) {
+      if (s.trick.plays.length === 0) continue
+      const ctx = ctxOf(s)
+      const standing = trickStanding(s.trick.plays, ctx)
+      if (standing === null || standing.winner.seat !== 2) continue
+      const remaining = [1, 3].filter((x) => !s.trick.plays.some((p) => p.seat === x)) as never
+      const safe = rivalIsSafe(
+        { seat: 2, analysis: standing.winner.analysis },
+        ctx,
+        [1, 2, 3].map((x) => s.hands[x] as readonly Card[]),
+        remaining,
+        HUMAN_SEAT,
+      )
+      if (!safe) continue
+      const cands = legalCandidates(s)
+      if (!cands.some((c) => cardsScore(c) > 0)) continue
+      const cards = chooseSafePlay(s, HUMAN_SEAT)
+      if (cards.length === 0) continue
+      checked++
+      expect(cardsScore(cards), `队友这手压得住却没垫分（出的是 ${cardsScore(cards)} 分）`).toBeGreaterThan(0)
+    }
+    if (checked === 0) console.log('  --  样本里没有「队友赢着且压得住」的跟牌局面，跳过')
   })
 
   it('队友赢着、**对手都出完了** → 有分就垫（这一墩已锁定是我方的）', () => {
@@ -190,5 +224,58 @@ describe('safeHint · 稳妥提示', () => {
       if (a !== b) diff++
     }
     expect(diff).toBeGreaterThan(5)
+  })
+})
+
+/* ============================================================
+   用户报的局面（2026-10-31）
+   ------------------------------------------------------------
+   「对家先出一个 A，当前最大，但自动提示还是让我出一个最小的牌，
+     这时不是应该出 K 走分吗？」
+
+   队友（座位 2）领出 ♦A、对手还没出，提示却建议 ♦6（0 分）。
+   根因：`safeHint` 判「能不能垫分」用的是**「对手都出完了没有」**，
+   而 L3 早在 v1.3.38 就改成了「队友这手会不会被抢走」（`rivalIsSafe`）。
+   ============================================================ */
+
+describe('safeHint · 队友领出 A（用户 2026-10-31 报的局面）', () => {
+  /** ♦A 领出、我手里有 ♦K 与 ♦6；`enemyVoid` 控制对手能不能毙 */
+  const position = (enemyVoid: boolean) => {
+    const ctx: RuleContext = {
+      power: buildPowerTable({ mode: 1, levelRank: 2, trump: 0, forcedNT: false }),
+      trump: 0,
+      levelRank: 2,
+      forcedNT: false,
+      config: DEFAULT_RULE_CONFIG,
+    }
+    const c = (value: number): Card => ({ id: value * 2, value })
+    const D = (rank: number): number => 39 + rank // ♦ 的 value 起点
+    const lead = [c(D(12))] // ♦A
+    const myHand = [c(D(11)), c(D(4)), c(26 + 12), c(13 + 7)] // ♦K ♦6 ♣A ♥9
+    // 对手：有 ♦ ⇒ 只能跟，毙不了；缺 ♦ ⇒ 能用主毙（这里给一张更大的主牌）
+    const enemy1 = enemyVoid ? [c(0 + 12)] : [c(D(3)), c(D(2))]
+    const enemy3 = enemyVoid ? [c(0 + 11)] : [c(D(7)), c(D(1))]
+    return {
+      hand: myHand,
+      ctx,
+      play: { kind: 'follow' as const, leadCards: lead, leadAnalysis: analyze(lead, ctx) },
+      currentWinner: analyze(lead, ctx),
+      partnerLeading: true,
+      opponents: [enemy1, enemy3, [] as Card[]],
+      seat: HUMAN_SEAT,
+      remainingSeats: [0, 1, 3] as never,
+      trickPoints: 0,
+    }
+  }
+
+  it('队友 ♦A 压得住 ⇒ 应该垫 ♦K 走 10 分，而不是垫最小的 ♦6', () => {
+    const cards = safeHint(position(false))
+    expect(cards.map((x) => x.value)).toEqual([39 + 11]) // ♦K
+    expect(cardsScore(cards)).toBe(10)
+  })
+
+  it('对手缺门且有更大的主牌（能反毙）⇒ 才收着打，垫最小的 0 分牌', () => {
+    const cards = safeHint(position(true))
+    expect(cardsScore(cards)).toBe(0)
   })
 })

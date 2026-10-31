@@ -23,11 +23,11 @@
  * 这里**绝不自己判规则**（分层铁律，见 docs/07）。
  */
 
-import { analyze, canBeat, cardsScore, checkPlay, teamOf } from '@core'
+import { analyze, canBeat, cardsScore, checkPlay } from '@core'
 import type { Card, PlayAnalysis, RuleContext, Seat } from '@core'
 import { enumeratePlays } from './enumerate'
 import type { PlayContext } from './enumerate'
-import { isSureToHold } from './policy'
+import { isSureToHold, rivalIsSafe } from './policy'
 
 export interface SafeHintInput {
   readonly hand: readonly Card[]
@@ -93,15 +93,31 @@ export function safeHint(input: SafeHintInput): Card[] {
   if (input.play.kind === 'follow') {
     // ① 队友已经赢着
     if (input.partnerLeading) {
-      // 对手**都出完了** ⇒ 这一墩已经锁定是我方，有分就往里垫（人类最标准的打法）。
-      // 对手还没出 ⇒ 收着打，垫最小的牌：这时候把 10 甩上去，被对手一张 A 反压就白送。
-      const enemyLeft = input.remainingSeats.some((x) => teamOf(x) !== teamOf(input.seat))
-      if (!enemyLeft) {
+      // 判据不是「对手都出完了没有」，而是**「队友这一手还会不会被对手抢走」**。
+      //
+      // v1.3.50 修：这里原来写的是 `!enemyLeft`（对手都出完才敢垫），
+      // 于是「队友用 ♦A 拿下这墩、对手还没出」这种**明明锁定**的局面，
+      // 提示也会让你垫最小的一张 —— 玩家当场就问「这不是该出 K 走分吗」。
+      // L3 早在 v1.3.38 就把这条改成了 `rivalIsSafe`（看队友这手压不压得住），
+      // 但 `safeHint` 漏改了 —— 同一 bug 的第四份拷贝（见 docs/15 的教训）。
+      const partnerSeat = ((input.seat + 2) % 4) as Seat
+      const safe =
+        input.currentWinner === null ||
+        rivalIsSafe(
+          { seat: partnerSeat, analysis: input.currentWinner },
+          ctx,
+          input.opponents,
+          input.remainingSeats,
+          input.seat,
+        )
+      if (safe) {
+        // 这一墩已经是我方的 ⇒ 有分就往里垫（人类最标准的打法）
         const withPoints = candidates.filter((c) => cardsScore(c) > 0)
         if (withPoints.length > 0) {
           return [...withPoints].sort((a, b) => cardsScore(b) - cardsScore(a))[0]!.slice()
         }
       }
+      // 队友这手可能被反压 ⇒ 收着打，垫最小的牌（这时候把 10 甩上去就是白送）
       return (sorted[0] as Card[]).slice()
     }
 

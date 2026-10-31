@@ -520,7 +520,7 @@ function leadFollowUp(
  * 信息假设：只有全信息（`belief === undefined`，即「AI 读牌」开着）时才算得准；
  * 概率推断下没有「队友这手守不守得住」的对应模型，调用方应退回保守分支。
  */
-function rivalIsSafe(
+export function rivalIsSafe(
   rival: { readonly seat: Seat; readonly analysis: PlayAnalysis },
   ctx: RuleContext,
   opponents: readonly (readonly Card[])[],
