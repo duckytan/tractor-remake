@@ -45,6 +45,7 @@ import { isSameTeam,
 import type { Card, LevelRank, Play, PlayRejectReason, Rng, RuleContext, Seat, Suit, Trump } from '@core'
 import type { Action, GameState, TrickRecord } from './state'
 import { HUMAN_SEAT, STATE_VERSION, ctxOf, emptyState, seatToPlay } from './state'
+import type { Prefs } from './persist'
 
 /* ---------- 工具 ---------- */
 
@@ -481,8 +482,18 @@ export function passDeal(s: GameState): GameState {
  *
  * v1.3.28 之前是手写搬运，只搬了 5 项，导致「切到冬主题 / 调好音量 / 开记牌器，
  * 点一次新游戏全部回默认」，而且 afterChange 会把默认值回写 localStorage，刷新也救不回。
+ *
+ * **v1.3.53：清单漏了 4 个「同样写进 localStorage」的字段**
+ * （`aiLevelPartner` / `aiLevelOpponent` / `aiSpeedMs` / `pendingConfig`）。
+ * 重开路径看不出来（那几条路径本来就显式搬了它们），但 `pickPrefs()` 还被
+ * **悔牌**用着（`main.ts` 的 `undoMove()`）：出牌 → 改 AI 档位 / AI 速度 / 规则开关 →
+ * 悔牌 ⇒ 三项一起退回快照里的旧值，`afterChange()` 再把旧值写回 localStorage
+ * ⇒ 玩家的设置**永久丢失**。这正是 docs/33 C5-01 声称修过的那个 bug，只是清单没列全。
+ *
+ * 为什么现在不会再漏：`PREF_FIELD_COVERAGE` 是编译期护栏 —— 往 `Prefs`
+ * （`persist.ts`，localStorage 的字段定义）里加字段而忘了加进本清单，`tsc` 直接报错。
  */
-const PREF_FIELDS = [
+export const PREF_FIELDS = [
   'fourColor',
   'cardSize',
   'animation',
@@ -499,11 +510,31 @@ const PREF_FIELDS = [
   'volumeMaster',
   'volumeBgm',
   'volumeSfx',
+  'aiLevelPartner',
+  'aiLevelOpponent',
+  'aiSpeedMs',
+  'pendingConfig',
   'autoPlay',
   'autoLevel',
 ] as const
 
 type PrefField = (typeof PREF_FIELDS)[number]
+
+/**
+ * **编译期护栏**：`PREF_FIELDS` 必须覆盖 `Prefs`（localStorage 里那份偏好）的全部字段。
+ *
+ * `Prefs.ruleConfig` 在 `GameState` 上叫 `pendingConfig`，是唯一一处改名映射。
+ *
+ * 用法是「多出来的字段不能不是 never」：往 `persist.ts` 的 `Prefs` 加一个字段、
+ * 却忘了加进 `PREF_FIELDS` ⇒ `Exclude<...>` 不是 `never` ⇒ 这里的 `extends never` 约束
+ * 被违反 ⇒ `tsc --noEmit` 直接红。这正是 v1.3.53 修的那个缺陷的成因
+ * （清单漏 4 项，运行时只在「悔牌吞设置」这条路径上表现出来，任何单测都测不到）。
+ */
+type PrefsAsStateFields = Exclude<keyof Prefs, 'ruleConfig'> | 'pendingConfig'
+/** 只有 `T = never` 才合法 —— 用它把「集合差为空」变成一条真正的编译错误 */
+type AssertNever<T extends never> = T
+/** 若下面这行报错：`PREF_FIELDS` 少了字段，把它补进清单即可 */
+export type PrefFieldsCoverPrefs = AssertNever<Exclude<PrefsAsStateFields, PrefField>>
 
 /**
  * 从 `src` 里取出全部偏好字段（`GameState` 的字段是 readonly，只能整体构造）。
@@ -514,6 +545,20 @@ type PrefField = (typeof PREF_FIELDS)[number]
  */
 export function pickPrefs(src: GameState): Pick<GameState, PrefField> {
   return Object.fromEntries(PREF_FIELDS.map((k) => [k, src[k]])) as Pick<GameState, PrefField>
+}
+
+/**
+ * 把 localStorage 里的偏好（`Prefs`）铺成 `GameState` 上的同名字段。
+ *
+ * `main.ts` 启动时用它**覆盖**存档里的值：存档只负责对局进度，偏好一律以
+ * `tractor.prefs.v1` 为准。以前这里是手写的 15 行搬运，漏了 `aiSpeedMs` 与
+ * 6 个音频字段 —— 那几项靠「存档里正好也是新值」蒙对了；一旦存档写失败
+ * （隐私模式 / 配额满）就会悄悄退回旧值。现在与 `pickPrefs` 共用同一份清单。
+ */
+export function stateFieldsOfPrefs(p: Prefs): Pick<GameState, PrefField> {
+  const out = {} as Record<PrefField, unknown>
+  for (const k of PREF_FIELDS) out[k] = k === 'pendingConfig' ? p.ruleConfig : p[k]
+  return out as Pick<GameState, PrefField>
 }
 
 function withExperience(base: GameState, src: GameState): GameState {
@@ -1457,14 +1502,9 @@ export function reduce(s: GameState, action: Action): GameState {
         return startRound(
           {
             ...emptyBase(),
+            // `config` 不在清单里（它是本局的规则，不是偏好），要单独搬
             config: s.config,
-            pendingConfig: s.pendingConfig,
-            aiLevelPartner: s.aiLevelPartner,
-            aiLevelOpponent: s.aiLevelOpponent,
-            aiSpeedMs: s.aiSpeedMs,
-            // 偏好项统一走清单（见 PREF_FIELDS）——
-            // 以前这里手写搬运，漏了音乐主题/增强音效/自动变奏/三个音量，
-            // 「游戏结束 → 再来一局」会把这些悄悄重置成默认值
+            // 偏好项统一走清单（见 PREF_FIELDS）：AI 档位 / 速度 / 规则 / 声音 / 画面全在里面
             ...pickPrefs(s),
           },
           s.seed + 1,

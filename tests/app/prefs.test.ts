@@ -16,7 +16,7 @@ import { newGame, reduce } from '@app/game'
 import { emptyState } from '@app/state'
 import type { GameState } from '@app/state'
 
-/** 全部 18 个偏好字段，逐个设成**非默认值** */
+/** 全部 22 个偏好字段，逐个设成**非默认值** */
 const NON_DEFAULT: Pick<
   GameState,
   | 'fourColor'
@@ -37,6 +37,10 @@ const NON_DEFAULT: Pick<
   | 'volumeSfx'
   | 'autoPlay'
   | 'autoLevel'
+  | 'aiLevelPartner'
+  | 'aiLevelOpponent'
+  | 'aiSpeedMs'
+  | 'pendingConfig'
 > = {
   fourColor: true,
   cardSize: 'L',
@@ -56,7 +60,16 @@ const NON_DEFAULT: Pick<
   volumeSfx: 90,
   autoPlay: true,
   autoLevel: 0,
+  // v1.3.53：这 4 项以前没进清单 —— 它们同样写进 localStorage，
+  // 漏掉的后果是「悔牌吞设置」（见 tests/audit/f7-undo.test.ts）
+  aiLevelPartner: 0,
+  aiLevelOpponent: 0,
+  aiSpeedMs: 800,
+  pendingConfig: { ...DEFAULT_RULE_CONFIG, guardAce: false },
 }
+
+/** 玩家改过的规则（`pendingConfig` 的非默认值，供 newGame 的 config 入参对齐） */
+const CUSTOM_RULES = NON_DEFAULT.pendingConfig
 
 const PREF_KEYS = Object.keys(NON_DEFAULT) as (keyof typeof NON_DEFAULT)[]
 
@@ -82,8 +95,8 @@ const settle = (): SettleResult => ({
 })
 
 describe('重开游戏保留玩家偏好（PREF_FIELDS 契约）', () => {
-  it('清单覆盖 18 个偏好字段（加字段时若忘了加进清单，这条会红）', () => {
-    expect(PREF_KEYS).toHaveLength(18)
+  it('清单覆盖 22 个偏好字段（加字段时若忘了加进清单，这条会红）', () => {
+    expect(PREF_KEYS).toHaveLength(22)
     // 每个偏好字段在 emptyState 里都应存在（防止改名后清单变成死字符串）
     const base = emptyState() as unknown as Record<string, unknown>
     for (const k of PREF_KEYS) {
@@ -91,16 +104,18 @@ describe('重开游戏保留玩家偏好（PREF_FIELDS 契约）', () => {
     }
   })
 
-  it('newGame（新游戏）保留全部 18 项', () => {
+  it('newGame（新游戏）保留全部 22 项', () => {
     const src = customized()
-    const next = newGame(DEFAULT_RULE_CONFIG, 1, 420, 7, src)
+    // config 入参用「玩家改过的规则」：生产路径里 newGame 收到的就是 `s.pendingConfig`，
+    // 用 DEFAULT 会让 config 与 pendingConfig 分叉，测的就不是真实路径了
+    const next = newGame(CUSTOM_RULES, 1, 420, 7, src)
     expectPrefsKept(next, src)
     // 同时确认规则/局内状态确实被重置了（别把偏好搬运写成「什么都不重置」）
     expect(next.round).toBe(1)
     expect(next.phase).toBe('contract')
   })
 
-  it('over → nextRound（游戏结束再来一局）保留全部 18 项', () => {
+  it('over → nextRound（游戏结束再来一局）保留全部 22 项', () => {
     const src: GameState = {
       ...customized(),
       phase: 'over',
@@ -111,7 +126,7 @@ describe('重开游戏保留玩家偏好（PREF_FIELDS 契约）', () => {
     expectPrefsKept(next, src)
   })
 
-  it('settle → nextRound（普通下一局）保留全部 18 项', () => {
+  it('settle → nextRound（普通下一局）保留全部 22 项', () => {
     const src: GameState = {
       ...customized(),
       phase: 'settle',

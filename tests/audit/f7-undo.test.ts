@@ -49,7 +49,7 @@ describe('F7 · 悔牌不吞掉设置（C5-01）', () => {
     expect(restored.step).toBe(snapshot.step)
   })
 
-  it('pickPrefs 覆盖的字段清单与 PREF_FIELDS 一致（含 18 项）', () => {
+  it('pickPrefs 覆盖的字段清单与 PREF_FIELDS 一致（含 22 项）', () => {
     const s = toPlay()
     const picked = pickPrefs(s)
     expect(Object.keys(picked).sort()).toEqual(
@@ -72,8 +72,45 @@ describe('F7 · 悔牌不吞掉设置（C5-01）', () => {
         'volumeSfx',
         'autoPlay',
         'autoLevel',
+        // v1.3.53 补的 4 项：它们同样写进 `tractor.prefs.v1`
+        'aiLevelPartner',
+        'aiLevelOpponent',
+        'aiSpeedMs',
+        'pendingConfig',
       ].sort(),
     )
+  })
+
+  it('AI 档位 / AI 速度 / 规则开关也不会被悔牌吞掉（v1.3.53）', () => {
+    const base = toPlay()
+    // 快照 = 改设置之前（三档超强、420ms、A 必打开）
+    const snapshot: GameState = {
+      ...base,
+      aiLevelPartner: 3,
+      aiLevelOpponent: 3,
+      aiSpeedMs: 420,
+      pendingConfig: { ...DEFAULT_RULE_CONFIG, guardAce: true },
+    }
+    // 当前 = 改设置之后（敌家降成「中」、速度调成瞬时、关掉 A 必打）
+    const current: GameState = {
+      ...snapshot,
+      aiLevelPartner: 1,
+      aiLevelOpponent: 1,
+      aiSpeedMs: 0,
+      pendingConfig: { ...DEFAULT_RULE_CONFIG, guardAce: false },
+      step: snapshot.step + 3,
+    }
+
+    const restored: GameState = { ...snapshot, ...pickPrefs(current) }
+
+    // 这三项**必须**取当前值 —— 否则 afterChange() 会把旧值写回 localStorage，
+    // 玩家「改完设置再悔牌」就等于白改（实测：三项全部退回，且刷新也救不回）
+    expect(restored.aiLevelPartner).toBe(1)
+    expect(restored.aiLevelOpponent).toBe(1)
+    expect(restored.aiSpeedMs).toBe(0)
+    expect(restored.pendingConfig.guardAce).toBe(false)
+    // 对局字段仍然来自快照
+    expect(restored.step).toBe(snapshot.step)
   })
 })
 

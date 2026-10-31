@@ -8,7 +8,7 @@ import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
 import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
-import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce } from '@app/game'
+import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce, stateFieldsOfPrefs } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { initStats } from '@app/stats'
 import { beginRound, initRoundLog, noteHumanPlay } from '@app/roundLog'
@@ -32,25 +32,13 @@ let state: GameState = loaded.state ?? newGame(
   prefs.aiLevelOpponent,
   prefs.aiSpeedMs,
 )
-// 体验项偏好覆盖存档（存档只存对局进度，体验项以偏好为准）
-state = {
-  ...state,
-  aiLevelPartner: prefs.aiLevelPartner,
-  aiLevelOpponent: prefs.aiLevelOpponent,
-  fourColor: prefs.fourColor,
-  cardSize: prefs.cardSize,
-  animation: prefs.animation,
-  animSpeed: prefs.animSpeed,
-  showHistory: prefs.showHistory,
-  showOppHands: prefs.showOppHands,
-  hintSelects: prefs.hintSelects,
-  hintStyle: prefs.hintStyle,
-  autoPlay: prefs.autoPlay,
-  autoLevel: prefs.autoLevel,
-  showCounter: prefs.showCounter,
-  aiPeekHands: prefs.aiPeekHands,
-  pendingConfig: prefs.ruleConfig,
-}
+// 偏好覆盖存档：存档只存对局进度，AI 档位 / 速度 / 规则 / 画面 / 声音一律以
+// `tractor.prefs.v1` 为准。
+//
+// **清单必须与 `PREF_FIELDS` 同源**（v1.3.53）：这里原来是手写的 15 行，
+// 漏了 `aiSpeedMs` 与 6 个音频字段 —— 平时靠「存档里正好也是新值」蒙对，
+// 一旦存档写失败（隐私模式 / 配额满）就悄悄退回旧值，而设置面板还显示新值。
+state = { ...state, ...stateFieldsOfPrefs(prefs) }
 /**
  * 存档没恢复成功时**告诉玩家一声**。
  *
