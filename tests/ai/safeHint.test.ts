@@ -279,3 +279,58 @@ describe('safeHint · 队友领出 A（用户 2026-10-31 报的局面）', () =>
     expect(cardsScore(cards)).toBe(0)
   })
 })
+
+/* ============================================================
+   用户报的局面 ②（2026-10-31）
+   ------------------------------------------------------------
+   「我这个主牌和上家一样，根本赢不了，还提示我这样出，
+     这不是白白浪费我的主力去陪跑吗？」
+
+   根因：`canBeat` 只判「花色 + 结构一致」，**不比牌力**。
+   提示的「有分就抢」分支把它当成"能赢"用，于是任何同型牌都算赢，
+   再按"最省"排序 ⇒ 挑一张**更小**的牌去陪跑。
+   ============================================================ */
+
+describe('safeHint · 有分时不能拿"同型但更小"的牌去陪跑', () => {
+  const ctx: RuleContext = {
+    power: buildPowerTable({ mode: 1, levelRank: 2, trump: 0, forcedNT: false }),
+    trump: 0,
+    levelRank: 2,
+    forcedNT: false,
+    config: DEFAULT_RULE_CONFIG,
+  }
+  const c = (value: number): Card => ({ id: value * 2, value })
+  const D = (rank: number): number => 39 + rank // ♦
+
+  /** 对手（座位 1）领出 `leadRank` 的 ♦，本墩已有 10 分；我手里有 ♦low 与 ♦high */
+  const follow = (leadRank: number, low: number, high: number) => {
+    const lead = [c(D(leadRank))]
+    const myHand = [c(D(low)), c(D(high)), c(26 + 3), c(13 + 7)]
+    return {
+      hand: myHand,
+      ctx,
+      play: { kind: 'follow' as const, leadCards: lead, leadAnalysis: analyze(lead, ctx) },
+      currentWinner: analyze(lead, ctx),
+      partnerLeading: false,
+      opponents: [[], [c(D(1))], [c(D(2))]] as readonly Card[][],
+      seat: HUMAN_SEAT,
+      remainingSeats: [0, 2, 3] as never,
+      trickPoints: 10, // 本墩有分 ⇒ 该抢
+    }
+  }
+
+  it('对手 ♦7 领出、本墩有分 ⇒ 出 ♦K 拿下，而不是 ♦5 陪跑', () => {
+    const cards = safeHint(follow(5, 3, 11)) // 领出 ♦7(power 5)、我 ♦5 与 ♦K
+    expect(cards.map((x) => x.value)).toEqual([39 + 11]) // ♦K
+  })
+
+  it('对手 ♦A 领出、我最大只有 ♦K ⇒ 压不过就出最小的，别拿 ♦K 去陪跑', () => {
+    const cards = safeHint(follow(12, 3, 11)) // 领出 ♦A、我 ♦5 与 ♦K
+    expect(cards.map((x) => x.value)).toEqual([39 + 3]) // ♦5
+  })
+
+  it('牌力相同不算压过：对手 ♦K 领出、我也有一张 ♦K ⇒ 出最小的', () => {
+    const cards = safeHint(follow(11, 3, 11))
+    expect(cards.map((x) => x.value)).toEqual([39 + 3]) // ♦5，不是 ♦K
+  })
+})

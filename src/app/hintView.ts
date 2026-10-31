@@ -15,7 +15,7 @@
  * 分层：规则概念留在 app 层，ui 只负责显示字符串（见 docs/07）。
  */
 
-import { analyze, canBeat, cardsScore, isSameTeam, trickStanding } from '@core'
+import { analyze, beatsPlay, cardsScore, isSameTeam, trickStanding } from '@core'
 import type { Card, PlayAnalysis, RuleContext } from '@core'
 import { HUMAN_SEAT, ctxOf } from './state'
 import type { GameState } from './state'
@@ -94,9 +94,10 @@ export function hintExplain(s: GameState): HintExplain | null {
   /* ---------------- 跟牌 ---------------- */
   const standing = trickStanding(s.trick.plays, ctx)
   const partnerWinning = standing !== null && isSameTeam(standing.winner.seat, HUMAN_SEAT)
-  // **必须走 core 的 `canBeat`** —— 一墩判定全项目只此一份。
-  // 自己写「比 keyCard 大小」会把「对子压单张」「散对压连对」都算成能压（docs/15 KN-7 的教训）。
-  const iWin = standing === null ? true : canBeat(a, standing.winner.analysis)
+  // **必须走 core 的 `beatsPlay`** —— 一墩判定全项目只此一份。
+  // 自己写「比 keyCard 大小」会把「对子压单张」「散对压连对」都算成能压（docs/15 KN-7 的教训）；
+  // 而只用 `canBeat` 又会漏掉牌力比较（它只判结构资格），于是文案会谎报「压住这墩」。
+  const iWin = standing === null ? true : beatsPlay(a, standing.winner.analysis, ctx)
   const trickPoints = s.trick.plays.reduce((sum, p) => sum + cardsScore(p.cards as readonly Card[]), 0)
 
   if (partnerWinning) {

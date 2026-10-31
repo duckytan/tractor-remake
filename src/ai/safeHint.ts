@@ -23,7 +23,7 @@
  * 这里**绝不自己判规则**（分层铁律，见 docs/07）。
  */
 
-import { analyze, canBeat, cardsScore, checkPlay } from '@core'
+import { analyze, beatsPlay, cardsScore, checkPlay } from '@core'
 import type { Card, PlayAnalysis, RuleContext, Seat } from '@core'
 import { enumeratePlays } from './enumerate'
 import type { PlayContext } from './enumerate'
@@ -125,7 +125,10 @@ export function safeHint(input: SafeHintInput): Card[] {
     const winners =
       winner === null
         ? candidates
-        : candidates.filter((cards) => canBeat(analyze(cards, ctx), winner))
+        // **必须用 `beatsPlay`**（结构一致 **且** 牌力更大）。
+        // 原来用的是 `canBeat` —— 它不比牌力，于是任何同型牌都被当成"能赢"，
+        // 接下来又按"最省"排序 ⇒ 挑一张更小的牌去陪跑（用户 2026-10-31 报）。
+        : candidates.filter((cards) => beatsPlay(analyze(cards, ctx), winner, ctx))
     // ② 能压住、且这墩有分 → 抢，但用能赢的最小一手
     if (winners.length > 0 && input.trickPoints > 0) {
       return [...winners].sort((a, b) => powerOf(a, ctx) - powerOf(b, ctx))[0]!.slice()

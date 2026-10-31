@@ -20,7 +20,17 @@ export interface TrickResult {
   readonly contenders: readonly Seat[]
 }
 
-/** 该手牌是否具备「压过首出」的资格 */
+/**
+ * 该手牌是否具备「压过首出」的**资格**（花色 + 结构一致）。
+ *
+ * ⚠️ **这个函数不比牌力**！`canBeat(♦5, ♦7)` 也返回 true —— 它回答的是
+ * 「有没有资格参与比大小」，最终谁大由 `trickStanding` 比 `keyCard` 牌力决定。
+ *
+ * 想要「**真的压过**」请用 `beatsPlay`（本文件下方）。
+ * v1.3.51 之前有两处把它当成"能赢"用了：`safeHint` 的「有分就抢」和 `hintView`
+ * 的「压住这墩」文案 —— 于是提示会挑一张结构一致但**更小**的牌去陪跑
+ *（用户报：「我的主牌和上家一样，根本赢不了，还提示我这样出」）。
+ */
 export function canBeat(play: PlayAnalysis, lead: PlayAnalysis): boolean {
   if (play.suitSlot === -1) return false
   const leadIsTrump = lead.suitSlot === 4
@@ -58,6 +68,19 @@ export interface TrickStanding {
  *
  * 垫牌（混花色）的 `suitSlot === -1`，在 `canBeat` 里就被排除，进不了竞争池。
  */
+/**
+ * 这一手是否**真的压过** `lead`：既有资格（`canBeat`），牌力又更大。
+ *
+ * 牌力相等**不算压过**（先出者赢，规则如此）—— 这正是 `canBeat` 单独用会出错的地方。
+ */
+export function beatsPlay(play: PlayAnalysis, lead: PlayAnalysis, ctx: RuleContext): boolean {
+  if (!canBeat(play, lead)) return false
+  const a = play.keyCard
+  const b = lead.keyCard
+  if (!a || !b) return false
+  return ctx.power.get(a.value) > ctx.power.get(b.value)
+}
+
 export function trickStanding(plays: readonly Play[], ctx: RuleContext): TrickStanding | null {
   if (plays.length === 0) return null
   const lead = (plays[0] as Play).analysis

@@ -3,12 +3,12 @@
  *
  * 为什么要测：这是玩家唯一能看到「提示为什么这么打」的地方。
  * 说错了比不说更糟 —— 玩家会照着错的理由去理解牌局。
- * 所以这里锁的是**口径正确性**：压不压得住必须走 core 的 `canBeat`、
+ * 所以这里锁的是**口径正确性**：压不压得住必须走 core 的 `beatsPlay`（结构 + 牌力）、
  * 队友是否赢着必须走 `trickStanding`，而不是自己再判一遍（docs/15 KN-7 的教训）。
  */
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RULE_CONFIG, analyze, canBeat, cardsScore, trickStanding } from '@core'
+import { DEFAULT_RULE_CONFIG, analyze, beatsPlay, cardsScore, trickStanding } from '@core'
 import type { Card } from '@core'
 import { aiPlayFor, choosePlay, newGame, reduce } from '@app/game'
 import { hintExplain } from '@app/hintView'
@@ -93,7 +93,9 @@ describe('hintExplain · 一句话理由', () => {
       const a = analyze(cards, ctx)
       const standing = trickStanding(state.trick.plays, ctx)
       const partnerWinning = standing !== null && standing.winner.seat === 2 // 座位 2 = 队友
-      const iWin = standing === null ? true : canBeat(a, standing.winner.analysis)
+      // v1.3.51：必须用 `beatsPlay` —— `canBeat` 只判结构资格、不比牌力，
+      // 用它当口径会把「同型但更小」的牌也算成能赢（提示文案会谎报「压住这墩」）。
+      const iWin = standing === null ? true : beatsPlay(a, standing.winner.analysis, ctx)
       const e = hintExplain(state)!
       if (partnerWinning) {
         partner++
