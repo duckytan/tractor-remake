@@ -28,6 +28,7 @@ const text = (cs: readonly Card[]): string => cs.map((c) => nm(c.value)).join(' 
 let follows = 0
 let scored = 0
 let missed = 0
+let missedMid = 0 // 非残局（剩 > 12 张）的"该赢不赢"—— 这才是打分器的锅
 const samples: string[] = []
 
 for (let seed = 1; seed <= ROUNDS; seed++) {
@@ -62,6 +63,8 @@ for (let seed = 1; seed <= ROUNDS; seed++) {
           const chosenWins = beatsPlay(analyze(played, ctx), standing.winner.analysis, ctx)
           if (!chosenWins) {
             missed++
+            const left = (s.hands as readonly (readonly Card[])[]).reduce((n, h) => n + h.length, 0)
+            if (left > 12) missedMid++
             // 推演判定：实际出的 vs 能赢的那手，各用 L3 打到底，比终局闲家得分（我方视角）
             const valueOf = (x: GameState): number =>
               teamOf(x.dealer) === teamOf(seat) ? -x.defenderScore : x.defenderScore
@@ -107,5 +110,6 @@ for (let seed = 1; seed <= ROUNDS; seed++) {
 }
 
 console.log(`\n跟牌 ${follows} 次 · 其中「对方赢着且本墩有分」${scored} 次`)
-console.log(`**有能赢的牌却不出：${missed} 次（${((missed / Math.max(1, scored)) * 100).toFixed(1)}%）**\n`)
+console.log(`**有能赢的牌却不出：${missed} 次（${((missed / Math.max(1, scored)) * 100).toFixed(1)}%）**`)
+console.log(`  其中**非残局（剩 >12 张）：${missedMid} 次** ← 这才是打分器的问题，其余是残局求解器接管\n`)
 for (const x of samples) console.log('  ' + x)
