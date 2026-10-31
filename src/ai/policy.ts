@@ -9,7 +9,7 @@
  * 全部确定性：同 state + 同 rng 序列 → 同出牌（ADR-012）
  */
 
-import { analyze, cardsScore, checkPlay, suitSlotOf, teamOf } from '@core'
+import { analyze, beatsPlay, cardsScore, checkPlay, suitSlotOf, teamOf } from '@core'
 import type { Card, PlayAnalysis, RuleContext, Seat, SuitSlot } from '@core'
 import { BEAT_THRESHOLD, beatChance } from './belief'
 import type { Belief } from './belief'
@@ -405,7 +405,6 @@ function exactBeatable(
   // 后果是 L2 把每一个甩牌都当成「会被压」，永远不甩（实测甩牌率 0%）。
   if (mine.groups.length > 1) return false
   if (!mine.keyCard) return false
-  if (mine.groups.length > 1) return false // 合法甩牌：压不了
   const pairs = pairsNeededOf(mine)
   if (pairs < 0) return false
 
@@ -893,43 +892,16 @@ function scoreCandidate(
 }
 
 /**
- * 我这一手能不能压过对方。
+ * 我这一手能不能压过对方（薄封装）。
  *
- * `rival` 传的是**本墩当前最大牌**的分析（首出方首出时才是 lead）。
- *
- * 判定必须与 `core/trick.ts` 的 `canBeat` 保持一致：花色、对子数、**拖拉机长度**三项都过，
- * 再比 keyCard。原来漏了拖拉机长度 —— 首出 2 连对、跟 2 个不连续对子时
- * （`legality.test.ts` 明确判为合法跟牌）AI 会以为「我赢了」，
- * 实际结算时 `canBeat` 的 `runLen` 不等 ⇒ 判首出方赢，AI 打分虚高。
+ * **v1.3.52：删掉了这里的独立实现，改为调 `core.beatsPlay`。**
+ * 这段代码原本是「能不能压」的**第五份实现**，历史上已经因为和 core 漂移出过两次 bug：
+ *   · 漏了「拖拉机长度」⇒ 首出 2 连对、跟 2 个散对时 AI 以为赢了，打分虚高
+ *   · 把「主牌毙副牌」判成不能压 ⇒ **该毙不毙**（docs/32 B-4，L3 有 12 处）
+ * 同一个业务概念只该有一份判定（docs/15 KN-7 的教训），所以直接复用 core。
  */
 function canIWin(mine: PlayAnalysis, rival: PlayAnalysis, ctx: RuleContext): boolean {
-  if (mine.suitSlot === -1) return false
-  const rivalTrump = rival.suitSlot === 4
-  const myTrump = mine.suitSlot === 4
-  // 主牌压副牌；副牌只能压同花色
-  if (rivalTrump) {
-    if (!myTrump) return false
-  } else if (myTrump) {
-    // **主牌毙副牌是合法的，而且是必胜**（v1.3.29 修正）。
-    //
-    // 旧实现这里直接走 `mine.suitSlot !== rival.suitSlot ⇒ return false`，
-    // 于是「我毙这墩」永远被判成「我赢不了」⇒ 跟牌分支走「压不过：垫牌时别送分」，
-    // 毙牌被当成垫牌扣分 ⇒ **该毙不毙**（docs/32 B-4 实测 L3 有 12 处，
-    // L2 只有 1 处）。同一处错误还让「队友赢着时我毙过去」被判成「我在垫分」，
-    // 反过来鼓励了内耗。
-  } else if (mine.suitSlot !== rival.suitSlot) {
-    return false
-  }
-  if (mine.pairCount !== rival.pairCount) return false
-  // 拖拉机长度一致（与 core/trick.ts canBeat 的 runLen 同源）
-  if (runLenOf(mine) !== runLenOf(rival)) return false
-  if (!mine.keyCard || !rival.keyCard) return false
-  return ctx.power.get(mine.keyCard.value) > ctx.power.get(rival.keyCard.value)
-}
-
-/** 连对长度：单一拖拉机组返回其对数，其余（散对 / 单张 / 多组）返回 0 */
-function runLenOf(a: PlayAnalysis): number {
-  return a.groups.length === 1 && a.groups[0]?.kind === 'tractor' ? a.groups[0].length : 0
+  return beatsPlay(mine, rival, ctx)
 }
 
 export { handStrength }

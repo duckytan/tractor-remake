@@ -10,7 +10,7 @@
  *   - 首出：什么槽 / 什么牌型 / 带多少分 / 这门还有几张
  *   - 跟牌：能不能压住 / 队友是不是已经赢着 / 是不是用主牌毙 / 本墩多少分
  *
- * 全部由 `analyze` + `canBeat` + `trickStanding` 推出来（**不编造策略意图**）——
+ * 全部由 `analyze` + `canFollowShape` + `trickStanding` 推出来（**不编造策略意图**）——
  * 说错了玩家一眼能看出来，那才是真「弱智」。
  * 分层：规则概念留在 app 层，ui 只负责显示字符串（见 docs/07）。
  */
@@ -96,7 +96,7 @@ export function hintExplain(s: GameState): HintExplain | null {
   const partnerWinning = standing !== null && isSameTeam(standing.winner.seat, HUMAN_SEAT)
   // **必须走 core 的 `beatsPlay`** —— 一墩判定全项目只此一份。
   // 自己写「比 keyCard 大小」会把「对子压单张」「散对压连对」都算成能压（docs/15 KN-7 的教训）；
-  // 而只用 `canBeat` 又会漏掉牌力比较（它只判结构资格），于是文案会谎报「压住这墩」。
+  // 而只用 `canFollowShape` 又会漏掉牌力比较（它只判结构资格），于是文案会谎报「压住这墩」。
   const iWin = standing === null ? true : beatsPlay(a, standing.winner.analysis, ctx)
   const trickPoints = s.trick.plays.reduce((sum, p) => sum + cardsScore(p.cards as readonly Card[]), 0)
 

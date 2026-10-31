@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_RULE_CONFIG, analyze, buildPowerTable, canBeat, cardsScore, checkPlay, trickStanding } from '@core'
+import { DEFAULT_RULE_CONFIG, analyze, buildPowerTable, canFollowShape, cardsScore, checkPlay, trickStanding } from '@core'
 import type { Card, RuleContext } from '@core'
 import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
@@ -124,7 +124,7 @@ describe('safeHint · 稳妥提示', () => {
       if (standing.winner.seat === 2) continue // 队友赢着的情况另算
       // 只看「真的压不过」的局面：合法候选里**没有任何一手**能压（含对子/连对，
       // 只检查单张会把「对子能压」误判成压不过）
-      const canWin = legalCandidates(s).some((c) => canBeat(analyze(c, ctx), standing.winner.analysis))
+      const canWin = legalCandidates(s).some((c) => canFollowShape(analyze(c, ctx), standing.winner.analysis))
       if (canWin) continue
       const cards = chooseSafePlay(s, HUMAN_SEAT)
       if (cards.length === 0) continue
@@ -286,7 +286,7 @@ describe('safeHint · 队友领出 A（用户 2026-10-31 报的局面）', () =>
    「我这个主牌和上家一样，根本赢不了，还提示我这样出，
      这不是白白浪费我的主力去陪跑吗？」
 
-   根因：`canBeat` 只判「花色 + 结构一致」，**不比牌力**。
+   根因：`canFollowShape` 只判「花色 + 结构一致」，**不比牌力**。
    提示的「有分就抢」分支把它当成"能赢"用，于是任何同型牌都算赢，
    再按"最省"排序 ⇒ 挑一张**更小**的牌去陪跑。
    ============================================================ */

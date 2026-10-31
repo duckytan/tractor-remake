@@ -93,7 +93,7 @@ describe('hintExplain · 一句话理由', () => {
       const a = analyze(cards, ctx)
       const standing = trickStanding(state.trick.plays, ctx)
       const partnerWinning = standing !== null && standing.winner.seat === 2 // 座位 2 = 队友
-      // v1.3.51：必须用 `beatsPlay` —— `canBeat` 只判结构资格、不比牌力，
+      // v1.3.51：必须用 `beatsPlay` —— `canFollowShape` 只判结构资格、不比牌力，
       // 用它当口径会把「同型但更小」的牌也算成能赢（提示文案会谎报「压住这墩」）。
       const iWin = standing === null ? true : beatsPlay(a, standing.winner.analysis, ctx)
       const e = hintExplain(state)!

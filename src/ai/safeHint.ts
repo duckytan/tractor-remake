@@ -126,7 +126,7 @@ export function safeHint(input: SafeHintInput): Card[] {
       winner === null
         ? candidates
         // **必须用 `beatsPlay`**（结构一致 **且** 牌力更大）。
-        // 原来用的是 `canBeat` —— 它不比牌力，于是任何同型牌都被当成"能赢"，
+        // 原来用的是 `canFollowShape` —— 它不比牌力，于是任何同型牌都被当成"能赢"，
         // 接下来又按"最省"排序 ⇒ 挑一张更小的牌去陪跑（用户 2026-10-31 报）。
         : candidates.filter((cards) => beatsPlay(analyze(cards, ctx), winner, ctx))
     // ② 能压住、且这墩有分 → 抢，但用能赢的最小一手

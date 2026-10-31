@@ -21,17 +21,17 @@ export interface TrickResult {
 }
 
 /**
- * 该手牌是否具备「压过首出」的**资格**（花色 + 结构一致）。
+ * 这手牌**跟得上**首出吗：花色合法 + 结构一致（张数 / 对数 / 连对长度）。
  *
- * ⚠️ **这个函数不比牌力**！`canBeat(♦5, ♦7)` 也返回 true —— 它回答的是
- * 「有没有资格参与比大小」，最终谁大由 `trickStanding` 比 `keyCard` 牌力决定。
+ * **为什么不叫 canBeat**（v1.3.52 改名）：它**不比牌力** ——
+ * `canFollowShape(♦5, ♦7)` 也返回 `true`。旧名字让两处调用把它当成"能赢"，
+ * 于是提示会挑一张结构一致但**更小**的牌去陪跑（用户报：
+ * 「上家出 10 分，我明明有牌可以赢，非要提示我出小牌陪衬」）。
  *
- * 想要「**真的压过**」请用 `beatsPlay`（本文件下方）。
- * v1.3.51 之前有两处把它当成"能赢"用了：`safeHint` 的「有分就抢」和 `hintView`
- * 的「压住这墩」文案 —— 于是提示会挑一张结构一致但**更小**的牌去陪跑
- *（用户报：「我的主牌和上家一样，根本赢不了，还提示我这样出」）。
+ * 想判断「**真的压过**」请用 `beatsPlay`（本文件下方）：
+ * 有资格 **且** 牌力更大（相等不算，先出者赢）。
  */
-export function canBeat(play: PlayAnalysis, lead: PlayAnalysis): boolean {
+export function canFollowShape(play: PlayAnalysis, lead: PlayAnalysis): boolean {
   if (play.suitSlot === -1) return false
   const leadIsTrump = lead.suitSlot === 4
   const playIsTrump = play.suitSlot === 4
@@ -66,15 +66,15 @@ export interface TrickStanding {
  * `keyCard`、不比花色与结构，于是**任何人垫牌（非同花色）的大牌都会被当成「当前最大」**，
  * AI 据此误判「我赢不了」而白垫小牌（详见 docs/15 KN-7）。
  *
- * 垫牌（混花色）的 `suitSlot === -1`，在 `canBeat` 里就被排除，进不了竞争池。
+ * 垫牌（混花色）的 `suitSlot === -1`，在 `canFollowShape` 里就被排除，进不了竞争池。
  */
 /**
- * 这一手是否**真的压过** `lead`：既有资格（`canBeat`），牌力又更大。
+ * 这一手是否**真的压过** `lead`：既有资格（`canFollowShape`），牌力又更大。
  *
- * 牌力相等**不算压过**（先出者赢，规则如此）—— 这正是 `canBeat` 单独用会出错的地方。
+ * 牌力相等**不算压过**（先出者赢，规则如此）—— 这正是 `canFollowShape` 单独用会出错的地方。
  */
 export function beatsPlay(play: PlayAnalysis, lead: PlayAnalysis, ctx: RuleContext): boolean {
-  if (!canBeat(play, lead)) return false
+  if (!canFollowShape(play, lead)) return false
   const a = play.keyCard
   const b = lead.keyCard
   if (!a || !b) return false
@@ -85,7 +85,7 @@ export function trickStanding(plays: readonly Play[], ctx: RuleContext): TrickSt
   if (plays.length === 0) return null
   const lead = (plays[0] as Play).analysis
 
-  const qualified = plays.filter((p) => canBeat(p.analysis, lead))
+  const qualified = plays.filter((p) => canFollowShape(p.analysis, lead))
   const trumpPlays = qualified.filter((p) => p.analysis.suitSlot === 4)
   const pool = lead.suitSlot === 4 || trumpPlays.length > 0 ? trumpPlays : qualified
 
@@ -110,7 +110,7 @@ export function trickStanding(plays: readonly Play[], ctx: RuleContext): TrickSt
  */
 export function resolveTrick(plays: readonly Play[], ctx: RuleContext): TrickResult {
   if (plays.length === 0) throw new Error('resolveTrick: 没有出牌')
-  // 首出是混花色时 `trickStanding` 也返回 null（`canBeat` 对 suitSlot === -1 恒 false，
+  // 首出是混花色时 `trickStanding` 也返回 null（`canFollowShape` 对 suitSlot === -1 恒 false，
   // 竞争池为空），旧实现于是报「没有出牌」—— 明明有牌，只是首出牌型非法（docs/33 C6-05）。
   const lead = plays[0] as Play
   if (lead.analysis.suitSlot === -1) {
