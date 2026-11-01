@@ -10,7 +10,7 @@
  *
  * 目的：在动手改权重之前，先确认驱动项。本项目已经栽过三次「加项重复计分」。
  */
-import { DEFAULT_RULE_CONFIG, analyze, cardsScore, teamOf, trickStanding } from '@core'
+import { DEFAULT_RULE_CONFIG, analyze, cardsScore, checkPlay } from '@core'
 import type { Card, PlayAnalysis, Seat } from '@core'
 import { aiPlayFor, newGame, reduce } from '@app/game'
 import { ctxOf, seatToPlay } from '@app/state'
@@ -66,8 +66,6 @@ for (let seed = 1; seed <= ROUNDS; seed++) {
     const seat = seatToPlay(s)
     if (seat === null) break
     const isLead = s.trick.plays.length === 0
-    const picked = isLead ? null : null
-    void picked
     const before = s
     const next = aiPlayFor(s, seat, 3)
     if (next === s) break
@@ -89,15 +87,26 @@ for (let seed = 1; seed <= ROUNDS; seed++) {
         jokerLeads++
         // 对比：所有非王候选里分数最高的那一手
         const input = leadInput(before, seat)
+        // 候选必须真的合法：旧版只按「非王」筛，甩牌候选（同槽多组）里混着过不了
+        // `checkLead` 的手，那些手的打分当然高 —— 于是「王 vs 最优非王」的差距被系统性夸大。
         const cands = enumeratePlays(input.hand, input.ctx, { kind: 'lead' }, 60, true).filter(
-          (cs) => cs.length > 0 && !hasJoker(cs),
+          (cs) =>
+            cs.length > 0 &&
+            !hasJoker(cs) &&
+            checkPlay({ hand: input.hand, cards: cs, ctx: input.ctx, opponents: input.opponents }).ok,
         )
         let bestAlt: { cards: readonly Card[]; total: number } | null = null
         for (const cs of cands) {
           const e = explainPlay(input, cs, 3)
           if (bestAlt === null || e.total > bestAlt.total) bestAlt = { cards: cs, total: e.total }
         }
-        if (bestAlt === null) continue
+        // **必须先把状态推进再 continue**：这里漏了 `s = next` 会让循环原地空转到
+        // 500 次上限，把**同一次首出**重复计数几百遍（实测 8 副本该 170 次首出，
+        // 打印成 577 次 / 出王 74.7%）。诊断脚本自己出错比没有诊断更危险。
+        if (bestAlt === null) {
+          s = next
+          continue
+        }
         const ej = explainPlay(input, play.cards, 3)
         const mj = byName(ej.parts)
         const ma = byName(bestAlt.cards.length ? explainPlay(input, bestAlt.cards, 3).parts : [])
