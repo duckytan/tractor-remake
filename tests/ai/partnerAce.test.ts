@@ -1,12 +1,11 @@
 /**
  * 队友有 ♦A，该不该出？（用户 2026-11-01 报）
  *
- * 局面：主 ♦、打 7；南出 ♦10、西出 ♦9，北（队友）手里有 ♦A 与 ♦J，东还没出。
- * 用户看到「北有 A 不出，出 J，被东的 Q 抢下」，认为 AI 打错。
+ * 局面：**主 ♠**、打 7；南出 ♦10、西出 ♦9，北（队友）手里有 ♦A，东还没出。
+ * 用户看到「北有 A 不出」，认为 AI 打错。
  *
- * 结论：**AI 是对的** —— 关键在「东手里有没有比 A 更大的主」。
- *   ① 东只有 ♦Q ⇒ 出 A 稳赢 10 分（AI 确实出 A）
- *   ② 东有 ♦7（打 7 的级牌，比 A 大）⇒ A 也会被压，那就出 J 省 A（AI 确实出 J）
+ * 结论：**AI 是对的**（♦ 是副牌，♦A 压得住 ♦Q；东出过 ♦ 也毙不了）。
+ * 另外锁一条「缺门时用主牌 A 毙」—— 这是同一局的另一种读法。
  *
  * 这两个用例锁住上面两条 —— 以后调权重不能把「A 能赢时不出 A」改出来。
  */
@@ -18,8 +17,9 @@ import { decide } from '@ai/policy'
 import type { AiDecisionInput } from '@ai/policy'
 
 const ctx: RuleContext = {
-  power: buildPowerTable({ mode: 1, levelRank: 7, trump: 3, forcedNT: false }),
-  trump: 3,
+  // 主花色是**黑桃 ♠**（用户 2026-11-02 纠正：之前我误读成 ♦）
+  power: buildPowerTable({ mode: 1, levelRank: 7, trump: 0, forcedNT: false }),
+  trump: 0,
   levelRank: 7,
   forcedNT: false,
   config: DEFAULT_RULE_CONFIG,
@@ -30,12 +30,12 @@ const D = (rank: number): number => 39 + rank // ♦
 /**
  * @param eastHasLevel7 东家手里有没有 7♦（级牌 = 主牌里比 A 大的那张）
  */
-function pick(eastHasLevel7: boolean): number[] {
+/** 北手里有 ♦A 与 ♦J，东只有 ♦Q ⇒ 必须出 ♦A 拿这 10 分 */
+function pickWithDiamond(): number[] {
   const lead = [c(D(8))] // ♦10
   const west = [c(D(7))] // ♦9
-  // 填充牌**不能用 7**（打 7 ⇒ 所有 7 都是级牌/主牌，会给东家一张比 A 大的主）
   const myHand = [c(D(12)), c(D(9)), c(26 + 2), c(26 + 3)] // ♦A ♦J ♣4 ♣5
-  const east = eastHasLevel7 ? [c(D(5)), c(D(10))] : [c(D(10)), c(26 + 1)] // ♦7+♦Q ／ ♦Q+♣3
+  const east = [c(D(10)), c(26 + 1)] // ♦Q ♣3（有 ♦，不能毙）
   const input: AiDecisionInput = {
     seat: 2 as Seat,
     hand: myHand,
@@ -51,12 +51,32 @@ function pick(eastHasLevel7: boolean): number[] {
   return decide(input, 3, mulberry32(1)).cards.map((x) => x.value)
 }
 
-describe('队友有 ♦A（打 7 · 主 ♦）', () => {
-  it('东家只有 ♦Q ⇒ 出 ♦A 稳赢这 10 分', () => {
-    expect(pick(false)).toEqual([D(12)])
+/** 北缺 ♦，但有主牌 ♠A 能毙、也有 ♣J 可垫 ⇒ 必须毙 */
+function pickRuff(): number[] {
+  const lead = [c(D(8))] // ♦10
+  const west = [c(D(7))] // ♦9
+  const myHand = [c(0 + 12), c(26 + 9), c(26 + 8)] // ♠A ♣J ♣10（无 ♦）
+  const east = [c(D(10)), c(26 + 1)] // ♦Q ♣3
+  const input: AiDecisionInput = {
+    seat: 2 as Seat,
+    hand: myHand,
+    ctx,
+    play: { kind: 'follow', leadCards: lead, leadAnalysis: analyze(lead, ctx) },
+    currentWinner: { seat: 0 as Seat, analysis: analyze(lead, ctx) },
+    partnerLeading: false,
+    opponents: [[], west, east],
+    remainingSeats: [2, 3] as Seat[],
+    trickPoints: cardsScore(lead) + cardsScore(west),
+  }
+  return decide(input, 3, mulberry32(1)).cards.map((x) => x.value)
+}
+
+describe('队友有 A（主 ♠ · 打 7 · 南出 ♦10）', () => {
+  it('有 ♦A 且东只有 ♦Q ⇒ 出 ♦A 拿这 10 分', () => {
+    expect(pickWithDiamond()).toEqual([D(12)])
   })
 
-  it('东家有 7♦（比 A 大的级牌）⇒ A 也会被压，出 ♦J 省 A', () => {
-    expect(pick(true)).toEqual([D(9)])
+  it('缺 ♦ 但手里有 ♠A ⇒ 用主牌 A 毙下这 10 分', () => {
+    expect(pickRuff()).toEqual([0 + 12])
   })
 })
