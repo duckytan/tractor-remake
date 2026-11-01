@@ -20,17 +20,18 @@ import { CARD_SIZE_PX, HUMAN_SEAT, ctxOf, seatToPlay } from '@app/state'
 import { gapCountOf, handView } from '@app/handView'
 import { hintExplain } from '@app/hintView'
 import { statsLine } from '@app/stats'
-import { clearRoundLogs, exportRounds, logSummary } from '@app/roundLog'
+import { clearRoundLogs, exportRounds, loggedRounds, logSummary } from '@app/roundLog'
 import {
   counterView,
   dealtCardsFor,
   displayPlays,
+  loggedTrickView,
   pastPlaysView,
   replaySummary,
   trickLogView,
 } from '@app/view'
 import { leadingSeat } from '@app/view'
-import type { CounterSlot } from '@app/view'
+import type { CounterSlot, LogTrick } from '@app/view'
 import { backEl, cardEl, cardName, cardSpokenName, ensureDefs } from './card'
 import { isBackInFlight, isInFlight } from './dealFly'
 
@@ -1238,37 +1239,72 @@ export function settingsPanel(s: GameState): string {
 }
 
 /** 对局记录面板（FR-20）：按墩分组，标赢家、得分高亮、花色着色 */
+/**
+ * 一墩的 HTML（记录面板 / 上一局复盘共用）。
+ *
+ * @param notes   `"墩:座位"` → 理由；只有**已落库**的局才有，所以局中天然不显示（不剧透）
+ * @param replayable 当前局的墩才能点「回放」（上一局的手牌已经不在状态里了）
+ */
+function trickHtml(
+  t: LogTrick,
+  i: number,
+  notes: ReadonlyMap<string, string>,
+  replayable: boolean,
+): string {
+  return `<div class="log-trick" data-win-team="${t.winnerTeam}">
+    <div class="log-trick__head">
+      <span class="log-trick__no">第 ${t.no} 墩</span>
+      <span class="log-trick__win">${t.winnerLabel} 赢</span>
+      ${t.score > 0 ? `<span class="log-trick__pts is-score">${t.score} 分</span>` : ''}
+      ${replayable ? `<button class="btn btn--mini" data-act="replayStart" data-val="${i}">回放</button>` : ''}
+    </div>
+    <div class="log-trick__plays">
+      ${t.plays
+        .map(
+          (p) => `<div class="log-play" data-win="${p.isWinner ? 'true' : 'false'}">
+          <span class="log-play__seat">${p.label}</span>
+          <span class="log-play__cards">${p.cards
+            .map(
+              (c) =>
+                `<span class="log-card"${c.suit !== null ? ` data-suit="${c.suit}"` : ''}${
+                  c.isTrump ? ' data-is-trump="true"' : ''
+                }>${c.text}</span>`,
+            )
+            .join('')}</span>
+          ${
+            notes.has(`${t.no - 1}:${p.seat}`)
+              ? `<span class="log-play__note">${esc(notes.get(`${t.no - 1}:${p.seat}`) ?? '')}</span>`
+              : ''
+          }
+        </div>`,
+        )
+        .join('')}
+    </div>
+  </div>`
+}
+
 function logPanel(s: GameState): string {
   const tricks = trickLogView(s)
-  const items = tricks
-    .map(
-      (t, i) => `<div class="log-trick" data-win-team="${t.winnerTeam}">
-        <div class="log-trick__head">
-          <span class="log-trick__no">第 ${t.no} 墩</span>
-          <span class="log-trick__win">${t.winnerLabel} 赢</span>
-          ${t.score > 0 ? `<span class="log-trick__pts is-score">${t.score} 分</span>` : ''}
-          <button class="btn btn--mini" data-act="replayStart" data-val="${i}">回放</button>
-        </div>
-        <div class="log-trick__plays">
-          ${t.plays
-            .map(
-              (p) => `<div class="log-play" data-win="${p.isWinner ? 'true' : 'false'}">
-              <span class="log-play__seat">${p.label}</span>
-              <span class="log-play__cards">${p.cards
-                .map(
-                  (c) =>
-                    `<span class="log-card"${c.suit !== null ? ` data-suit="${c.suit}"` : ''}${
-                      c.isTrump ? ' data-is-trump="true"' : ''
-                    }>${c.text}</span>`,
-                )
-                .join('')}</span>
-            </div>`,
-            )
-            .join('')}
-        </div>
-      </div>`,
-    )
-    .join('')
+  // AI 出牌理由：只有**本局已结算落库**之后才存在 ⇒ 牌局进行中天然看不到（不剧透）
+  const notes = new Map<string, string>()
+  for (const r of loggedRounds()) {
+    if (r.seed !== s.seed || r.round !== s.round) continue
+    for (const n of r.aiNotes ?? []) notes.set(`${n.trick}:${n.seat}`, n.detail)
+  }
+  const items = tricks.map((t, i) => trickHtml(t, i, notes, true)).join('')
+
+  /* ---- 上一局复盘：点「下一局」/挂机之后，当前局还没打完，也能回看刚结束那局 ---- */
+  const all = loggedRounds()
+  const prev = all[all.length - 1]
+  const prevIsOther = prev !== undefined && (prev.seed !== s.seed || prev.round !== s.round)
+  let prevBlock = ''
+  if (prevIsOther && prev.tricks.length > 0) {
+    const pn = new Map<string, string>()
+    for (const n of prev.aiNotes ?? []) pn.set(`${n.trick}:${n.seat}`, n.detail)
+    const rows = loggedTrickView(prev).map((t, i) => trickHtml(t, i, pn, false)).join('')
+    prevBlock = `<h3 class="log-sub">上一局复盘（第 ${prev.round} 局 · 主 ${prev.trump === 'NT' ? '无将' : ['♠', '♥', '♣', '♦'][prev.trump as number]} · 闲家 ${prev.settle.defenderScore} 分）</h3>
+      <div class="log-list log-list--prev">${rows}</div>`
+  }
 
   // 已记录的**完整对局**数（跨局，存 localStorage）—— 与上面「本局打完几墩」不是一回事
   const logged = logSummary().rounds
@@ -1283,6 +1319,7 @@ function logPanel(s: GameState): string {
     <h2>对局记录</h2>
     <p class="muted">已打完 ${s.history.length} 墩（仅内存，不写存档）</p>
     ${items ? `<div class="log-list">${items}</div>` : '<div class="log-empty">还没有打完的墩</div>'}
+    ${prevBlock}
     <div class="panel-foot">
       <!-- 导出完整对局数据（开局手牌 + 每墩 + 你的每个决策 vs AI 的建议），
            交给分析脚本用；已记录 ${logged} 局 -->

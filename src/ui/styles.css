@@ -1285,6 +1285,25 @@ html, body {
 .log-card[data-suit='3'] { color: var(--suit-diamond); }
 .log-card[data-is-trump='true'] { box-shadow: inset 0 0 0 1px var(--trump); }
 .log-play[data-win='true'] .log-card { background: #fff; font-weight: 600; }
+/* 局后复盘：AI 每一手的出牌理由（只在本局结算后出现，局中不会有 —— 不剧透） */
+.log-play { flex-wrap: wrap; }
+.log-play__note {
+  flex: 0 0 100%;
+  margin: 1px 0 3px 28px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-faint);
+}
+.log-play__note::before { content: '↳ '; opacity: 0.6; }
+/* 上一局复盘：与「本局」分开放，视觉上弱一档 */
+.log-sub {
+  margin: 18px 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-dim);
+  letter-spacing: 0.3px;
+}
+.log-list--prev { opacity: 0.92; }
 .log-empty { color: var(--ink-faint); font-size: 13px; text-align: center; padding: 20px 0; }
 
 /* 实时合法性提示条 */

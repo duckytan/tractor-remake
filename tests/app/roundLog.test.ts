@@ -21,6 +21,7 @@ import {
   initRoundLog,
   loggedRounds,
   logSummary,
+  noteAiPlay,
   noteHumanPlay,
 } from '@app/roundLog'
 import type { GameState } from '@app/state'
@@ -167,6 +168,39 @@ describe('roundLog · 人类决策（影子对比）', () => {
   it('没有开局快照时不记人类决策（拿不到局面）', () => {
     noteHumanPlay(atPlay(), cards(0), cards(1), false)
     expect(loggedRounds()).toHaveLength(0)
+  })
+})
+
+describe('roundLog · AI 出牌理由（局后复盘）', () => {
+  it('记下 AI 每一手的理由', () => {
+    const s = atPlay()
+    beginRound(s)
+    noteAiPlay(0, 1, '压住这墩 · 10 分', '跟牌：能压过当前最大，本墩 10 分归我方')
+    finishRound(atSettle(s))
+    const notes = loggedRounds()[0]!.aiNotes!
+    expect(notes).toHaveLength(1)
+    expect(notes[0]).toMatchObject({ trick: 0, seat: 1, text: '压住这墩 · 10 分' })
+  })
+
+  it('同一（墩, 座位）只留最后一条（悔牌会重复记）', () => {
+    const s = atPlay()
+    beginRound(s)
+    noteAiPlay(0, 1, '第一次', 'a')
+    noteAiPlay(0, 1, '第二次', 'b')
+    finishRound(atSettle(s))
+    const notes = loggedRounds()[0]!.aiNotes!
+    expect(notes).toHaveLength(1)
+    expect(notes[0]!.text).toBe('第二次')
+  })
+
+  it('不同座位 / 不同墩各记一条', () => {
+    const s = atPlay()
+    beginRound(s)
+    noteAiPlay(0, 1, 'x', 'x')
+    noteAiPlay(0, 3, 'y', 'y')
+    noteAiPlay(1, 1, 'z', 'z')
+    finishRound(atSettle(s))
+    expect(loggedRounds()[0]!.aiNotes).toHaveLength(3)
   })
 })
 

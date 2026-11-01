@@ -11,7 +11,8 @@ import type { Card, Play } from '@core'
 import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce, stateFieldsOfPrefs } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { initStats } from '@app/stats'
-import { beginRound, initRoundLog, noteHumanPlay } from '@app/roundLog'
+import { beginRound, initRoundLog, noteAiPlay, noteHumanPlay } from '@app/roundLog'
+import { explainCards } from '@app/hintView'
 import { backfillSettled, recordSettled } from '@app/settleRecord'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
 import type { Action, GameState } from '@app/state'
@@ -141,6 +142,19 @@ function step(a: Action): void {
   if (prev.trick !== state.trick) {
     hintUsedThisTurn = false
     hintCardsThisTurn = []
+  }
+
+  /* ---- AI 出牌理由（只在结算后展示，局中记下不显示，避免剧透对手手牌） ---- */
+  if (prev.phase === 'play') {
+    for (const seat of [1, 2, 3] as const) {
+      const before = prev.hands[seat] as readonly Card[]
+      const after = state.hands[seat] as readonly Card[]
+      if (before.length === after.length) continue
+      const played = before.filter((c) => !after.some((a) => a.id === c.id))
+      if (played.length === 0) continue
+      const note = explainCards(prev, seat, played)
+      if (note !== null) noteAiPlay(prev.history.length, seat, note.text, note.detail)
+    }
   }
 }
 

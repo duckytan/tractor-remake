@@ -31,6 +31,21 @@ export interface LoggedTrick {
   readonly score: number
 }
 
+/**
+ * 局后复盘用：**AI 每一手出牌的理由**（一句话）。
+ *
+ * 只在结算后才写进日志 —— 牌局进行中显示等于剧透对手手牌。
+ */
+export interface LoggedAiNote {
+  /** 第几墩（0 基） */
+  readonly trick: number
+  readonly seat: Seat
+  /** 一句话理由（`explainCards().text`） */
+  readonly text: string
+  /** 更详细的说明（`explainCards().detail`） */
+  readonly detail: string
+}
+
 /** 你的一个出牌决策 */
 export interface LoggedHumanPlay {
   /** 第几墩（0 基，对应 `tricks` 下标） */
@@ -76,6 +91,8 @@ export interface RoundLog {
   readonly bottom: readonly number[]
   readonly tricks: readonly LoggedTrick[]
   readonly human: readonly LoggedHumanPlay[]
+  /** AI 出牌理由（复盘用；老日志没有这个字段） */
+  readonly aiNotes?: readonly LoggedAiNote[]
   readonly settle: {
     readonly defenderScore: number
     readonly levels: number
@@ -98,6 +115,7 @@ let pending: {
   round: number
   hands: readonly (readonly number[])[]
   human: LoggedHumanPlay[]
+  aiNotes: LoggedAiNote[]
 } | null = null
 
 const values = (cards: readonly { value: number }[]): number[] => cards.map((c) => c.value)
@@ -130,6 +148,7 @@ export function beginRound(s: GameState): void {
     round: s.round,
     hands: s.hands.map((h) => values(h as readonly { value: number }[])),
     human: [],
+    aiNotes: [],
   }
 }
 
@@ -158,6 +177,21 @@ export function noteHumanPlay(
     hint: hintUsed,
     hintCards: [...hintCards],
   })
+}
+
+/**
+ * 记一条 AI 出牌理由（**结算后复盘用**；局中不显示，避免剧透对手手牌）。
+ *
+ * 同一个（墩, 座位）只留最后一条：悔牌会让同一手被记多次。
+ */
+export function noteAiPlay(trick: number, seat: Seat, text: string, detail: string): void {
+  if (pending === null) return
+  const last = pending.aiNotes[pending.aiNotes.length - 1]
+  if (last !== undefined && last.trick === trick && last.seat === seat) {
+    pending.aiNotes[pending.aiNotes.length - 1] = { trick, seat, text, detail }
+    return
+  }
+  pending.aiNotes.push({ trick, seat, text, detail })
 }
 
 /**
@@ -204,6 +238,7 @@ export function finishRound(s: GameState): void {
       score: t.score,
     })),
     human: sameRound ? snap.human : [],
+    aiNotes: sameRound ? snap.aiNotes : [],
     settle: {
       defenderScore: r.defenderScore,
       levels: r.levels,

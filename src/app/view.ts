@@ -9,6 +9,7 @@ import type { Card, Seat, Team } from '@core'
 import { HAND_SIZE } from '@core'
 import {
   BIG_JOKER,
+  buildPowerTable,
   SMALL_JOKER,
   cardScore,
   levelRankToRankIndex,
@@ -91,6 +92,52 @@ export function trickLogView(s: GameState): LogTrick[] {
         team: teamOf(p.seat),
         cards: p.cards.map((c) => logCard(c, power.isTrump(c.value))),
         isWinner: p.seat === t.winner,
+      })),
+    }))
+    .reverse()
+}
+
+/**
+ * 把**已落库的上一局**（`roundLog`）转成与 `trickLogView` 同形的视图。
+ *
+ * 为什么要它：挂机/点「下一局」之后，当前 `s.history` 已经是新一局（空的），
+ * 玩家就再也看不到上一局的复盘了。这里从日志还原，保证「局后复盘」随时可看。
+ *
+ * 注意：牌力表要用**那一局自己的** trump/levelRank（新一局可能换了主）。
+ */
+export function loggedTrickView(r: {
+  trump: number | 'NT'
+  levelRank: number
+  tricks: readonly {
+    leader: number
+    plays: readonly (readonly [number, readonly number[]])[]
+    winner: number
+    score: number
+  }[]
+  dealer: number
+}): LogTrick[] {
+  const trump = r.trump === 'NT' ? ('NT' as const) : (r.trump as 0 | 1 | 2 | 3)
+  const power = buildPowerTable({
+    mode: 1,
+    levelRank: r.levelRank as never,
+    trump,
+    forcedNT: trump === 'NT',
+  })
+  const dealerTeam = teamOf(r.dealer as Seat)
+  return r.tricks
+    .map((t, i) => ({
+      no: i + 1,
+      winner: t.winner as Seat,
+      winnerLabel: seatShortLabel(t.winner as Seat),
+      winnerTeam: teamOf(t.winner as Seat),
+      score: t.score,
+      isDealerWin: teamOf(t.winner as Seat) === dealerTeam,
+      plays: t.plays.map(([seat, values]) => ({
+        seat: seat as Seat,
+        label: seatShortLabel(seat as Seat),
+        team: teamOf(seat as Seat),
+        cards: values.map((v) => logCard({ id: v * 2, value: v }, power.isTrump(v))),
+        isWinner: seat === t.winner,
       })),
     }))
     .reverse()

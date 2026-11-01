@@ -18,7 +18,7 @@
  */
 
 import { analyze, beatsPlay, cardsScore, isSameTeam, trickStanding } from '@core'
-import type { Card, PlayAnalysis, RuleContext } from '@core'
+import type { Card, PlayAnalysis, RuleContext, Seat } from '@core'
 import { HUMAN_SEAT, ctxOf } from './state'
 import type { GameState } from './state'
 
@@ -72,6 +72,23 @@ export function hintExplain(s: GameState): HintExplain | null {
   const ids = new Set(s.hintIds)
   const cards = hand.filter((c) => ids.has(c.id))
   if (cards.length === 0) return null
+  return explainCards(s, HUMAN_SEAT, cards)
+}
+
+/**
+ * 解释「某座位出这几张牌」的理由（**任意座位**）。
+ *
+ * 抽出来是为了**局后复盘**：结算后可以逐手解释 AI 为什么这么出
+ *（用户反复问「它为什么不打 A」，而 AI 用了玩家看不见的信息 —— 只能事后说明）。
+ * 注意：**不要在牌局进行中把 AI 的理由显示出来**，那等于剧透对手手牌。
+ */
+export function explainCards(
+  s: GameState,
+  seat: Seat,
+  cards: readonly Card[],
+): HintExplain | null {
+  if (cards.length === 0 || s.phase !== 'play') return null
+  const hand = s.hands[seat] as readonly Card[]
 
   const ctx = ctxOf(s)
   const a = analyze(cards, ctx)
@@ -95,7 +112,7 @@ export function hintExplain(s: GameState): HintExplain | null {
 
   /* ---------------- 跟牌 ---------------- */
   const standing = trickStanding(s.trick.plays, ctx)
-  const partnerWinning = standing !== null && isSameTeam(standing.winner.seat, HUMAN_SEAT)
+  const partnerWinning = standing !== null && isSameTeam(standing.winner.seat, seat)
   // **必须走 core 的 `beatsPlay`** —— 一墩判定全项目只此一份。
   // 自己写「比 keyCard 大小」会把「对子压单张」「散对压连对」都算成能压（docs/15 KN-7 的教训）；
   // 而只用 `canFollowShape` 又会漏掉牌力比较（它只判结构资格），于是文案会谎报「压住这墩」。
