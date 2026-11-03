@@ -8,7 +8,7 @@ import { enumeratePlays } from '@ai/enumerate'
 import type { PlayContext } from '@ai/enumerate'
 import { checkPlay, DEAL_TOTAL } from '@core'
 import type { Card, Play } from '@core'
-import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, reduce, stateFieldsOfPrefs } from '@app/game'
+import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, prefsFromState, reduce, stateFieldsOfPrefs } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { initStats } from '@app/stats'
 import { beginRound, initRoundLog, noteAiPlay, noteHumanPlay } from '@app/roundLog'
@@ -252,30 +252,7 @@ function savePrefsIfChanged(p: Prefs): void {
 
 function afterChange(): void {
   saveState(state)
-  savePrefsIfChanged({
-    aiLevelPartner: state.aiLevelPartner,
-    aiLevelOpponent: state.aiLevelOpponent,
-    aiSpeedMs: state.aiSpeedMs,
-    fourColor: state.fourColor,
-    ruleConfig: state.pendingConfig,
-    cardSize: state.cardSize,
-    animation: state.animation,
-    animSpeed: state.animSpeed,
-    showHistory: state.showHistory,
-    showOppHands: state.showOppHands,
-    hintSelects: state.hintSelects,
-    hintStyle: state.hintStyle,
-    autoPlay: state.autoPlay,
-    autoLevel: state.autoLevel,
-    showCounter: state.showCounter,
-    aiPeekHands: state.aiPeekHands,
-    musicTheme: state.musicTheme,
-    soundEnhanced: state.soundEnhanced,
-    autoVariation: state.autoVariation,
-    volumeMaster: state.volumeMaster,
-    volumeBgm: state.volumeBgm,
-    volumeSfx: state.volumeSfx,
-  })
+  savePrefsIfChanged(prefsFromState(state))
   paint()
   // 必须在 paint 之后：飞行牌要量「这张牌刚画到哪儿」，以及牌堆的位置
   trackDealAnimation(root as HTMLElement, state)

@@ -87,7 +87,7 @@ export interface Prefs {
   readonly volumeSfx: number
 }
 
-const DEFAULT_PREFS: Prefs = {
+export const DEFAULT_PREFS: Prefs = {
   aiLevelPartner: 3,
   aiLevelOpponent: 3,
   aiSpeedMs: 420,

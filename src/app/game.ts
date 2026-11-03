@@ -561,6 +561,24 @@ export function stateFieldsOfPrefs(p: Prefs): Pick<GameState, PrefField> {
   return out as Pick<GameState, PrefField>
 }
 
+/**
+ * 从 `GameState` 反向构造 `Prefs`（与 `stateFieldsOfPrefs` 对称）。
+ *
+ * `main.ts` 的 `afterChange()` 以前**手写 22 行字段字面量**构造 `Prefs` 给
+ * `savePrefsIfChanged`。那段代码没有编译期护栏：往 `Prefs` 加字段而忘了在这里加
+ * ⇒ `savePrefs` 不写它 ⇒ 静默丢字段（`loadPrefs` 会用默认值补，看起来「设置
+ * 回到了默认」）。现在走同一份 `PREF_FIELDS` 清单，与读侧共用同一条安全绳。
+ *
+ * `pendingConfig` → `ruleConfig` 是唯一的改名映射（与 `stateFieldsOfPrefs` 对称）。
+ */
+export function prefsFromState(src: GameState): Prefs {
+  const out = {} as Record<keyof Prefs, unknown>
+  for (const k of PREF_FIELDS) {
+    out[k === 'pendingConfig' ? 'ruleConfig' : (k as keyof Prefs)] = src[k as keyof GameState]
+  }
+  return out as Prefs
+}
+
 function withExperience(base: GameState, src: GameState): GameState {
   return { ...base, ...pickPrefs(src) }
 }

@@ -12,7 +12,9 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_RULE_CONFIG } from '@core'
 import type { SettleResult } from '@core'
-import { newGame, reduce } from '@app/game'
+import { newGame, prefsFromState, reduce, stateFieldsOfPrefs } from '@app/game'
+import { DEFAULT_PREFS } from '@app/persist'
+import type { Prefs } from '@app/persist'
 import { emptyState } from '@app/state'
 import type { GameState } from '@app/state'
 
@@ -146,3 +148,44 @@ describe('重开游戏保留玩家偏好（PREF_FIELDS 契约）', () => {
     expect(b.volumeMaster).toBe(75)
   })
 })
+
+describe('写侧收敛：prefsFromState 与 stateFieldsOfPrefs 互逆', () => {
+  /**
+   * v1.3.56：`afterChange()` 的 `savePrefsIfChanged({...})` 原来手写 22 行字段字面量，
+   * 没有编译期护栏。改成 `prefsFromState(state)` 后，读侧/写侧共用 `PREF_FIELDS` 清单。
+   *
+   * 这组测试锁住的契约：
+   *   1. `prefsFromState(stateFieldsOfPrefs(p))` 往返一致（prefs → state → prefs 不丢字段）
+   *   2. `stateFieldsOfPrefs(prefsFromState(s))` 往返一致（state → prefs → state 不丢字段）
+   *   3. 从「全部非默认值」的 state 构造出的 prefs，每个字段都不等于 DEFAULT_PREFS
+   *      （验证 prefsFromState 确实读了 state 的值，而不是意外回落默认）
+   */
+  it('prefs → state → prefs 往返一致', () => {
+    const p: Prefs = { ...DEFAULT_PREFS, ...toPrefs(NON_DEFAULT) }
+    const s = { ...emptyState(), ...stateFieldsOfPrefs(p) }
+    const back = prefsFromState(s)
+    expect(back).toEqual(p)
+  })
+
+  it('state → prefs → state 往返一致', () => {
+    const s = customized()
+    const back = { ...emptyState(), ...stateFieldsOfPrefs(prefsFromState(s)) }
+    for (const k of PREF_KEYS) {
+      expect(back[k], `写侧往返丢了字段 ${k}`).toEqual(s[k])
+    }
+  })
+
+  it('从非默认值的 state 构造的 prefs，每个字段都不等于默认', () => {
+    const p = prefsFromState(customized())
+    // 逐字段比对（不是 toEqual 整个对象 —— 只验「值确实从 state 来了」）
+    for (const k of Object.keys(DEFAULT_PREFS) as (keyof typeof DEFAULT_PREFS)[]) {
+      expect(p[k], `prefsFromState 在 ${k} 上回落了默认值`).not.toBe(DEFAULT_PREFS[k])
+    }
+  })
+})
+
+/** 把 `Pick<GameState, PrefField>` 形状转成 `Partial<Prefs>`（pendingConfig → ruleConfig） */
+function toPrefs(s: Pick<GameState, typeof PREF_KEYS[number]>): Partial<Prefs> {
+  const { pendingConfig, ...rest } = s
+  return { ruleConfig: pendingConfig, ...rest } as unknown as Partial<Prefs>
+}
