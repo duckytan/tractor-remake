@@ -759,11 +759,11 @@ const TRUMP_NAMES = ['♠黑桃', '♥红心', '♣梅花', '♦方片'] as cons
 const trumpLabelOf = (t: Trump): string => (t === 'NT' ? '无将' : (TRUMP_NAMES[t] as string))
 
 /** AI 是否愿意加固（队友把门槛抬到 3 张）。加固几乎总是划算，不加额外门槛 */
-function aiWantsGuard(s: GameState, seat: Seat): boolean {
+function aiWantsGuard(s: GameState, seat: Seat, ctx?: RuleContext): boolean {
   if (s.trumpDeclarer === null) return false
   return canGuard({
     hand: s.hands[seat] as readonly Card[],
-    ctx: ctxOf(s),
+    ctx: ctx ?? ctxOf(s),
     currentTrump: s.trump,
     declarer: s.trumpDeclarer,
     seat,
@@ -805,7 +805,7 @@ function resolveContract(s: GameState): GameState {
         break
       }
       // ② 加固（队友用同花色再亮一次，把门槛抬到 3 张）
-      if (aiWantsGuard(cur, seat)) {
+      if (aiWantsGuard(cur, seat, ctx)) {
         cur = {
           ...withStep(cur),
           trumpCount: counterNeed(cur.trumpCount),
@@ -1185,8 +1185,8 @@ function settleCurrentRound(s: GameState, lastWinnerAnalysis: ReturnType<typeof 
  * 于是任何人垫牌（非同花色）的大牌都会被当成「当前最大」，
  * AI 据此误判「我赢不了」而白垫小牌（docs/15 KN-7）。
  */
-export function currentWinnerOf(s: GameState): { seat: Seat; analysis: ReturnType<typeof analyze> } | null {
-  const standing = trickStanding(s.trick.plays, ctxOf(s))
+export function currentWinnerOf(s: GameState, ctx?: RuleContext): { seat: Seat; analysis: ReturnType<typeof analyze> } | null {
+  const standing = trickStanding(s.trick.plays, ctx ?? ctxOf(s))
   if (standing === null) return null
   return { seat: standing.winner.seat, analysis: standing.winner.analysis }
 }
@@ -1241,7 +1241,27 @@ export function choosePlay(
         leadAnalysis: (s.trick.plays[0] as Play).analysis,
       }
 
-  const currentWinner = currentWinnerOf(s)
+  // 复用上方已算好的 ctx，避免 currentWinnerOf 内部再 buildPowerTable 一次
+  const currentWinner = currentWinnerOf(s, ctx)
+
+  // 单次遍历同时收集 opponents / remainingSeats / trickPoints，
+  // 避免旧实现的三次独立遍历：
+  //   · [0,1,2,3].filter(x => x !== seat).map(x => hands[x])  — opponents
+  //   · [0,1,2,3].filter(x => x !== seat && !plays.some(...)) — remainingSeats
+  //   · plays.reduce((n, p) => n + cardsScore(p.cards), 0)    — trickPoints
+  const playedSeats = new Set<Seat>()
+  let trickPoints = 0
+  for (const p of s.trick.plays) {
+    playedSeats.add(p.seat)
+    trickPoints += cardsScore(p.cards as readonly Card[])
+  }
+  const opponents: Card[][] = []
+  const remainingSeats: Seat[] = []
+  for (let x = 0; x < 4; x++) {
+    if (x === seat) continue
+    opponents.push(s.hands[x] as readonly Card[] as Card[])
+    if (!playedSeats.has(x as Seat)) remainingSeats.push(x as Seat)
+  }
 
   const decision = decide(
     {
@@ -1254,19 +1274,15 @@ export function choosePlay(
       currentWinner,
       partnerLeading: currentWinner !== null && isSameTeam(currentWinner.seat, seat),
       // 对家手牌：L2 用它做前瞻（这手能不能守住）
-      opponents: [0, 1, 2, 3]
-        .filter((x) => x !== seat)
-        .map((x) => s.hands[x] as readonly Card[]),
+      opponents,
       // 本墩还没出牌的座位：L3 靠它排除「已经出过牌的人」（他们压不了我）。
       // 不传会让 L3 退化成「把出过牌的人也当威胁」。
-      remainingSeats: [0, 1, 2, 3].filter(
-        (x) => x !== seat && !s.trick.plays.some((p) => p.seat === x),
-      ) as Seat[],
+      remainingSeats,
       // 概率推断（只吃公开信息）。`peek` 时不给，退回旧的全信息判定。
       ...(peek ? {} : { belief: buildBelief(s, seat) }),
       // 本墩已经落在桌面上的分 —— 定价「赢下这墩值不值」要用整墩的分，
       // 不是只有当前最大那一手的分（见 policy.ts 的 trickPointsSoFar）。
-      trickPoints: s.trick.plays.reduce((n, p) => n + cardsScore(p.cards as readonly Card[]), 0),
+      trickPoints,
     },
     level,
     rngFor(s.seed, s.step + 1000),
@@ -1305,19 +1321,34 @@ export function chooseSafePlay(s: GameState, seat: Seat): readonly Card[] {
   const play: PlayContext = leadPlay
     ? { kind: 'follow', leadCards: leadPlay.cards, leadAnalysis: leadPlay.analysis }
     : { kind: 'lead' }
-  const winner = currentWinnerOf(s)
+  // 复用上方已算好的 ctx，避免 currentWinnerOf 内部再 buildPowerTable 一次
+  const winner = currentWinnerOf(s, ctx)
+
+  // 单次遍历同时收集 opponents / remainingSeats / trickPoints
+  const playedSeats = new Set<Seat>()
+  let trickPoints = 0
+  for (const p of s.trick.plays) {
+    playedSeats.add(p.seat)
+    trickPoints += cardsScore(p.cards as readonly Card[])
+  }
+  const opponents: Card[][] = []
+  const remainingSeats: Seat[] = []
+  for (let x = 0; x < 4; x++) {
+    if (x === seat) continue
+    opponents.push(s.hands[x] as readonly Card[] as Card[])
+    if (!playedSeats.has(x as Seat)) remainingSeats.push(x as Seat)
+  }
+
   return safeHint({
     hand: s.hands[seat] as readonly Card[],
     ctx,
     play,
     currentWinner: winner === null ? null : winner.analysis,
     partnerLeading: winner !== null && isSameTeam(winner.seat, seat),
-    opponents: [0, 1, 2, 3].filter((x) => x !== seat).map((x) => s.hands[x] as readonly Card[]),
+    opponents,
     seat,
-    remainingSeats: [0, 1, 2, 3].filter(
-      (x) => x !== seat && !s.trick.plays.some((p) => p.seat === x),
-    ) as Seat[],
-    trickPoints: s.trick.plays.reduce((sum, p) => sum + cardsScore(p.cards as readonly Card[]), 0),
+    remainingSeats,
+    trickPoints,
   })
 }
 

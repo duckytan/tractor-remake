@@ -6,7 +6,6 @@
  * 这里改成更直接的语义模型（对子数 / 单张数 / 组列表），行为等价。
  */
 
-import { cardsScore } from './cards'
 import { suitSlotOf } from './deal'
 import type { Card as C, CardValue, RuleContext, SuitSlot, TypeCode } from './types'
 
@@ -83,16 +82,32 @@ export function analyze(cards: readonly C[], ctx: RuleContext): PlayAnalysis {
   if (cards.length === 0) return EMPTY_ANALYSIS
 
   const { power } = ctx
-  const slots = new Set<SuitSlot>()
-  for (const c of cards) slots.add(suitSlotOf(c.value, power))
-  const suitSlot: SuitSlot | -1 = slots.size === 1 ? ([...slots][0] as SuitSlot) : -1
+  // 单槽判定：用第一个元素的 slot 与后续比较，避免 Set 分配
+  const firstSlot = suitSlotOf((cards[0] as C).value, power)
+  let sameSlot = true
+  for (let i = 1; i < cards.length; i++) {
+    if (suitSlotOf((cards[i] as C).value, power) !== firstSlot) { sameSlot = false; break }
+  }
+  const suitSlot: SuitSlot | -1 = sameSlot ? firstSlot : -1
 
-  // 按牌值聚合（两副牌同一牌值最多 2 张）
+  // 按牌值聚合（两副牌同一牌值最多 2 张），同时找 keyCard（最大牌力），
+  // 并累加分数（避免末尾再调 cardsScore 做独立遍历）。
   const byValue = new Map<CardValue, C[]>()
+  let keyCard: C = cards[0] as C
+  let keyPower = power.get(keyCard.value)
+  let score = 0
   for (const c of cards) {
     const arr = byValue.get(c.value)
     if (arr) arr.push(c)
     else byValue.set(c.value, [c])
+    const p = power.get(c.value)
+    if (p > keyPower) { keyCard = c; keyPower = p }
+    // 内联 cardScore：5→5, 10→10, K→10, 其余→0
+    if (c.value < 52) {
+      const r = c.value % 13
+      if (r === 3) score += 5
+      else if (r === 8 || r === 11) score += 10
+    }
   }
 
   const pairSeeds: { power: number; cards: C[] }[] = []
@@ -136,9 +151,6 @@ export function analyze(cards: readonly C[], ctx: RuleContext): PlayAnalysis {
   // 从而在 legality 里被当成合法首出直接放行（白甩两对）。
   const isMultiGroup = groups.length > 1
 
-  let keyCard: C = cards[0] as C
-  for (const c of cards) if (power.get(c.value) > power.get(keyCard.value)) keyCard = c
-
   return {
     suitSlot,
     typeCode: (suitSlot === -1 ? 10 : suitSlot) as TypeCode,
@@ -146,7 +158,7 @@ export function analyze(cards: readonly C[], ctx: RuleContext): PlayAnalysis {
     pairCount,
     singleCount,
     keyCard,
-    score: cardsScore(cards),
+    score,
     isMultiGroup,
   }
 }

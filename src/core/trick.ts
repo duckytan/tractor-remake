@@ -85,18 +85,31 @@ export function trickStanding(plays: readonly Play[], ctx: RuleContext): TrickSt
   if (plays.length === 0) return null
   const lead = (plays[0] as Play).analysis
 
-  const qualified = plays.filter((p) => canFollowShape(p.analysis, lead))
-  const trumpPlays = qualified.filter((p) => p.analysis.suitSlot === 4)
+  // 单次遍历：同时收集 qualified 和 trumpPlays，避免两次 filter
+  const qualified: Play[] = []
+  const trumpPlays: Play[] = []
+  for (const p of plays) {
+    if (!canFollowShape(p.analysis, lead)) continue
+    qualified.push(p)
+    if (p.analysis.suitSlot === 4) trumpPlays.push(p)
+  }
   const pool = lead.suitSlot === 4 || trumpPlays.length > 0 ? trumpPlays : qualified
 
-  let best = pool[0]
-  if (best === undefined) return null
+  // 在找最大的同时收集 contenders，省掉末尾的 map
+  let best: Play | null = null
+  const contenders: Seat[] = []
   for (const p of pool) {
-    const a = p.analysis.keyCard
-    const b = best.analysis.keyCard
-    if (a && b && ctx.power.get(a.value) > ctx.power.get(b.value)) best = p
+    contenders.push(p.seat)
+    if (best === null) {
+      best = p
+    } else {
+      const a = p.analysis.keyCard
+      const b = best.analysis.keyCard
+      if (a && b && ctx.power.get(a.value) > ctx.power.get(b.value)) best = p
+    }
   }
-  return { winner: best, contenders: pool.map((p) => p.seat) }
+  if (best === null) return null
+  return { winner: best, contenders }
 }
 
 /**

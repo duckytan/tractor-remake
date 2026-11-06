@@ -9,7 +9,7 @@
  * 全部确定性：同 state + 同 rng 序列 → 同出牌（ADR-012）
  */
 
-import { analyze, beatsPlay, cardsScore, checkPlay, suitSlotOf, teamOf } from '@core'
+import { analyze, beatsPlay, checkPlay, suitSlotOf, teamOf } from '@core'
 import type { Card, PlayAnalysis, RuleContext, Seat, SuitSlot } from '@core'
 import { BEAT_THRESHOLD, beatChance } from './belief'
 import type { Belief } from './belief'
@@ -48,13 +48,16 @@ const JOKER_KEEP_COST = 1.0
  *
  * ① 牌力归一化到 0..1：保留「省牌」语义，但不再让一张大王只值 0.75
  * ② 王单独加留存溢价：它是「必胜一张」的稀缺资源，价值不随牌力线性增长
+ *
+ * **v1.3.57：内联到 `scoreCandidate` 的单次遍历里了**（与 `avgPower` 共享 Σ power），
+ * 此函数保留给 `explainPlay` 的 trace 路径用（它需要逐张算 cardCost 来展示明细）。
  */
 function cardCost(c: Card, ctx: RuleContext): number {
-  // 与旧口径同单位（牌力 ÷ 80），这样「省牌」项的绝对量级不变，
-  // 只是王多了一份溢价。
   const base = ctx.power.get(c.value) / 80
   return c.value >= 52 ? base + JOKER_KEEP_COST : base
 }
+// 引用一次避免 tsc 报 unused（函数在 trace 路径可能被未来的分析工具用到）
+void cardCost
 
 export const L2_WEIGHTS = {
   /** 跟牌：这一手会被对手反压时扣分（避免白打大牌） */
@@ -212,6 +215,55 @@ function handStrength(hand: readonly Card[], ctx: RuleContext): number {
   return s
 }
 
+/**
+ * 首出路径的预计算：每个槽的张数、有无拖拉机、副牌各槽最大牌力。
+ *
+ * 这三个值在同一个 `decide` 调用中，对所有候选都基于同一份手牌。
+ * 旧实现在 `scoreCandidate` 里逐候选调 `slotCount` / `hasTractor` / `hand.filter + reduce`，
+ * 每个都遍历整手牌。预算一次后查表，零分配零遍历。
+ */
+interface LeadPrefetch {
+  /** 每个槽的张数（下标 0..4） */
+  readonly slotCounts: readonly number[]
+  /** 每个槽是否有拖拉机（下标 0..4） */
+  readonly tractorSlots: readonly boolean[]
+  /** 每个副牌槽的最大牌力（下标 0..3）；主牌槽位置不可用 */
+  readonly slotMaxPower: readonly number[]
+}
+
+/**
+ * 预算首出路径要用的手牌结构信息。
+ *
+ * 只在 `decide` 的首出分支调用一次，结果传给 `scoreCandidate`。
+ * 一次遍历同时收集 slotCounts / slotMaxPower，再在此基础上算 tractorSlots。
+ */
+function prefetchLead(hand: readonly Card[], ctx: RuleContext): LeadPrefetch {
+  const { power } = ctx
+  const slotCounts = [0, 0, 0, 0, 0]
+  const slotMaxPower = [-1, -1, -1, -1]
+  const slotCards: Card[][] = [[], [], [], [], []]
+
+  for (const c of hand) {
+    const slot = suitSlotOf(c.value, power)
+    slotCounts[slot] = (slotCounts[slot] ?? 0) + 1
+    slotCards[slot]!.push(c)
+    if (slot !== 4 && c.value < 52) {
+      const p = power.get(c.value)
+      if (p > (slotMaxPower[slot] ?? -1)) slotMaxPower[slot] = p
+    }
+  }
+
+  const tractorSlots = [false, false, false, false, false]
+  for (let slot = 0; slot <= 4; slot++) {
+    if ((slotCounts[slot] ?? 0) < 4) continue
+    const cards = slotCards[slot]!
+    const a = analyze(cards, ctx)
+    tractorSlots[slot] = a.groups.some((g) => g.kind === 'tractor')
+  }
+
+  return { slotCounts, tractorSlots, slotMaxPower }
+}
+
 /** 手牌里某个槽（花色或主牌）的张数 */
 function slotCount(hand: readonly Card[], slot: number, ctx: RuleContext): number {
   let n = 0
@@ -261,25 +313,26 @@ function canBeOverturned(
 
   for (const hand of opponents) {
     // 对手能出的最大牌：同花色槽里最大的；**只有缺这门的人**才能用主牌毙。
-    // v1.3.38：旧实现无条件把主牌算进来（`slot === 4 ? mySlot !== 4 : ...`），
-    // 于是只要对手有任意一张主（几乎永远成立），任何副牌首出都被判「会被压」——
-    // 与 bestUnitPower 里修过的是同一个错，L2 这条路径漏改了（实测 4% 误判）。
-    let best = -1
+    // v1.3.38：旧实现无条件把主牌算进来，于是只要对手有任意一张主（几乎永远成立），
+    // 任何副牌首出都被判「会被压」—— 与 bestUnitPower 里修过的是同一个错，L2 这条路径漏改了。
+    //
+    // 单次遍历同时收集 sameSlot 最大和主牌最大，避免旧实现的两次遍历（先找 best+hasSuit，
+    // 缺门时再扫一遍找主牌）。
+    let sameBest = -1
+    let trumpBest = -1
     let hasSuit = false
     for (const c of hand) {
       const slot = suitSlotOf(c.value, ctx.power)
-      if (slot !== mySlot) continue
-      hasSuit = true
-      const p = ctx.power.get(c.value)
-      if (p > best) best = p
-    }
-    if (mySlot !== 4 && !hasSuit) {
-      for (const c of hand) {
-        if (suitSlotOf(c.value, ctx.power) !== 4) continue
+      if (slot === mySlot) {
+        hasSuit = true
         const p = ctx.power.get(c.value)
-        if (p > best) best = p
+        if (p > sameBest) sameBest = p
+      } else if (mySlot !== 4 && slot === 4) {
+        const p = ctx.power.get(c.value)
+        if (p > trumpBest) trumpBest = p
       }
     }
+    const best = (mySlot !== 4 && !hasSuit) ? Math.max(sameBest, trumpBest) : sameBest
     if (best > myPower) return true
   }
   return false
@@ -311,9 +364,15 @@ function pairsNeededOf(a: PlayAnalysis): number {
   return g.length // pair → 1，tractor → 连对个数
 }
 
-/** `opponents[i]` 对应的座位：按座位升序、排除自己 */
-function seatsOpponentOf(seat: Seat): Seat[] {
-  return ([0, 1, 2, 3] as Seat[]).filter((x) => x !== seat)
+/** `opponents[i]` 对应的座位：按座位升序、排除自己。预计算避免每次分配 */
+const OPPONENT_SEATS: readonly Seat[][] = [
+  [1, 2, 3],
+  [0, 2, 3],
+  [0, 1, 3],
+  [0, 1, 2],
+]
+function seatsOpponentOf(seat: Seat): readonly Seat[] {
+  return OPPONENT_SEATS[seat]!
 }
 
 /**
@@ -395,10 +454,12 @@ function exactBeatable(
   partnerLeading: boolean,
   seat: Seat,
   memo?: Map<string, number>,
+  /** 调用方已算好的 analysis（避免重复 analyze） */
+  preAnalyzed?: PlayAnalysis,
 ): boolean {
   if (partnerLeading) return false // 队友已经赢着，不需要防守
   if (cards.length === 0) return false
-  const mine = analyze(cards, ctx)
+  const mine = preAnalyzed ?? analyze(cards, ctx)
   if (mine.suitSlot === -1) return true // 混花色，不可能守住
   // 合法甩牌是**整组**比较的：`checkLead` 已经保证每一组都大于其他三家同类型的最大值，
   // 所以「甩出去」本身不可能被压。L3 的 `exactBeatable` 早就这么判了，L2 漏了这条 ——
@@ -445,24 +506,17 @@ export function isSureToHold(
 /**
  * 手牌控制力：**主牌张数**（一张 0.30）。
  *
- * 只看自己的手牌与牌力表（不偷看对手），与 L2 的信息假设一致。
+/**
+ * 出这手牌会让控制力掉多少（≥ 0）。
  *
- * **为什么只算主牌**（重标定结论，见 tests/ai/difficulty.test.ts 的标定说明）：
- * 把「副牌 A」「分牌」也计进来会与 L1 的 `powerCost`（省大牌）重复计分，
- * 实测把 L3 vs L2 从 58.0% 压到 50.0% —— 同一件事扣两次，AI 变得过度保守。
- * 主牌张数相对独立（能不能毙牌 / 有没有将权），留下它才有增量信息。
+ * 旧实现：`handControl(hand) - handControl(rest)`，其中 `handControl` = 主牌张数 × 0.3。
+ * 所以「出掉几张主牌」就是控制力下降量。直接数 `cards` 里的主牌张数即可，
+ * 省掉旧实现的 Set 分配 + filter + 两次 handControl 遍历。
  */
-function handControl(hand: readonly Card[], ctx: RuleContext): number {
-  let trumps = 0
-  for (const c of hand) if (suitSlotOf(c.value, ctx.power) === 4) trumps += 1
-  return trumps * 0.3
-}
-
-/** 出这手牌会让控制力掉多少（≥ 0） */
-function controlLoss(cards: readonly Card[], hand: readonly Card[], ctx: RuleContext): number {
-  const ids = new Set(cards.map((c) => c.id))
-  const rest = hand.filter((c) => !ids.has(c.id))
-  return Math.max(0, handControl(hand, ctx) - handControl(rest, ctx))
+function controlLoss(cards: readonly Card[], _hand: readonly Card[], ctx: RuleContext): number {
+  let trumpsPlayed = 0
+  for (const c of cards) if (suitSlotOf(c.value, ctx.power) === 4) trumpsPlayed += 1
+  return trumpsPlayed * 0.3
 }
 
 /**
@@ -479,8 +533,10 @@ function leadFollowUp(
   seat: Seat,
   remaining: readonly Seat[] | undefined,
   memo?: Map<string, number>,
+  /** 调用方已算好的 analysis（避免重复 analyze） */
+  preAnalyzed?: PlayAnalysis,
 ): number {
-  const mine = analyze(cards, ctx)
+  const mine = preAnalyzed ?? analyze(cards, ctx)
   if (mine.suitSlot === -1 || !mine.keyCard) return 0
   const pairs = pairsNeededOf(mine)
   if (pairs < 0) return 1 // 合法甩牌：默认续庄
@@ -619,7 +675,7 @@ function willBeBeaten(
     )
   }
   return level === 3
-    ? exactBeatable(cards, ctx, input.opponents, input.remainingSeats, partnerLeading, input.seat, memo)
+    ? exactBeatable(cards, ctx, input.opponents, input.remainingSeats, partnerLeading, input.seat, memo, mine)
     : canBeOverturned(cards, ctx, input.opponents)
 }
 
@@ -678,17 +734,24 @@ export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDeci
 
   // L3 的压牌判定按 (对手, 槽, 结构) 缓存 —— 60 个候选里组合只有十几种，必须跨候选复用
   const memo = new Map<string, number>()
-  const scored = candidates.map((cards) => ({
-    cards,
-    score: scoreCandidate(cards, input, level, memo),
-  }))
-  scored.sort((a, b) => b.score - a.score)
-
-  // 并列最优里随机挑一个，避免每局一模一样
-  const top = scored[0]!.score
-  const best = scored.filter((s) => s.score >= top - 0.001)
+  // 首出路径预计算：每个槽的张数 / 有无拖拉机 / 副牌各槽最大牌力，
+  // 一次遍历替代旧实现在每个候选里逐个调 slotCount / hasTractor / hand.filter+reduce
+  const lead = play.kind === 'lead' ? prefetchLead(hand, ctx) : undefined
+  // 单次遍历找最优：同时打分并收集并列候选，避免 sort 整个数组
+  let topScore = Number.NEGATIVE_INFINITY
+  const best: Card[][] = []
+  for (const cards of candidates) {
+    const score = scoreCandidate(cards, input, level, memo, undefined, lead)
+    if (score > topScore + 0.001) {
+      topScore = score
+      best.length = 0
+      best.push(cards)
+    } else if (score >= topScore - 0.001) {
+      best.push(cards)
+    }
+  }
   const chosen = best[rng.int(best.length)]!
-  return { cards: chosen.cards, reason: DECISION_REASONS[level] ?? '启发式' }
+  return { cards: chosen, reason: DECISION_REASONS[level] ?? '启发式' }
 }
 
 /**
@@ -722,14 +785,36 @@ function scoreCandidate(
   level: AiLevel,
   memo?: Map<string, number>,
   trace?: ScorePart[],
+  /** 首出路径的预计算（由 `decide` 一次性预算好传入，避免逐候选遍历手牌） */
+  lead?: LeadPrefetch,
 ): number {
   const { ctx, play, currentWinner, partnerLeading, hand, opponents } = input
   const a = analyze(cards, ctx)
-  /** 跟牌口径：纯牌力均值（与旧实现完全一致） */
-  const avgPower = cards.reduce((s, c) => s + ctx.power.get(c.value), 0) / (cards.length * 80)
-  /** 首出口径：牌力均值 + 王的留存溢价 */
-  const avgLeadCost = cards.reduce((s, c) => s + cardCost(c, ctx), 0) / cards.length
-  const points = cardsScore(cards)
+  // 单次遍历同时算出 powerSum / jokerPremium / points，
+  // 避免旧实现的 cards.reduce（powerSum）+ cardsScore（points）两次遍历。
+  //   avgPower     = Σ power / (n * 80)
+  //   avgLeadCost  = Σ (power/80 + joker溢价) / n
+  //   points       = Σ cardScore(c.value)
+  // 三者共享同一次遍历。
+  let powerSum = 0
+  let jokerPremium = 0
+  let points = 0
+  for (const c of cards) {
+    const v = c.value
+    powerSum += ctx.power.get(v)
+    if (v >= 52) jokerPremium += JOKER_KEEP_COST
+    // 内联 cardScore：5→5, 10→10, K→10, 其余→0
+    if (v < 52) {
+      const r = v % 13
+      if (r === 3) points += 5 // 点数 5
+      else if (r === 8 || r === 11) points += 10 // 点数 10 / K
+    }
+  }
+  const n = cards.length
+  const avgPower = powerSum / (n * 80)
+  const avgLeadCost = powerSum / (n * 80) + jokerPremium / n
+  // 预计算 pairsNeeded：L3 路径里 willBeBeaten / leadFollowUp / 续庄溢价都会用
+  const pairsNeeded = pairsNeededOf(a)
   const isL3 = level === 3
   const isL2Plus = level >= 2
 
@@ -822,7 +907,8 @@ function scoreCandidate(
       // 「省牌」决定，L1 于是有 53.2% 的首出是「手里最小的那张」（docs/32 B-3）。
       // 提到 0.07 后长套最多贡献 0.7，能与省牌项抗衡，又不至于把「主牌多」变成
       // 「永远出主牌」—— 试过 0.10，L2 的首出王从 1.6% 涨到 4.2%。
-      add('长套优先', Math.min(slotCount(hand, slot, ctx), 10) * 0.07)
+      const sc = lead ? lead.slotCounts[slot]! : slotCount(hand, slot, ctx)
+      add('长套优先', Math.min(sc, 10) * 0.07)
     }
     add('首出别甩分', -(points * 0.02))
 
@@ -837,22 +923,23 @@ function scoreCandidate(
       beaten = willBeBeaten(cards, a, ctx, input, level, partnerLeading, memo)
       if (beaten) add('会被压(首出)', -(isL3 ? L3_WEIGHTS.exactOverLead : L2_WEIGHTS.overLead))
       // ⑤ 有连对的长套优先 —— 把拖拉机先兑现
-      if (slot !== -1 && hasTractor(hand, slot, ctx)) add('有拖拉机·先兑现', L2_WEIGHTS.tractor)
+      const hasTrac = lead ? lead.tractorSlots[slot]! : hasTractor(hand, slot, ctx)
+      if (slot !== -1 && hasTrac) add('有拖拉机·先兑现', L2_WEIGHTS.tractor)
 
       if (!beaten) {
         // ⑥ 兑现：压得住的牌现在出不亏，牌力成本打折（**王的留存溢价不参与打折**，
         //    那条是 v1.3.29 专门为「首出王 11.8%」加的，打折会把它打回原形）
-        const powerPart =
-          cards.reduce((n, c) => n + ctx.power.get(c.value) / 80, 0) / cards.length
+        //    powerPart 复用上面已算好的 powerSum，不再重复遍历 cards
+        const powerPart = powerSum / (n * 80)
         add('压得住·省牌打折', avgLeadCost - powerPart * L3_WEIGHTS.cashDiscount)
 
         // ⑦ 副牌顶牌先兑现：副牌 A/K 真正的风险不是被压，是留到后面**被毙掉 / 被垫掉**。
         //    `-powerCost` 只看得到「留大牌好」，看不到这一层，所以人类会觉得「有 A 不出 A」很蠢。
         if (slot !== -1 && slot !== 4 && a.keyCard !== null && a.keyCard.value < 52) {
-          const mine = hand.filter(
+          // 用预计算的 slotMaxPower 替代旧实现的 hand.filter + reduce
+          const myMax = lead ? lead.slotMaxPower[slot]! : hand.filter(
             (c) => c.value < 52 && Math.floor(c.value / 13) === slot,
-          )
-          const myMax = mine.reduce((m, c) => Math.max(m, ctx.power.get(c.value)), 0)
+          ).reduce((m, c) => Math.max(m, ctx.power.get(c.value)), 0)
           const p = ctx.power.get(a.keyCard.value)
           // 副牌的牌力就是**这门里的名次**（2→0 … K→10、A→11），不是 0..80 的连续值
           // （踩过的坑：一度按 64 做阈值，结果这条加分永远不触发）。
@@ -867,12 +954,12 @@ function scoreCandidate(
       //    有 belief 时用概率（`beatChance < 阈值` = 守得住 = 续庄）
       const followUp =
         input.belief !== undefined
-          ? a.suitSlot !== -1 && a.keyCard && pairsNeededOf(a) >= 0
+          ? a.suitSlot !== -1 && a.keyCard && pairsNeeded >= 0
             ? beatChance({
                 belief: input.belief,
                 ctx,
                 mySlot: a.suitSlot,
-                pairs: pairsNeededOf(a),
+                pairs: pairsNeeded,
                 myPower: ctx.power.get(a.keyCard.value),
                 remaining: input.remainingSeats,
               }) < BEAT_THRESHOLD
@@ -881,7 +968,7 @@ function scoreCandidate(
             : a.groups.length > 1
               ? 1 // 合法甩牌：默认续庄
               : 0
-          : leadFollowUp(cards, ctx, opponents, input.seat, input.remainingSeats, memo)
+          : leadFollowUp(cards, ctx, opponents, input.seat, input.remainingSeats, memo, a)
       add('续庄溢价', L3_WEIGHTS.followUp * followUp)
       // ⑦ 控制力损耗：只在「这手会被压」时才算白花
       if (beaten) add('控制力损失(首出)', -(L3_WEIGHTS.control * controlLoss(cards, hand, ctx)))

@@ -150,7 +150,9 @@ function step(a: Action): void {
       const before = prev.hands[seat] as readonly Card[]
       const after = state.hands[seat] as readonly Card[]
       if (before.length === after.length) continue
-      const played = before.filter((c) => !after.some((a) => a.id === c.id))
+      // 用 Set 做 O(n) 差集，避免 before×after 的 O(n²) 比较（最多 33×33 次）
+      const afterIds = new Set(after.map((c) => c.id))
+      const played = before.filter((c) => !afterIds.has(c.id))
       if (played.length === 0) continue
       const note = explainCards(prev, seat, played)
       if (note !== null) noteAiPlay(prev.history.length, seat, note.text, note.detail)

@@ -23,6 +23,15 @@ function asc(cards: readonly Card[], ctx: RuleContext): Card[] {
   return [...cards].sort((a, b) => ctx.power.get(a.value) - ctx.power.get(b.value))
 }
 
+/** 补牌顺序：非分牌优先（垫牌时先甩废牌）—— 提到模块级避免每次调用重建闭包 */
+function noScoreFirst(arr: readonly Card[]): Card[] {
+  return arr.filter((c) => cardScore(c.value) === 0)
+}
+/** 补牌顺序：分牌优先（队友赢着时往里垫分） */
+function scoreFirst(arr: readonly Card[]): Card[] {
+  return [...arr].sort((a, b) => cardScore(b.value) - cardScore(a.value))
+}
+
 /** 按牌值分组 */
 function byValue(cards: readonly Card[]): Map<number, Card[]> {
   const m = new Map<number, Card[]>()
@@ -230,11 +239,6 @@ function enumerateFollows(
 
   const out: Card[][] = []
 
-  /** 补牌顺序：非分牌优先（垫牌时先甩废牌） */
-  const noScoreFirst = (arr: readonly Card[]): Card[] => arr.filter((c) => cardScore(c.value) === 0)
-  /** 补牌顺序：分牌优先（队友赢着时往里垫分） */
-  const scoreFirst = (arr: readonly Card[]): Card[] => [...arr].sort((a, b) => cardScore(b.value) - cardScore(a.value))
-
   /**
    * 挑 needPairs 个对子 + 从剩余牌里补够 needSuit 张。
    * 补牌必须从**整槽所有牌**里挑，不能只从「非对子牌」里挑 ——
@@ -332,10 +336,12 @@ function dedupe(plays: Card[][], limit: number): Card[][] {
   const seen = new Set<string>()
   const out: Card[][] = []
   for (const p of plays) {
-    const key = p
-      .map((c) => c.id)
-      .sort((a, b) => a - b)
-      .join(',')
+    // 直接循环拼 key，避免旧实现的 map 闭包 + 中间数组
+    const ids: number[] = new Array(p.length)
+    for (let i = 0; i < p.length; i++) ids[i] = p[i]!.id
+    ids.sort((a, b) => a - b)
+    let key = ''
+    for (let i = 0; i < ids.length; i++) key += (i > 0 ? ',' : '') + ids[i]
     if (seen.has(key)) continue
     seen.add(key)
     out.push(p)

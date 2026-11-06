@@ -40,14 +40,6 @@ export interface Belief {
   readonly seat: Seat
 }
 
-/** 一墩里所有已出的牌 */
-function playedCards(s: GameState): Card[] {
-  const out: Card[] = []
-  for (const rec of s.history) for (const p of rec.plays) out.push(...p.cards)
-  for (const p of s.trick.plays) out.push(...p.cards)
-  return out
-}
-
 /**
  * 从公开信息构造信念。
  *
@@ -55,11 +47,16 @@ function playedCards(s: GameState): Card[] {
  *   全牌 − 我的手牌 − 已出的牌 − （庄家才知道的）底牌
  *
  * 非庄家**不能**减底牌 —— 他不知道是哪 8 张，减掉就等于偷看。
+ *
+ * 直接遍历 history + trick.plays 往 Set 里塞 id，
+ * 避免旧 `playedCards` 函数分配中间数组 + spread push。
  */
 export function buildBelief(s: GameState, seat: Seat): Belief {
   const mine = s.hands[seat] as readonly Card[]
-  const seen = new Set<number>(mine.map((c) => c.id))
-  for (const c of playedCards(s)) seen.add(c.id)
+  const seen = new Set<number>()
+  for (const c of mine) seen.add(c.id)
+  for (const rec of s.history) for (const p of rec.plays) for (const c of p.cards) seen.add(c.id)
+  for (const p of s.trick.plays) for (const c of p.cards) seen.add(c.id)
   // 只有庄家知道底牌
   if (s.dealer === seat) for (const c of s.bottom) seen.add(c.id)
 
@@ -169,6 +166,12 @@ export function beatChance(input: BeatChanceInput): number {
   const m = belief.unseen.length
   if (m === 0) return 0
 
+  // 能压的牌数 / 能压的点数只与 (unseen, mySlot, myPower) 有关，与对手无关。
+  // 旧实现在循环内对每个对手都重新遍历 unseen（最多 ~80 张 × 3 家 = 240 次），
+  // 提到循环外只算一次。
+  const k = pairs === 0 ? countBeatingSingles(belief.unseen, ctx, mySlot, myPower) : 0
+  const beatingValues = pairs !== 0 ? countBeatingPairs(belief.unseen, ctx, mySlot, myPower) : 0
+
   let pNoneAll = 1
   for (let i = 0; i < belief.handSizes.length; i++) {
     if (i === belief.seat) continue
@@ -178,11 +181,9 @@ export function beatChance(input: BeatChanceInput): number {
 
     let pNone: number
     if (pairs === 0) {
-      const k = countBeatingSingles(belief.unseen, ctx, mySlot, myPower)
       pNone = probNoneInHand(m, h, k)
     } else {
       // 对子：对每个「能压的点数」算「两张都在他手里」的概率，再取「一个都没有」
-      const beatingValues = countBeatingPairs(belief.unseen, ctx, mySlot, myPower)
       // 每个能压的点数在未知池里恰好 2 张（两副牌）⇒ 两张都进他手里的概率
       const pBoth = (h / m) * ((h - 1) / Math.max(1, m - 1))
       pNone = Math.pow(Math.max(0, 1 - pBoth), beatingValues)
