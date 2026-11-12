@@ -16,7 +16,7 @@
 
 import { readFileSync } from 'node:fs'
 import { DEFAULT_RULE_CONFIG, teamOf } from '@core'
-import type { Card, Seat } from '@core'
+import type { Card, RuleConfig, Seat } from '@core'
 import { aiPlayFor, playCards } from '@app/game'
 import { HUMAN_SEAT, emptyState, seatToPlay } from '@app/state'
 import type { GameState } from '@app/state'
@@ -84,7 +84,7 @@ function buildState(round: Round): GameState | null {
   return {
     ...base,
     phase: 'play',
-    config: DEFAULT_RULE_CONFIG,
+    config: (round as unknown as { config?: RuleConfig }).config ?? DEFAULT_RULE_CONFIG,  // 日志里的真实规则（牌力表依赖 guardScoreLevels 等）
     seed: round.seed,
     round: round.round,
     dealer: round.dealer as Seat,

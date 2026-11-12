@@ -62,7 +62,7 @@ function buildState(r: Round): GameState | null {
   return {
     ...emptyState(),
     phase: 'play',
-    config: DEFAULT_RULE_CONFIG,
+    config: (round as unknown as { config?: RuleConfig }).config ?? DEFAULT_RULE_CONFIG,  // 日志里的真实规则（牌力表依赖 guardScoreLevels 等）
     seed: r.seed,
     round: r.round,
     dealer: r.dealer as Seat,

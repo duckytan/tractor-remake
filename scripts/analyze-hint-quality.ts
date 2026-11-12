@@ -41,6 +41,7 @@ interface Human { trick: number; cards: number[]; ai: number[]; hint: boolean; h
 interface Round {
   seed: number; round: number; trump: number | string; levelRank: number; dealer: number
   hands: number[][]; bottom: number[]; tricks: Trick[]; human: Human[]
+  config: import('@core').RuleConfig
   settle: { defenderScore: number; dealerChanged: boolean; gameOver: boolean }
 }
 
@@ -78,7 +79,7 @@ function buildState(r: Round): GameState | null {
   return {
     ...emptyState(),
     phase: 'play',
-    config: DEFAULT_RULE_CONFIG,
+    config: r.config ?? DEFAULT_RULE_CONFIG,  // 用日志里的真实规则（牌力表依赖 guardScoreLevels 等）
     seed: r.seed,
     round: r.round,
     dealer: r.dealer as Seat,
@@ -96,41 +97,66 @@ function buildState(r: Round): GameState | null {
 const valueOf = (s: GameState): number =>
   teamOf(s.dealer) === teamOf(HUMAN_SEAT) ? -s.defenderScore : s.defenderScore
 
-function rollout(s0: GameState): number | null {
+/** 推演诊断：返回终局价值 + 未收敛原因（用于判断跳过是否合理） */
+function rollout(s0: GameState): { v: number | null; reason: string; steps: number; left: number } {
   let s = s0
+  let steps = 0
+  let reason = 'ok'
   for (let i = 0; i < 600 && s.phase === 'play'; i++) {
     const seat = seatToPlay(s)
-    if (seat === null) break
+    if (seat === null) { reason = 'seatToPlay=null'; break }
     const next = aiPlayFor(s, seat, 3)
-    if (next === s) break
+    if (next === s) { reason = `aiPlayFor 无进展 @座位${seat}`; break }
     s = next
+    steps++
   }
-  return s.phase === 'settle' || s.phase === 'over' ? valueOf(s) : null
+  const left = (s.hands as readonly (readonly Card[])[]).reduce((n, h) => n + h.length, 0)
+  if (reason === 'ok' && s.phase !== 'settle' && s.phase !== 'over') reason = `超步数 phase=${s.phase}`
+  return { v: s.phase === 'settle' || s.phase === 'over' ? valueOf(s) : null, reason, steps, left }
 }
 
 /** 重放到「第 trick 墩、座位 0 出牌之前」 */
+function handCount(s: GameState): number {
+  return (s.hands as readonly (readonly Card[])[]).reduce((n, h) => n + h.length, 0)
+}
+
+/**
+ * 重放到「第 trick 墩、座位 0 出牌之前」。
+ *
+ * **必须校验每次出牌真的消耗了手牌**：`playCards` 被 `checkPlay` 拒绝时会走
+ * `reject()` 返回一个*新的* state（step+1 但手牌没变）。只看 `next === s` 会把它
+ * 误当成"成功"，于是重放在原地踏步、leader 卡死，后续推演 600 步空转（实测剩 90 张）。
+ * 日志里出现 config 差异 / 甩牌 analysis 重建不出来时就会触发 —— 判为「重放失配」跳过。
+ */
 function stateBefore(r: Round, trick: number): GameState | null {
   let s = buildState(r)
   if (!s) return null
+  const step = (st: GameState, seat: Seat, vals: readonly number[]): GameState | null => {
+    const cards = toCards(st.hands[seat] as readonly Card[], vals)
+    if (!cards) return null
+    const before = handCount(st)
+    const next = playCards(st, seat, cards)
+    if (next === st || handCount(next) !== before - cards.length) return null
+    return next
+  }
   for (let t = 0; t < trick; t++) {
     const tr = r.tricks[t]
     if (!tr) return null
+    // 墩首座位必须与日志一致（赢家算错会让后续全错）
+    if (s.trick.plays.length !== 0 || s.trick.leader !== tr.leader) return null
     for (const [seat, vals] of tr.plays) {
-      const cards = toCards(s.hands[seat as Seat] as readonly Card[], vals)
-      if (!cards) return null
-      const next = playCards(s, seat as Seat, cards)
-      if (next === s) return null
+      const next = step(s, seat as Seat, vals)
+      if (!next) return null
       s = next
     }
   }
   const tr = r.tricks[trick]
   if (!tr) return null
+  if (s.trick.plays.length !== 0 || s.trick.leader !== tr.leader) return null
   for (const [seat, vals] of tr.plays) {
     if (seat === HUMAN_SEAT) return s
-    const cards = toCards(s.hands[seat as Seat] as readonly Card[], vals)
-    if (!cards) return null
-    const next = playCards(s, seat as Seat, cards)
-    if (next === s) return null
+    const next = step(s, seat as Seat, vals)
+    if (!next) return null
     s = next
   }
   return null
@@ -152,6 +178,7 @@ let followedHint = 0
 let followedL3 = 0
 let thirdWay = 0
 const rows: { where: string; detail: string; delta: number; who: string }[] = []
+const stuck: string[] = []
 
 for (const r of data.rounds) {
   for (let t = 0; t < r.tricks.length; t++) {
@@ -208,17 +235,21 @@ for (const r of data.rounds) {
       skipReasons.rejected = (skipReasons.rejected ?? 0) + 1
       continue
     }
-    const vh = rollout(sh)
-    const va = rollout(sa)
-    if (vh === null || va === null) {
-      skipped++
-      skipReasons.noRollout = (skipReasons.noRollout ?? 0) + 1
-      continue
-    }
-    judged++
-    netIfSwitchToL3 += va - vh
     const lead = tr.plays[0]
     const where = `局${r.round} 墩${t + 1}${lead ? `（首出 ${txt([lead[1][0]!])}）` : ''}`
+    const rh = rollout(sh)
+    const ra = rollout(sa)
+    if (rh.v === null || ra.v === null) {
+      skipped++
+      const why = rh.v === null ? rh.reason : `L3侧:${ra.reason}`
+      skipReasons[why] = (skipReasons[why] ?? 0) + 1
+      if (stuck.length < 4) stuck.push(`${where}｜提示侧 ${rh.steps}步/剩${rh.left}张 · L3侧 ${ra.steps}步/剩${ra.left}张`)
+      continue
+    }
+    const vh = rh.v
+    const va = ra.v
+    judged++
+    netIfSwitchToL3 += va - vh
     const detail = `${where} 提示 ${txt(hc)} → ${vh} ｜ L3 ${txt(ai)} → ${va} ｜ 你出 ${txt(rec.cards)}`
     if (va > vh) {
       aiBetter++
@@ -238,5 +269,6 @@ console.log(`\n【推演判定】可判定 ${judged} 手（跳过 ${skipped} 手
 console.log(`  **L3 更优 ${aiBetter} · 提示更优 ${hintBetter} · 打平 ${tie}**`)
 console.log(`  若把提示全换成 L3：这批分歧净收益 ${netIfSwitchToL3 >= 0 ? '+' : ''}${netIfSwitchToL3} 分（我方视角，跨 ${judged} 手累计）`)
 rows.sort((a, b) => b.delta - a.delta)
+if (stuck.length) { console.log('\n【未收敛样本】'); for (const x of stuck) console.log('  ' + x) }
 console.log('\n【差距最大的分歧】（数字 = 我方视角终局价值，越大越好）')
 for (const x of rows.slice(0, 12)) console.log(`  ±${x.delta.toFixed(0).padStart(3)}  ${x.detail}`)

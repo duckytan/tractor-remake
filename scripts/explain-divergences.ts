@@ -11,7 +11,8 @@
 
 import { readFileSync } from 'node:fs'
 import { cardsScore, teamOf, trickStanding } from '@core'
-import type { Card, PlayAnalysis, Seat } from '@core'
+import type { Card, PlayAnalysis, RuleConfig, Seat } from '@core'
+import { playCards } from '@app/game'
 import { ctxOf, HUMAN_SEAT } from '@app/state'
 import type { GameState } from '@app/state'
 import { emptyState } from '@app/state'
@@ -65,7 +66,7 @@ function buildState(round: Round): GameState | null {
   return {
     ...emptyState(),
     phase: 'play',
-    config: DEFAULT_RULE_CONFIG,
+    config: (round as unknown as { config?: RuleConfig }).config ?? DEFAULT_RULE_CONFIG,  // 日志里的真实规则（牌力表依赖 guardScoreLevels 等）
     seed: round.seed,
     round: round.round,
     dealer: round.dealer as Seat,
@@ -129,15 +130,18 @@ for (const round of data.rounds) {
     let s = buildState(round)
     if (!s) continue
     let ok = true
+    const handTotal = (st: GameState): number => (st.hands as readonly (readonly Card[])[]).reduce((n, h) => n + h.length, 0)
     for (let k = 0; k <= t && ok; k++) {
+      if (k < t && (s.trick.plays.length !== 0 || s.trick.leader !== round.tricks[k]!.leader)) { ok = false; break }
       for (const [seat, vals] of round.tricks[k]!.plays) {
         if (k === t && seat === HUMAN_SEAT) break
         const hand = s.hands[seat as Seat] as readonly Card[]
         const cards = toCards(hand, vals)
         if (!cards) { ok = false; break }
-        const { playCards } = await import('@app/game')
+        const before = handTotal(s)
         const next = playCards(s, seat as Seat, cards)
-        if (next === s) { ok = false; break }
+        // reject() 返回*新* state（手牌没变），只看 next===s 会误判成功 ⇒ 空转
+        if (next === s || handTotal(next) !== before - cards.length) { ok = false; break }
         s = next
       }
     }
