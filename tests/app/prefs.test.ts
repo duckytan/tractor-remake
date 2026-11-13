@@ -52,7 +52,8 @@ const NON_DEFAULT: Pick<
   showCounter: true,
   showOppHands: true,
   hintSelects: true,
-  hintStyle: 'ai',
+  // 提示默认已是 'ai'（v1.3.57 起，第 3 批推演 L3 净收益 +75），非默认值取 'safe'
+  hintStyle: 'safe',
   aiPeekHands: false,
   musicTheme: 'winter',
   soundEnhanced: true,

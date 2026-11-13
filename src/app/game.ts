@@ -1100,9 +1100,15 @@ export function playCards(s: GameState, seat: Seat, cards: readonly Card[]): Gam
     cards,
     ctx,
     ...(leadPlay ? { lead: { cards: leadPlay.cards, analysis: leadPlay.analysis } } : {}),
-    opponents: [0, 1, 2, 3]
-      .filter((x) => x !== seat)
-      .map((x) => s.hands[x] as readonly Card[]),
+    // opponents 只有**真甩牌首出**的校验会读（checkLead 的 bestInSlot）；
+    // 跟牌与单组首出完全不用 —— 只在首出时构造，省每墩 3 次的 filter+map 双重分配
+    ...(isLead
+      ? {
+          opponents: [0, 1, 2, 3]
+            .filter((x) => x !== seat)
+            .map((x) => s.hands[x] as readonly Card[]),
+        }
+      : {}),
   })
 
   if (!result.ok) return reject(s, result.reason, result.detail)

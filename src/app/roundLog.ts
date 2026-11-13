@@ -134,6 +134,19 @@ export function initRoundLog(): void {
   }
 }
 
+/**
+ * 有没有正在记录的「开局快照」？
+ *
+ * 调用方（`main.ts`）用它**提前**跳过影子决策：`noteHumanPlay` 在 `pending`
+ * 为 null 时本来就丢弃记录，但从存档恢复的对局整局都没有快照
+ * （`beginRound` 只在 `phase` 从 contract 跳变到 bury/play 时抓，
+ * 读档是「直接落在 play 阶段」）—— 参数先求值的话每手人类出牌都要
+ * 白跑一次完整 L3 决策（含残局搜索）然后扔掉。
+ */
+export function hasPendingSnapshot(): boolean {
+  return pending !== null
+}
+
 export const loggedRounds = (): readonly RoundLog[] => cache.rounds
 
 /**

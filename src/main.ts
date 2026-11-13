@@ -11,7 +11,7 @@ import type { Card, Play } from '@core'
 import { aiCanAct, autoAction, choosePlay, chooseSafePlay, newGame, pickPrefs, prefsFromState, reduce, stateFieldsOfPrefs } from '@app/game'
 import { clearState, loadPrefs, loadStateDetailed, savePrefs, saveState } from '@app/persist'
 import { initStats } from '@app/stats'
-import { beginRound, initRoundLog, noteAiPlay, noteHumanPlay } from '@app/roundLog'
+import { beginRound, hasPendingSnapshot, initRoundLog, noteAiPlay, noteHumanPlay } from '@app/roundLog'
 import { explainCards } from '@app/hintView'
 import { backfillSettled, recordSettled } from '@app/settleRecord'
 import { canUndo, emptyUndo, popUndo, pushUndo, shouldPush } from '@app/undo'
@@ -106,6 +106,16 @@ let hintUsedThisTurn = false
 /** 这一手提示高亮的那几张（牌值）；点牌会清掉 `hintIds`，所以必须在 `showHint` 那一刻抓 */
 let hintCardsThisTurn: number[] = []
 
+/**
+ * 这一步之后 `afterChange()` 可以跳过存档写盘吗？
+ *
+ * `step()` 末尾置位：只有 `selected` / `hintIds` 变了（纯视觉变化）时为 true。
+ * 判定用 `onlySelectionChanged` 的引用比较口径 —— `reduce` 是不可变更新的，
+ * 没变的字段保持同一引用。`showHint` / `hintSelect` 会顺带把 `hintCardsThisTurn`
+ * 置上，但那只影响影子记录，不碰存档内容。
+ */
+let skipSave = false
+
 function step(a: Action): void {
   const prev = state
   state = reduce(state, a)
@@ -135,7 +145,10 @@ function step(a: Action): void {
     // Set 查找替代 O(hand × selected) 的 includes 嵌套扫（与 game.ts 的 playSelected 同口径）
     const selectedIds = new Set(prev.selected)
     const picked = hand.filter((c) => selectedIds.has(c.id))
-    if (picked.length > 0) {
+    // **先看有没有快照再算影子决策**：从存档恢复的对局整局没有快照
+    //（`beginRound` 只在 phase 跳变时抓），`noteHumanPlay` 拿到也只会丢掉
+    // —— 而参数是先求值的，每手都要白跑一次完整 L3 决策（含残局搜索）。
+    if (picked.length > 0 && hasPendingSnapshot()) {
       noteHumanPlay(prev, picked, choosePlay(prev, HUMAN_SEAT, 3, { peek: true }), hintUsedThisTurn, hintCardsThisTurn)
     }
     hintUsedThisTurn = false
@@ -160,6 +173,9 @@ function step(a: Action): void {
       if (note !== null) noteAiPlay(prev.history.length, seat, note.text, note.detail)
     }
   }
+
+  // 纯视觉变化（只动了 selected / hintIds）不需要写存档 —— 交给 afterChange 判断
+  skipSave = onlySelectionChanged(prev, state)
 }
 
 function scheduleAi(): void {
@@ -272,7 +288,14 @@ function savePrefsIfChanged(p: Prefs): void {
 }
 
 function afterChange(): void {
-  saveState(state)
+  // 纯选牌 / 提示变化跳过存档写盘：`saveState` 是 JSON.stringify 整个 GameState
+  //（4 手牌 + 全部历史墩，15~40KB）+ 同步 localStorage.setItem，而埋底连选 8 张、
+  // 发牌期 33 个 revealTick 各付一次纯属浪费。读档侧本来就把 `hintIds` 清空、
+  // `selected` 只是视觉预选 —— 刷新时丢掉这两样无感知（会话内不丢，state 还在内存）。
+  // `skipSave` 由 `step()` 末尾按 `onlySelectionChanged` 置位；
+  // 任何不走 `step()` 的 afterChange 调用（启动 / 设置面板）都保持 false = 照常写。
+  if (!skipSave) saveState(state)
+  skipSave = false
   savePrefsIfChanged(prefsFromState(state))
   paint()
   // 必须在 paint 之后：飞行牌要量「这张牌刚画到哪儿」，以及牌堆的位置
@@ -311,6 +334,9 @@ let lastPainted: GameState | null = null
  * 判定靠**引用比较**：`reduce` 是不可变更新的，没变的字段保持同一引用，
  * 变了的字段换新引用。所以 56 个字段逐个 `!==` 就能精确判断，
  * 不需要深比较（`hands` / `trick` / `history` 这些嵌套结构同理）。
+ *
+ * 两个消费方：`paint()`（走 patchSelection 增量渲染）与 `step()` 末尾
+ * （给 `afterChange` 的 skipSave —— 纯视觉变化不写存档，理由见那边注释）。
  */
 const SELECTION_ONLY_KEYS = new Set<string>(['selected', 'hintIds'])
 function onlySelectionChanged(prev: GameState, next: GameState): boolean {
@@ -526,8 +552,9 @@ function hintIdsFor(s: GameState): number[] {
   }
 
   // ① 主路径：按设置选策略
-  //    'safe'（默认）= 稳妥人类风格：不首出带分牌、能赢才抢、队友赢着垫最小
-  //    'ai'          = 最强 AI（L3 + 残局搜索），胜率更高但线路更像机器
+  //    'safe'       = 稳妥人类风格：不首出带分牌、能赢才抢、队友赢着垫最小
+  //    'ai'（默认） = 最强 AI（L3 + 残局搜索），胜率更高但线路更像机器
+  //    默认改 'ai' 的依据：第 3 批真实对局逐手推演 L3 净收益 +75 分（docs/44 §6）
   //
   // **提示恒用全信息**（v1.3.39 · 三司会审 F2）：「AI 读牌」这个开关的语义是
   // 「对手 AI 能不能看到我的手牌」，不该顺带决定**我的助手**有多强。

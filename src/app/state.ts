@@ -438,7 +438,9 @@ export const emptyState = (): GameState => ({
   showHistory: true,
   showOppHands: false,
   hintSelects: false,
-  hintStyle: 'safe',
+  // 提示默认「最强」（L3）：第 3 批真实对局逐手推演（scripts/analyze-hint-quality.ts，
+  // 提交 053041c 修复测量错误后重跑）L3 更优 4 · 提示更优 0 · 平 1，净收益 +75 分
+  hintStyle: 'ai',
   autoPlay: false,
   autoLevel: 3,
   settingsOpen: false,

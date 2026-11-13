@@ -961,7 +961,8 @@ function legalityBadge(s: GameState): string {
     cards,
     ctx: ctxOf(s),
     ...(leadPlay ? { lead: { cards: leadPlay.cards, analysis: leadPlay.analysis } } : {}),
-    opponents: [1, 2, 3].map((x) => s.hands[x] as readonly Card[]),
+    // opponents 只有真甩牌首出校验会读（与 playCards 同口径）：仅首出时构造
+    ...(leadPlay ? {} : { opponents: [1, 2, 3].map((x) => s.hands[x] as readonly Card[]) }),
   })
 
   return legalityBadgeOf(result)

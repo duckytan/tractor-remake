@@ -44,15 +44,32 @@ const reject = (reason: PlayRejectReason, detail: string): PlayResult => ({
  * **先要求 cards 内部 id 互不相同**（docs/33 C6-07）：下面用的是「多重集池」计数，
  * 手牌里同一 id 出现 3 次、出牌也出 3 张时会校验通过并全部打出 —— 物理上不可能，
  * 但数据损坏（或篡改存档）时真会发生。id 重复直接判不合法。
+ *
+ * **last-hand 缓存**：`checkPlay` 单次版的热调用点（`playCards` 每墩 3 次 AI 落子 +
+ * 1 次人类出牌、`legalityBadge` 每次点牌 1 次）对着的是**同一份手牌引用**
+ *（`reduce` 不可变更新，手牌没动的座位数组引用不变）。缓存池 Map，
+ * 命中时免 25 张的 Map 分配 —— 与 `ctxOf` 的规则上下文缓存同一手法。
+ *
+ * **池只读、不扣减**：ids 已在开头保证互不相同，每个 id 只查一次，
+ * 旧实现「消费后 -1」的扣减是死逻辑；缓存后若还扣减，上一手虚拟消费掉的牌
+ * 会污染下一手校验（tests/ai/throw.test.ts 实测抓到）。
  */
+let _poolHand: readonly Card[] | null = null
+let _pool: Map<number, number> | null = null
+
 function allFromHand(hand: readonly Card[], cards: readonly Card[]): boolean {
   if (new Set(cards.map((c) => c.id)).size !== cards.length) return false
-  const pool = new Map<number, number>()
-  for (const c of hand) pool.set(c.id, (pool.get(c.id) ?? 0) + 1)
+  let pool: Map<number, number>
+  if (_pool !== null && _poolHand === hand) {
+    pool = _pool
+  } else {
+    pool = new Map<number, number>()
+    for (const c of hand) pool.set(c.id, (pool.get(c.id) ?? 0) + 1)
+    _poolHand = hand
+    _pool = pool
+  }
   for (const c of cards) {
-    const n = pool.get(c.id) ?? 0
-    if (n === 0) return false
-    pool.set(c.id, n - 1)
+    if ((pool.get(c.id) ?? 0) === 0) return false
   }
   return true
 }

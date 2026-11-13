@@ -99,7 +99,8 @@ export const DEFAULT_PREFS: Prefs = {
   showHistory: true,
   showOppHands: false,
   hintSelects: false,
-  hintStyle: 'safe',
+  // 与 state.ts 的默认保持一致：提示默认「最强」（第 3 批推演 L3 净收益 +75 分）
+  hintStyle: 'ai',
   autoPlay: false,
   autoLevel: 3,
   showCounter: false,
