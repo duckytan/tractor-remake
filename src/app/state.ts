@@ -322,11 +322,41 @@ export type Action =
 /** 提示策略（见 `GameState.hintStyle`） */
 export type HintStyle = 'safe' | 'ai'
 
-/** 由状态推导规则上下文（牌力表现算） */
+/**
+ * 由状态推导规则上下文（牌力表现算）。
+ *
+ * **缓存**（v1.3.57）：同一局内 `(config, levelRank, trump, forcedNT)` 不变，
+ * 而 `buildPowerTable` 每次要分配 54 元素数组 + Set + 普通数组 + 3 个闭包。
+ * 一手 AI 决策里 `ctxOf` 被调十几次（`choosePlay` / `checkPlay` / `analyze`…），
+ * 全部造同一张表 ⇒ 缓存后零分配。
+ * 换局（`levelRank` / `trump` 变）时缓存键自然不同，自动重建。
+ *
+ * **缓存键**（v1.3.58）：用 4 个独立字段比较代替模板字符串拼接，
+ * 每次调 `ctxOf` 都省掉一次字符串分配（热路径函数被调十几次/手）。
+ */
+let _ctxTwoAsPerm = false
+let _ctxLevelRank = -1
+let _ctxTrump: Trump | null = null
+let _ctxForcedNT = false
+let _ctxCache: RuleContext | null = null
+
 export function ctxOf(state: GameState): RuleContext {
-  return {
+  const two = state.config.twoAsPermanent
+  if (
+    _ctxCache !== null &&
+    _ctxTwoAsPerm === two &&
+    _ctxLevelRank === state.levelRank &&
+    _ctxTrump === state.trump &&
+    _ctxForcedNT === state.forcedNT
+  )
+    return _ctxCache
+  _ctxTwoAsPerm = two
+  _ctxLevelRank = state.levelRank
+  _ctxTrump = state.trump
+  _ctxForcedNT = state.forcedNT
+  _ctxCache = {
     power: buildPowerTable({
-      mode: state.config.twoAsPermanent ? 1 : 0,
+      mode: two ? 1 : 0,
       levelRank: state.levelRank,
       trump: state.trump,
       forcedNT: state.forcedNT,
@@ -336,6 +366,7 @@ export function ctxOf(state: GameState): RuleContext {
     forcedNT: state.forcedNT,
     config: state.config,
   }
+  return _ctxCache
 }
 
 /** 该谁出牌 */

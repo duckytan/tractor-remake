@@ -9,7 +9,7 @@
  * 全部确定性：同 state + 同 rng 序列 → 同出牌（ADR-012）
  */
 
-import { analyze, beatsPlay, checkPlay, suitSlotOf, teamOf } from '@core'
+import { analyze, beatsPlay, checkPlayBatch, preComputeHand, suitSlotOf, teamOf } from '@core'
 import type { Card, PlayAnalysis, RuleContext, Seat, SuitSlot } from '@core'
 import { BEAT_THRESHOLD, beatChance } from './belief'
 import type { Belief } from './belief'
@@ -49,15 +49,9 @@ const JOKER_KEEP_COST = 1.0
  * ① 牌力归一化到 0..1：保留「省牌」语义，但不再让一张大王只值 0.75
  * ② 王单独加留存溢价：它是「必胜一张」的稀缺资源，价值不随牌力线性增长
  *
- * **v1.3.57：内联到 `scoreCandidate` 的单次遍历里了**（与 `avgPower` 共享 Σ power），
- * 此函数保留给 `explainPlay` 的 trace 路径用（它需要逐张算 cardCost 来展示明细）。
+ * **v1.3.57：内联到 `scoreCandidate` 的单次遍历里了**（与 `avgPower` 共享 Σ power）。
+ * 曾留有独立的 `cardCost` 函数声称「保留给 trace 路径用」，实际无人调用 —— 已删除。
  */
-function cardCost(c: Card, ctx: RuleContext): number {
-  const base = ctx.power.get(c.value) / 80
-  return c.value >= 52 ? base + JOKER_KEEP_COST : base
-}
-// 引用一次避免 tsc 报 unused（函数在 trace 路径可能被未来的分析工具用到）
-void cardCost
 
 export const L2_WEIGHTS = {
   /** 跟牌：这一手会被对手反压时扣分（避免白打大牌） */
@@ -181,7 +175,13 @@ export interface AiDecision {
   readonly reason: string
 }
 
-/** 过滤出真正合法的候选 */
+/** 合法候选：出牌 + `checkPlayBatch` 内部已算好的 analysis（scoreCandidate 直接复用，省一次 analyze） */
+interface LegalCandidate {
+  readonly cards: readonly Card[]
+  readonly analysis: PlayAnalysis
+}
+
+/** 过滤出真正合法的候选（带各自的分析结果） */
 function legalOnly(
   hand: readonly Card[],
   ctx: RuleContext,
@@ -189,21 +189,25 @@ function legalOnly(
   limit: number,
   opponents: readonly (readonly Card[])[],
   wide: boolean,
-): Card[][] {
+): LegalCandidate[] {
   const raw = enumeratePlays(hand, ctx, play, limit, wide)
-  const out: Card[][] = []
+  // 预算一次手牌结构（池 + 槽分析），60 个候选复用 ——
+  // 旧实现每个候选都 new Map(hand...) + analyzeHand(hand, ctx)
+  const pre = preComputeHand(hand, ctx)
+  const batchOpts = {
+    ctx,
+    ...(play.kind === 'follow'
+      ? { lead: { cards: play.leadCards, analysis: play.leadAnalysis } }
+      : {}),
+    opponents,
+    pre,
+  }
+  const out: LegalCandidate[] = []
   for (const cards of raw) {
-    const r = checkPlay({
-      hand,
-      cards,
-      ctx,
-      ...(play.kind === 'follow'
-        ? { lead: { cards: play.leadCards, analysis: play.leadAnalysis } }
-        : {}),
-      // 首出甩牌必须拿真实对手手牌校验，否则 maxCard 恒为 -1、任何甩牌都「合法」
-      opponents,
-    })
-    if (r.ok) out.push(r.cards.slice())
+    const r = checkPlayBatch(cards, batchOpts)
+    if (r.ok) out.push({ cards: r.cards, analysis: r.analysis })
+    // r.cards 是 checkPlayBatch 产出的独立数组（adjusted 时是新数组，非 adjusted 时
+    // 就是 raw 里的原候选数组，而 raw 是 enumeratePlays 刚分配的）⇒ 无需 slice
   }
   return out
 }
@@ -416,7 +420,14 @@ function bestUnitPower(
   slot: SuitSlot,
   pairs: number,
 ): number {
-  const same = hand.filter((c) => suitSlotOf(c.value, ctx.power) === slot)
+  // 单次遍历同时收集同槽牌和主牌，避免旧实现的两次 filter
+  const same: Card[] = []
+  const trumps: Card[] = []
+  for (const c of hand) {
+    const s = suitSlotOf(c.value, ctx.power)
+    if (s === slot) same.push(c)
+    else if (slot !== 4 && s === 4) trumps.push(c)
+  }
   let best = unitPowerOf(same, ctx, pairs)
   // 副牌还要看「能不能毙」—— 但**只有这门已经跟不出牌的人才能毙**。
   //
@@ -426,7 +437,6 @@ function bestUnitPower(
   // 首出恒选最小的一张（用户反馈「有 A 居然不先出 A」）。
   // 规则上「有该花色就必须跟该花色」，不可能一边跟牌一边毙牌。
   if (slot !== 4 && same.length === 0) {
-    const trumps = hand.filter((c) => suitSlotOf(c.value, ctx.power) === 4)
     best = Math.max(best, unitPowerOf(trumps, ctx, pairs))
   }
   return best
@@ -453,10 +463,12 @@ function exactBeatable(
   remaining: readonly Seat[] | undefined,
   partnerLeading: boolean,
   seat: Seat,
-  memo?: Map<string, number>,
+  memo?: Map<number, number>,
   /** 调用方已算好的 analysis（避免重复 analyze） */
   preAnalyzed?: PlayAnalysis,
 ): boolean {
+  // 之前的注释保留
+  // memo key 数字编码：i * 100 + (suitSlot + 1) * 10 + pairs，省掉模板字符串拼接
   if (partnerLeading) return false // 队友已经赢着，不需要防守
   if (cards.length === 0) return false
   const mine = preAnalyzed ?? analyze(cards, ctx)
@@ -476,7 +488,7 @@ function exactBeatable(
     const s = oppSeats[i]
     if (s === undefined) continue
     if (remaining !== undefined && !remaining.includes(s)) continue
-    const key = `${i}|${mine.suitSlot}|${pairs}`
+    const key = i * 100 + (mine.suitSlot + 1) * 10 + pairs
     let p = memo?.get(key)
     if (p === undefined) {
       p = bestUnitPower(opponents[i]!, ctx, mine.suitSlot, pairs)
@@ -532,7 +544,7 @@ function leadFollowUp(
   opponents: readonly (readonly Card[])[],
   seat: Seat,
   remaining: readonly Seat[] | undefined,
-  memo?: Map<string, number>,
+  memo?: Map<number, number>,
   /** 调用方已算好的 analysis（避免重复 analyze） */
   preAnalyzed?: PlayAnalysis,
 ): number {
@@ -550,7 +562,7 @@ function leadFollowUp(
     const s = oppSeats[i]
     if (s === undefined) continue
     if (remaining !== undefined && !remaining.includes(s)) continue
-    const key = `${i}|${mySlot}|${pairs}`
+    const key = i * 100 + (mySlot + 1) * 10 + pairs
     let p = memo?.get(key)
     if (p === undefined) {
       p = bestUnitPower(opponents[i]!, ctx, mySlot, pairs)
@@ -581,7 +593,7 @@ export function rivalIsSafe(
   opponents: readonly (readonly Card[])[],
   remaining: readonly Seat[] | undefined,
   mySeat: Seat,
-  memo?: Map<string, number>,
+  memo?: Map<number, number>,
 ): boolean {
   const pairs = pairsNeededOf(rival.analysis)
   if (pairs < 0) return true // 甩牌：规则上每组都大于三家，压不了
@@ -593,7 +605,8 @@ export function rivalIsSafe(
     const s = oppSeats[i]
     if (s === undefined || s === rival.seat) continue // 队友自己不是威胁
     if (remaining !== undefined && !remaining.includes(s)) continue
-    const key = `r|${i}|${rival.analysis.suitSlot}|${pairs}`
+    // key 加 1000 偏移，避免与 exactBeatable/leadFollowUp 的 key 冲突（它们用队友的 suitSlot）
+    const key = 1000 + i * 100 + (rival.analysis.suitSlot + 1) * 10 + pairs
     let p = memo?.get(key)
     if (p === undefined) {
       p = bestUnitPower(opponents[i]!, ctx, rival.analysis.suitSlot, pairs)
@@ -645,7 +658,7 @@ function willBeBeaten(
   input: AiDecisionInput,
   level: AiLevel,
   partnerLeading: boolean,
-  memo?: Map<string, number>,
+  memo?: Map<number, number>,
 ): boolean {
   if (partnerLeading) return false // 队友已经赢着，不需要防守
   const belief = input.belief
@@ -710,15 +723,16 @@ export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDeci
       tries.push(byPower.slice(0, count))
       tries.push([...byPower].reverse().slice(0, count))
     }
+    // 复用上面 legalOnly 同款的 batch 校验（fallback 牌少，但仍是同一份手牌）
+    const fbPre = preComputeHand(hand, ctx)
     for (const cards of tries) {
-      const r = checkPlay({
-        hand,
-        cards,
+      const r = checkPlayBatch(cards, {
         ctx,
         ...(play.kind === 'follow'
           ? { lead: { cards: play.leadCards, analysis: play.leadAnalysis } }
           : {}),
         opponents,
+        pre: fbPre,
       })
       if (r.ok) return { cards: r.cards.slice(), reason: '兜底' }
     }
@@ -728,26 +742,31 @@ export function decide(input: AiDecisionInput, level: AiLevel, rng: Rng): AiDeci
   }
 
   if (level === 0) {
-    const pick = candidates[rng.int(candidates.length)] as Card[]
-    return { cards: pick, reason: '随机' }
+    const pick = candidates[rng.int(candidates.length)] as LegalCandidate
+    return { cards: pick.cards, reason: '随机' }
   }
 
   // L3 的压牌判定按 (对手, 槽, 结构) 缓存 —— 60 个候选里组合只有十几种，必须跨候选复用
-  const memo = new Map<string, number>()
+  const memo = new Map<number, number>()
   // 首出路径预计算：每个槽的张数 / 有无拖拉机 / 副牌各槽最大牌力，
   // 一次遍历替代旧实现在每个候选里逐个调 slotCount / hasTractor / hand.filter+reduce
   const lead = play.kind === 'lead' ? prefetchLead(hand, ctx) : undefined
+  // 整墩分数对所有候选是同一个值（只依赖 currentWinner/play/trickPoints），
+  // 预算一次替代逐候选调 trickPointsSoFar
+  const trickPts = trickPointsSoFar(input.currentWinner, play, input.trickPoints)
   // 单次遍历找最优：同时打分并收集并列候选，避免 sort 整个数组
   let topScore = Number.NEGATIVE_INFINITY
-  const best: Card[][] = []
-  for (const cards of candidates) {
-    const score = scoreCandidate(cards, input, level, memo, undefined, lead)
+  const best: (readonly Card[])[] = []
+  for (const cand of candidates) {
+    // analysis 由 legalOnly 的 checkPlayBatch 算好，直接复用 ——
+    // 旧实现这里每个候选又调一次 analyze（60 次/决策）
+    const score = scoreCandidate(cand.cards, input, level, memo, undefined, lead, trickPts, cand.analysis)
     if (score > topScore + 0.001) {
       topScore = score
       best.length = 0
-      best.push(cards)
+      best.push(cand.cards)
     } else if (score >= topScore - 0.001) {
-      best.push(cards)
+      best.push(cand.cards)
     }
   }
   const chosen = best[rng.int(best.length)]!
@@ -783,13 +802,17 @@ function scoreCandidate(
   cards: readonly Card[],
   input: AiDecisionInput,
   level: AiLevel,
-  memo?: Map<string, number>,
+  memo?: Map<number, number>,
   trace?: ScorePart[],
   /** 首出路径的预计算（由 `decide` 一次性预算好传入，避免逐候选遍历手牌） */
   lead?: LeadPrefetch,
+  /** 整墩已出的分数（`decide` 预算一次传入）；不传则内部计算（explainPlay 用） */
+  trickPts?: number,
+  /** `checkPlayBatch` 已经算好的 analysis（decide 主路径传入，省一次重复 analyze）；不传则内部 analyze */
+  preAnalyzed?: PlayAnalysis,
 ): number {
   const { ctx, play, currentWinner, partnerLeading, hand, opponents } = input
-  const a = analyze(cards, ctx)
+  const a = preAnalyzed ?? analyze(cards, ctx)
   // 单次遍历同时算出 powerSum / jokerPremium / points，
   // 避免旧实现的 cards.reduce（powerSum）+ cardsScore（points）两次遍历。
   //   avgPower     = Σ power / (n * 80)
@@ -811,8 +834,10 @@ function scoreCandidate(
     }
   }
   const n = cards.length
-  const avgPower = powerSum / (n * 80)
-  const avgLeadCost = powerSum / (n * 80) + jokerPremium / n
+  // 提取公共除法结果，旧实现重复算了三次（avgPower / avgLeadCost / powerPart）
+  const basePower = powerSum / (n * 80)
+  const avgPower = basePower
+  const avgLeadCost = basePower + jokerPremium / n
   // 预计算 pairsNeeded：L3 路径里 willBeBeaten / leadFollowUp / 续庄溢价都会用
   const pairsNeeded = pairsNeededOf(a)
   const isL3 = level === 3
@@ -887,7 +912,7 @@ function scoreCandidate(
       if (iAmWinning && !partnerLeading) {
         add(
           '赢墩溢价',
-          trickPointsSoFar(currentWinner, play, input.trickPoints) *
+          (trickPts ?? trickPointsSoFar(currentWinner, play, input.trickPoints)) *
             (isL3 ? L3_WEIGHTS.trickEv : L2_WEIGHTS.trick),
         )
       }
@@ -929,9 +954,8 @@ function scoreCandidate(
       if (!beaten) {
         // ⑥ 兑现：压得住的牌现在出不亏，牌力成本打折（**王的留存溢价不参与打折**，
         //    那条是 v1.3.29 专门为「首出王 11.8%」加的，打折会把它打回原形）
-        //    powerPart 复用上面已算好的 powerSum，不再重复遍历 cards
-        const powerPart = powerSum / (n * 80)
-        add('压得住·省牌打折', avgLeadCost - powerPart * L3_WEIGHTS.cashDiscount)
+        //    basePower 已在函数开头算好，不再重复 powerSum / (n * 80)
+        add('压得住·省牌打折', avgLeadCost - basePower * L3_WEIGHTS.cashDiscount)
 
         // ⑦ 副牌顶牌先兑现：副牌 A/K 真正的风险不是被压，是留到后面**被毙掉 / 被垫掉**。
         //    `-powerCost` 只看得到「留大牌好」，看不到这一层，所以人类会觉得「有 A 不出 A」很蠢。

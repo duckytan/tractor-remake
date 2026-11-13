@@ -31,6 +31,11 @@ export interface TrickResult {
  * 想判断「**真的压过**」请用 `beatsPlay`（本文件下方）：
  * 有资格 **且** 牌力更大（相等不算，先出者赢）。
  */
+/** 单组连对的长度（非拖拉机恒 0）—— 模块级函数，避免每次 canFollowShape 重建闭包 */
+function runLenOf(a: PlayAnalysis): number {
+  return a.groups.length === 1 && a.groups[0]?.kind === 'tractor' ? a.groups[0].length : 0
+}
+
 export function canFollowShape(play: PlayAnalysis, lead: PlayAnalysis): boolean {
   if (play.suitSlot === -1) return false
   const leadIsTrump = lead.suitSlot === 4
@@ -44,9 +49,7 @@ export function canFollowShape(play: PlayAnalysis, lead: PlayAnalysis): boolean 
   if (play.pairCount !== lead.pairCount) return false
   // 拖拉机长度也要一致：2 个不连续对子不能压 2 连对
   // （两者 pairCount 都是 2，只比对数会把「散对」误判成能压「连对」）
-  const runLen = (a: PlayAnalysis): number =>
-    a.groups.length === 1 && a.groups[0]?.kind === 'tractor' ? a.groups[0].length : 0
-  if (runLen(play) !== runLen(lead)) return false
+  if (runLenOf(play) !== runLenOf(lead)) return false
   return true
 }
 

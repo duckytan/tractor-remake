@@ -4,7 +4,7 @@
  */
 
 import { analyze, analyzeHand, bestInSlot } from './analyze'
-import type { Group, PlayAnalysis } from './analyze'
+import type { Group, HandAnalysis, PlayAnalysis } from './analyze'
 import { suitSlotOf } from './deal'
 import type { Card, RuleContext, SuitSlot } from './types'
 
@@ -20,11 +20,12 @@ export type PlayRejectReason =
 
 export type PlayResult =
   /** 合法 */
-  | { readonly ok: true; readonly cards: readonly Card[]; readonly adjusted?: undefined }
+  | { readonly ok: true; readonly cards: readonly Card[]; readonly analysis: PlayAnalysis; readonly adjusted?: undefined }
   /** 甩牌失败，已被裁剪成合法的一手；上层应出 cards 并提示 reason */
   | {
       readonly ok: true
       readonly cards: readonly Card[]
+      readonly analysis: PlayAnalysis
       readonly adjusted: true
       readonly reason: PlayRejectReason
       readonly detail: string
@@ -52,6 +53,63 @@ function allFromHand(hand: readonly Card[], cards: readonly Card[]): boolean {
     const n = pool.get(c.id) ?? 0
     if (n === 0) return false
     pool.set(c.id, n - 1)
+  }
+  return true
+}
+
+/**
+ * 手牌的「多重集池」：id → 张数。
+ *
+ * 给 `allFromHand` 和 `checkFollow` 共用：在 `legalOnly` 一次调用里，
+ * 60 个候选都对着**同一份手牌**，旧实现每个候选都 `new Map(hand...)` + `analyzeHand(hand...)`。
+ * 预算一次后传给 `checkPlayBatch`，每候选只遍历自己的几张牌。
+ */
+export interface HandPreComputed {
+  /** id → 在手牌里的张数（多重集池） */
+  readonly pool: ReadonlyMap<number, number>
+  /** `analyzeHand(hand, ctx)` 的结果 */
+  readonly handAnalysis: HandAnalysis
+}
+
+/** 从手牌预算共享结构（池 + 槽分析） */
+export function preComputeHand(hand: readonly Card[], ctx: RuleContext): HandPreComputed {
+  const pool = new Map<number, number>()
+  for (const c of hand) pool.set(c.id, (pool.get(c.id) ?? 0) + 1)
+  return { pool, handAnalysis: analyzeHand(hand, ctx) }
+}
+
+/**
+ * `allFromHand` 的池版：用预算好的 `pool` 替代每次 `new Map(hand...)`。
+ *
+ * cards 通常只有 1~6 张，直接线性扫：
+ *   ① 收集每 id 出现次数（最多 2，两副牌）
+ *   ② 逐 id 查 pool 够不够
+ */
+function allFromHandPool(pool: ReadonlyMap<number, number>, cards: readonly Card[]): boolean {
+  if (cards.length === 1) {
+    // 快路径：单张最常见，不分配任何中间结构
+    return (pool.get(cards[0]!.id) ?? 0) > 0
+  }
+  // 逐张查 pool 并计数（模拟多重集消费）
+  // 复制 pool 中被消费的条目到局部 map，避免修改原 pool
+  // 但大多数候选 id 不重复，可以直接查 pool 足够
+  // 对重复 id（两副牌同 id 出两张）才需要局部计数
+  let dups = false
+  for (let i = 1; i < cards.length; i++) {
+    if (cards[i]!.id === cards[0]!.id) { dups = true; break }
+  }
+  if (!dups) {
+    // 无重复 id：直接查 pool
+    for (const c of cards) {
+      if ((pool.get(c.id) ?? 0) === 0) return false
+    }
+    return true
+  }
+  // 有重复 id：用局部计数
+  const need = new Map<number, number>()
+  for (const c of cards) need.set(c.id, (need.get(c.id) ?? 0) + 1)
+  for (const [id, n] of need) {
+    if ((pool.get(id) ?? 0) < n) return false
   }
   return true
 }
@@ -88,7 +146,42 @@ export function checkPlay(o: CheckPlayOptions): PlayResult {
   if (isRealThrow && (opponents === undefined || opponents.length === 0)) {
     return reject('throw-failed', '缺少对手手牌，无法校验甩牌')
   }
-  return checkLead(cards, my, ctx, opponents ?? [])
+  return checkLead(cards, my, ctx, opponents ?? [], my)
+}
+
+/** 批量校验：预算好的 hand 共享结构复用，避免逐候选 `new Map` + `analyzeHand` */
+export interface CheckPlayBatchOptions {
+  readonly ctx: RuleContext
+  readonly lead?: { readonly cards: readonly Card[]; readonly analysis: PlayAnalysis }
+  readonly opponents?: readonly (readonly Card[])[]
+  /** 预算好的手牌结构 */
+  readonly pre: HandPreComputed
+}
+
+/**
+ * 批量校验：用预算好的 `preComputeHand` 替代逐候选的 `allFromHand` + `checkFollow` 里的 `analyzeHand`。
+ *
+ * 热路径 `legalOnly`（AI `decide`）一次调 60 个候选，旧实现每个都
+ * `new Map(hand...)`（~25 张）+ `analyzeHand(hand, ctx)`（遍历 + 5 桶分配 + sort）。
+ * 预算一次后每候选只遍历自己的 1~6 张牌。
+ */
+export function checkPlayBatch(
+  cards: readonly Card[],
+  o: CheckPlayBatchOptions,
+): PlayResult {
+  const { ctx, lead, pre } = o
+  if (cards.length === 0) return reject('empty', '没有选牌')
+  if (!allFromHandPool(pre.pool, cards)) return reject('cards-not-in-hand', '出的牌不在手里')
+
+  const my = analyze(cards, ctx)
+  if (lead) return checkFollowWithHand(pre.handAnalysis, cards, my, lead.analysis, ctx)
+
+  const opponents = o.opponents
+  const isRealThrow = my.isMultiGroup && my.suitSlot !== -1
+  if (isRealThrow && (opponents === undefined || opponents.length === 0)) {
+    return reject('throw-failed', '缺少对手手牌，无法校验甩牌')
+  }
+  return checkLead(cards, my, ctx, opponents ?? [], my)
 }
 
 /* ---------- 首出 ---------- */
@@ -106,29 +199,38 @@ export function checkLead(
   my: PlayAnalysis,
   ctx: RuleContext,
   opponents: readonly (readonly Card[])[],
+  /** 调用方已算好的 analysis，返回成功时带上避免上层重复调 analyze */
+  analysis?: PlayAnalysis,
 ): PlayResult {
   if (my.suitSlot === -1) return reject('mixed-suit-lead', '首出必须同一花色')
-  if (!my.isMultiGroup) return { ok: true, cards }
+  if (!my.isMultiGroup) return { ok: true, cards, analysis: analysis ?? my }
 
   const slot = my.suitSlot as SuitSlot
-  const best = opponents.map((h) => bestInSlot(h, slot, ctx))
-  const maxCard = Math.max(-1, ...best.map((b) => b.maxCardPower))
-  const maxPair = Math.max(-1, ...best.map((b) => b.maxPairPower))
+  // 单次遍历收集 maxCard/maxPair，省掉旧实现的 map + 两次 spread + 两个中间数组
+  let maxCard = -1
+  let maxPair = -1
+  for (const h of opponents) {
+    const b = bestInSlot(h, slot, ctx)
+    if (b.maxCardPower > maxCard) maxCard = b.maxCardPower
+    if (b.maxPairPower > maxPair) maxPair = b.maxPairPower
+  }
   const power = ctx.power
 
   for (const g of my.groups) {
     const bad = failingUnit(g, power, maxCard, maxPair)
     if (bad) {
+      // 裁剪后的牌与原始 my 不同，必须重新 analyze
       return {
         ok: true,
         cards: bad,
+        analysis: analyze(bad, ctx),
         adjusted: true,
         reason: 'throw-failed',
         detail: describeFailure(g),
       }
     }
   }
-  return { ok: true, cards }
+  return { ok: true, cards, analysis: analysis ?? my }
 }
 
 /** 返回该组里最小的失败单位（null 表示该组通过） */
@@ -138,17 +240,18 @@ function failingUnit(
   maxCard: number,
   maxPair: number,
 ): Card[] | null {
-  if (g.kind === 'single') {
-    const weakest = g.cards.reduce((a, b) => (power.get(b.value) < power.get(a.value) ? b : a))
-    return power.get(weakest.value) > maxCard ? null : [weakest]
+  // 三个分支都要「组内最弱牌」，一次遍历算好共用，
+  // 替代旧实现三次重复的 reduce（每次分配闭包 + 反复 power.get）
+  let weakest = g.cards[0] as Card
+  let weakestPower = power.get(weakest.value)
+  for (let i = 1; i < g.cards.length; i++) {
+    const c = g.cards[i] as Card
+    const p = power.get(c.value)
+    if (p < weakestPower) { weakest = c; weakestPower = p }
   }
-  if (g.kind === 'pair') {
-    const weakest = g.cards.reduce((a, b) => (power.get(b.value) < power.get(a.value) ? b : a))
-    return power.get(weakest.value) > maxPair ? null : g.cards.slice()
-  }
-  // tractor：整组最弱的那对也要大于对手最大对子
-  const weakest = g.cards.reduce((a, b) => (power.get(b.value) < power.get(a.value) ? b : a))
-  return power.get(weakest.value) > maxPair ? null : g.cards.slice()
+  if (g.kind === 'single') return weakestPower > maxCard ? null : [weakest]
+  // pair / tractor 都用「最弱的一对 > 对手最大对子」判定，逻辑相同
+  return weakestPower > maxPair ? null : g.cards.slice()
 }
 
 function describeFailure(g: Group): string {
@@ -175,6 +278,21 @@ export function checkFollow(
   lead: PlayAnalysis,
   ctx: RuleContext,
 ): PlayResult {
+  // 预算一次 analyzeHand，传给 checkFollowWithHand 复用
+  return checkFollowWithHand(analyzeHand(hand, ctx), cards, my, lead, ctx)
+}
+
+/**
+ * `checkFollow` 的预计算版：接受外部已算好的 `HandAnalysis`，
+ * 避免 `legalOnly` / `legalCandidates` 在 60 个候选里逐个 `analyzeHand`。
+ */
+export function checkFollowWithHand(
+  handAnalysis: HandAnalysis,
+  cards: readonly Card[],
+  my: PlayAnalysis,
+  lead: PlayAnalysis,
+  ctx: RuleContext,
+): PlayResult {
   const leadCount = lead.groups.reduce((n, g) => n + g.cards.length, 0)
   if (cards.length !== leadCount) {
     return reject('count-mismatch', `跟牌张数必须与首出相同（首出 ${leadCount} 张）`)
@@ -182,7 +300,6 @@ export function checkFollow(
   if (lead.suitSlot === -1) return reject('must-follow-suit', '首出牌型异常')
 
   const slot = lead.suitSlot as SuitSlot
-  const handAnalysis = analyzeHand(hand, ctx)
   const handSlot = handAnalysis.slots[slot]!
   const handCount = handSlot.cards.length
   const handPairs = handSlot.pairCount
@@ -197,7 +314,7 @@ export function checkFollow(
       `有该花色时必须跟满 ${needSuit} 张（你出了 ${sameSuit} 张）`,
     )
   }
-  if (sameSuit < leadCount) return { ok: true, cards } // 花色不够，垫牌自由
+  if (sameSuit < leadCount) return { ok: true, cards, analysis: my } // 花色不够，垫牌自由
 
   const needPairs = Math.min(lead.pairCount, handPairs)
   // **「至少」而不是「恰好」**（v1.3.29 修正，docs/32 B-2 的连带缺陷）。
@@ -212,5 +329,5 @@ export function checkFollow(
   if (my.pairCount < needPairs) {
     return reject('must-follow-pairs', `有对子必须跟 ${needPairs} 对（你出了 ${my.pairCount} 对）`)
   }
-  return { ok: true, cards }
+  return { ok: true, cards, analysis: my }
 }

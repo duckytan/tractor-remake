@@ -244,27 +244,6 @@ function enumerateFollows(
    * 补牌必须从**整槽所有牌**里挑，不能只从「非对子牌」里挑 ——
    * 否则手里只有对子、首出却是单张时，会凑不出合法出法（曾经的真实 bug）。
    */
-  const assemble = (pairs: readonly Card[][], order: (rest: readonly Card[]) => readonly Card[]): Card[] | null => {
-    const picked: Card[] = []
-    const used = new Set<number>()
-    for (const p of pairs) {
-      picked.push(...p)
-      for (const c of p) used.add(c.id)
-    }
-    const rest = handSlot.filter((c) => !used.has(c.id))
-    for (const c of order(rest)) {
-      if (picked.length >= needSuit) break
-      picked.push(c)
-    }
-    return picked.length === needSuit ? picked : null
-  }
-
-  const strategies: ((rest: readonly Card[]) => readonly Card[])[] = [
-    (rest) => rest, // 最小（handSlot 已按牌力升序）
-    (rest) => [...rest].reverse(), // 最大
-    (rest) => [...noScoreFirst(rest), ...scoreFirst(rest)], // 非分牌优先
-    (rest) => [...scoreFirst(rest), ...noScoreFirst(rest)], // 分牌优先
-  ]
 
   // 对子窗口：needPairs 个连续对子的**所有起点**（不只是最小和最大）
   const windows: Card[][][] = []
@@ -295,11 +274,34 @@ function enumerateFollows(
   // 窄集：只取「最小对子 + 最小补牌」和「最大对子 + 最大补牌」两个
   // （旧行为，给 L0/L1 用）。宽集：全部组合铺开。
   const windowsUsed = wide ? windows : [windows[0]!, windows[windows.length - 1]!]
-  const strategiesUsed = wide ? strategies : [strategies[0]!, strategies[1]!]
+  /**
+   * 补牌策略 4 种（顺序即产出顺序，**不能动** —— dedupe 按 limit 截断，
+   * 候选序列必须逐位一致，v1.3.12 教训）：
+   *   ① 最小 ② 最大 ③ 非分牌优先 ④ 分牌优先
+   * 每个窗口的 `rest`（去掉窗口对子后的整槽牌）与两种全排序只算一次，
+   * 4 个策略共用 —— 旧实现在每个窗口 × 每个策略里重复 filter / sort。
+   */
   for (const w of windowsUsed) {
-    for (const st of strategiesUsed) {
-      const cand = assemble(w, st)
-      if (cand !== null) out.push(cand)
+    const picked: Card[] = []
+    const used = new Set<number>()
+    for (const p of w) {
+      picked.push(...p)
+      for (const c of p) used.add(c.id)
+    }
+    const rest = handSlot.filter((c) => !used.has(c.id))
+    const restReversed = [...rest].reverse()
+    const noScore = noScoreFirst(rest)
+    const score = scoreFirst(rest)
+    const restOrders: readonly (readonly Card[])[] = wide
+      ? [rest, restReversed, [...noScore, ...score], [...score, ...noScore]]
+      : [rest, restReversed]
+    for (const ordered of restOrders) {
+      const cand = picked.slice()
+      for (const c of ordered) {
+        if (cand.length >= needSuit) break
+        cand.push(c)
+      }
+      if (cand.length === needSuit) out.push(cand)
     }
   }
 
@@ -310,15 +312,16 @@ function enumerateFollows(
       hand.filter((c) => !slotIds.has(c.id)),
       ctx,
     )
+    // 排序结果对整个循环是常量，预生成一次（旧实现在每个候选 × 每个 order 里重算）
     // 窄集只保留「补最小的」—— 与旧实现完全一致，L0/L1 的行为不受本次扩充影响
-    const fillerOrders: ((arr: readonly Card[]) => readonly Card[])[] = wide
-      ? [(arr) => arr, (arr) => [...arr].reverse(), (arr) => [...noScoreFirst(arr), ...scoreFirst(arr)]]
-      : [(arr) => arr]
+    const fillerSequences: readonly (readonly Card[])[] = wide
+      ? [fillers, [...fillers].reverse(), [...noScoreFirst(fillers), ...scoreFirst(fillers)]]
+      : [fillers]
     for (const cand of out.slice()) {
-      for (const order of fillerOrders) {
+      for (const seq of fillerSequences) {
         const used = new Set(cand.map((c) => c.id))
         const picked = cand.slice()
-        for (const f of order(fillers)) {
+        for (const f of seq) {
           if (picked.length >= leadCount) break
           if (used.has(f.id)) continue
           picked.push(f)

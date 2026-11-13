@@ -13,16 +13,25 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { Card, PlayResult } from '@core'
+import type { Card, PlayAnalysis, PlayResult } from '@core'
 import { legalityBadgeOf } from '@ui/render'
 
 /** 造几张占位牌（映射函数只看 cards.length，牌值无所谓） */
 const cards = (n: number): readonly Card[] =>
   Array.from({ length: n }, (_, i) => ({ id: i + 1, value: 10 + i }))
 
+/** 最小合法的 PlayAnalysis 占位（legalityBadgeOf 不读它的字段） */
+const dummyAnalysis = (() => {
+  const c: Card = { id: 1, value: 10 }
+  return {
+    suitSlot: 0, typeCode: 0 as const, groups: [{ kind: 'single' as const, cards: [c], keyCard: c, length: 1 }],
+    pairCount: 0, singleCount: 1, keyCard: c, score: 0, isMultiGroup: false,
+  } as PlayAnalysis
+})()
+
 describe('legalityBadgeOf', () => {
   it('直接合法：绿色「✓ 可以出」', () => {
-    const result: PlayResult = { ok: true, cards: cards(3) }
+    const result: PlayResult = { ok: true, cards: cards(3), analysis: dummyAnalysis }
     const html = legalityBadgeOf(result)
     expect(html).toContain('legality is-ok')
     expect(html).toContain('✓ 可以出')
@@ -35,6 +44,7 @@ describe('legalityBadgeOf', () => {
     const result: PlayResult = {
       ok: true,
       cards: cards(2),
+      analysis: dummyAnalysis,
       adjusted: true,
       reason: 'throw-failed',
       detail: '甩牌失败：有对子不是最大，只能出最小的那一对',

@@ -23,7 +23,7 @@
  * 这里**绝不自己判规则**（分层铁律，见 docs/07）。
  */
 
-import { analyze, beatsPlay, cardsScore, checkPlay } from '@core'
+import { analyze, beatsPlay, checkPlayBatch, preComputeHand, suitSlotOf } from '@core'
 import type { Card, PlayAnalysis, RuleContext, Seat } from '@core'
 import { enumeratePlays } from './enumerate'
 import type { PlayContext } from './enumerate'
@@ -44,40 +44,35 @@ export interface SafeHintInput {
   readonly trickPoints: number
 }
 
-/** 牌力（越小越省） */
-const powerOf = (cards: readonly Card[], ctx: RuleContext): number =>
-  cards.reduce((sum, c) => sum + ctx.power.get(c.value), 0) / cards.length
-
-/** 该槽在手牌里还有几张（长套优先） */
-function slotCountOf(hand: readonly Card[], slot: number, ctx: RuleContext): number {
-  if (slot === 4) return hand.filter((c) => ctx.power.isTrump(c.value)).length
-  return hand.filter((c) => c.value < 52 && Math.floor(c.value / 13) === slot).length
+/**
+ * 预计算每个槽的张数，供排序闭包查表替代逐次遍历手牌。
+ */
+function slotCountsOf(hand: readonly Card[], ctx: RuleContext): number[] {
+  const counts = [0, 0, 0, 0, 0]
+  for (const c of hand) {
+    const slot = suitSlotOf(c.value, ctx.power)
+    counts[slot] = (counts[slot] ?? 0) + 1
+  }
+  return counts
 }
 
 /** 只保留真正合法的候选（**规则判定只走 checkPlay**） */
 function legalCandidates(input: SafeHintInput): Card[][] {
+  const pre = preComputeHand(input.hand, input.ctx)
+  const batchOpts = {
+    ctx: input.ctx,
+    ...(input.play.kind === 'follow'
+      ? { lead: { cards: input.play.leadCards, analysis: input.play.leadAnalysis } }
+      : {}),
+    opponents: input.opponents,
+    pre,
+  }
   const out: Card[][] = []
   for (const cards of enumeratePlays(input.hand, input.ctx, input.play, 60, true)) {
-    const r = checkPlay({
-      hand: input.hand,
-      cards,
-      ctx: input.ctx,
-      ...(input.play.kind === 'follow'
-        ? { lead: { cards: input.play.leadCards, analysis: input.play.leadAnalysis } }
-        : {}),
-      opponents: input.opponents,
-    })
+    const r = checkPlayBatch(cards, batchOpts)
     if (r.ok) out.push(r.cards.slice())
   }
   return out
-}
-
-/** 排序：先比「带多少分」（越少越好），再比牌力（越低越好） */
-function byCheap(a: readonly Card[], b: readonly Card[], ctx: RuleContext): number {
-  const pa = cardsScore(a)
-  const pb = cardsScore(b)
-  if (pa !== pb) return pa - pb
-  return powerOf(a, ctx) - powerOf(b, ctx)
 }
 
 /**
@@ -87,7 +82,46 @@ export function safeHint(input: SafeHintInput): Card[] {
   const candidates = legalCandidates(input)
   if (candidates.length === 0) return []
   const { ctx, hand } = input
-  const sorted = [...candidates].sort((a, b) => byCheap(a, b, ctx))
+
+  // 预计算每个候选的分数、平均牌力、suitSlot，避免在排序闭包里反复调 analyze + cardsScore
+  //（旧实现每次比较都 reduce 遍历候选 / analyze 分配 Map，O(n log n) 次 × 每次遍历整组牌）
+  // suitSlot 内联计算：取第一张牌的 slot，再验所有牌同槽（与 analyze 里的单槽判定一致）
+  interface CandInfo { cards: Card[]; score: number; avgPower: number; suitSlot: number; keyCardValue: number; slotCount: number }
+  const infos: CandInfo[] = candidates.map((cards) => {
+    let powerSum = 0
+    let score = 0
+    let keyCardValue = cards[0]!.value
+    let keyPower = ctx.power.get(keyCardValue)
+    const firstSlot = suitSlotOf(cards[0]!.value, ctx.power)
+    let sameSlot = true
+    for (const c of cards) {
+      const v = c.value
+      const p = ctx.power.get(v)
+      powerSum += p
+      if (p > keyPower) { keyCardValue = v; keyPower = p }
+      // 内联 cardScore
+      if (v < 52) {
+        const r = v % 13
+        if (r === 3) score += 5
+        else if (r === 8 || r === 11) score += 10
+      }
+      if (sameSlot && suitSlotOf(v, ctx.power) !== firstSlot) sameSlot = false
+    }
+    return { cards, score, avgPower: powerSum / cards.length, suitSlot: sameSlot ? firstSlot : -1, keyCardValue, slotCount: 0 }
+  })
+
+  // 预计算每个槽的张数，排序闭包查表替代逐次遍历手牌
+  const handSlotCounts = slotCountsOf(hand, ctx)
+  for (const info of infos) {
+    info.slotCount = info.suitSlot === -1 ? 0 : handSlotCounts[info.suitSlot] ?? 0
+  }
+
+  // 排序：先比「带多少分」（越少越好），再比牌力（越低越好）
+  const byCheapInfo = (a: CandInfo, b: CandInfo): number => {
+    if (a.score !== b.score) return a.score - b.score
+    return a.avgPower - b.avgPower
+  }
+  const sorted = [...infos].sort(byCheapInfo)
 
   /* ---------------- 跟牌 ---------------- */
   if (input.play.kind === 'follow') {
@@ -112,48 +146,83 @@ export function safeHint(input: SafeHintInput): Card[] {
         )
       if (safe) {
         // 这一墩已经是我方的 ⇒ 有分就往里垫（人类最标准的打法）
-        const withPoints = candidates.filter((c) => cardsScore(c) > 0)
+        const withPoints = infos.filter((i) => i.score > 0)
         if (withPoints.length > 0) {
-          return [...withPoints].sort((a, b) => cardsScore(b) - cardsScore(a))[0]!.slice()
+          // O(n) 找最大 score 的候选，替代 [...withPoints].sort()[0]
+          let best = withPoints[0]!
+          for (let i = 1; i < withPoints.length; i++) {
+            if (withPoints[i]!.score > best.score) best = withPoints[i]!
+          }
+          return best.cards.slice()
         }
       }
       // 队友这手可能被反压 ⇒ 收着打，垫最小的牌（这时候把 10 甩上去就是白送）
-      return (sorted[0] as Card[]).slice()
+      return (sorted[0] as CandInfo).cards.slice()
     }
 
     const winner = input.currentWinner
     const winners =
       winner === null
-        ? candidates
+        ? infos
         // **必须用 `beatsPlay`**（结构一致 **且** 牌力更大）。
         // 原来用的是 `canFollowShape` —— 它不比牌力，于是任何同型牌都被当成"能赢"，
         // 接下来又按"最省"排序 ⇒ 挑一张更小的牌去陪跑（用户 2026-10-31 报）。
-        : candidates.filter((cards) => beatsPlay(analyze(cards, ctx), winner, ctx))
+        //
+        // 两级过滤：先用 CandInfo 里已有的 suitSlot / keyCardValue 做廉价预筛，
+        // 排除掉「槽不同」或「牌力不够」的候选，只有可能的才进 analyze。
+        : infos.filter((i) => {
+          // 槽判定：首出是主牌 → 跟的也必须是主牌；首出是副牌 → 同花色或主牌毙
+          const leadSlot = winner.suitSlot
+          if (leadSlot === -1) return false
+          if (i.suitSlot === -1) return false // 混花色不可能赢
+          if (leadSlot === 4) {
+            if (i.suitSlot !== 4) return false
+          } else {
+            // 副牌首出：同花色或主牌能压
+            if (i.suitSlot !== leadSlot && i.suitSlot !== 4) return false
+          }
+          // 牌力预筛：keyCard 牌力必须 > winner 的 keyCard 牌力（beatsPlay 要求严格大于）
+          const winnerKeyPower = ctx.power.get(winner.keyCard!.value)
+          if (ctx.power.get(i.keyCardValue) <= winnerKeyPower) return false
+          // 结构判定仍需完整 analyze（对子数 / 拖拉机长度）
+          return beatsPlay(analyze(i.cards, ctx), winner, ctx)
+        })
     // ② 能压住、且这墩有分 → 抢，但用能赢的最小一手
     if (winners.length > 0 && input.trickPoints > 0) {
-      return [...winners].sort((a, b) => powerOf(a, ctx) - powerOf(b, ctx))[0]!.slice()
+      // O(n) 找最小 avgPower 的候选，替代 [...winners].sort()[0]
+      let best = winners[0]!
+      for (let i = 1; i < winners.length; i++) {
+        if (winners[i]!.avgPower < best.avgPower) best = winners[i]!
+      }
+      return best.cards.slice()
     }
     // ③ 能压住但没分 / 压不住 → 出最小的一手（0 分优先）
-    return (sorted[0] as Card[]).slice()
+    return (sorted[0] as CandInfo).cards.slice()
   }
 
   /* ---------------- 首出 ---------------- */
-  const sure = candidates.filter((cards) =>
-    isSureToHold(cards, ctx, input.opponents, input.remainingSeats, input.seat),
+  const sure = infos.filter((i) =>
+    isSureToHold(i.cards, ctx, input.opponents, input.remainingSeats, input.seat),
   )
   // ④ 有稳赢的：优先兑现「不带分」的、牌力最低的那一手（省大牌、不甩分）
   if (sure.length > 0) {
-    return [...sure].sort((a, b) => byCheap(a, b, ctx))[0]!.slice()
+    // O(n) 找 byCheapInfo 最优的候选，替代 [...sure].sort(byCheapInfo)[0]
+    let best = sure[0]!
+    for (let i = 1; i < sure.length; i++) {
+      if (byCheapInfo(sure[i]!, best) < 0) best = sure[i]!
+    }
+    return best.cards.slice()
   }
   // ⑤ 没有稳赢的：先跑长套里最小的 0 分牌
-  const slotOf = (cards: readonly Card[]): number => analyze(cards, ctx).suitSlot
-  return [...sorted].sort((a, b) => {
-    const base = byCheap(a, b, ctx)
-    if (base !== 0) return base
-    const sa = slotOf(a)
-    const sb = slotOf(b)
-    const ca = sa === -1 ? 0 : slotCountOf(hand, sa, ctx)
-    const cb = sb === -1 ? 0 : slotCountOf(hand, sb, ctx)
-    return cb - ca
-  })[0]!.slice()
+  // O(n) 找 (byCheapInfo 最优, slotCount 最大) 的候选，替代 [...sorted].sort(...)[0]
+  {
+    let best = sorted[0] as CandInfo
+    for (let i = 1; i < sorted.length; i++) {
+      const cand = sorted[i] as CandInfo
+      const cmp = byCheapInfo(cand, best)
+      if (cmp < 0) best = cand
+      else if (cmp === 0 && cand.slotCount > best.slotCount) best = cand
+    }
+    return best.cards.slice()
+  }
 }

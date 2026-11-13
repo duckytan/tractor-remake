@@ -72,14 +72,20 @@ export function dealtCount(revealed: number): number {
 /**
  * 一手牌里是否已有「现成的连对（拖拉机）」。
  * 连对 = 同一花色槽内、牌力相邻的两个或以上对子。
+ *
+ * `preCounted` 是**与牌力表无关**的按牌值张数统计（调用方可预计算复用 ——
+ * 发牌守卫对同一手牌要按 16 种牌力表各判一次，counts 只算一次）；
+ * 不传则内部现算（单次调用场景）。
  */
-export function hasConsecutivePair(hand: readonly Card[], power: PowerTable): boolean {
-  // 按槽分组，再按牌值统计张数
+export function hasConsecutivePair(
+  hand: readonly Card[],
+  power: PowerTable,
+  preCounted?: ReadonlyMap<CardValue, number>,
+): boolean {
+  // 按槽分组，再按牌力排（连对 = 同槽内牌力相邻的对子）
   const pairPowersBySlot = new Map<SuitSlot, number[]>()
-  const counts = new Map<CardValue, number>()
-  for (const c of hand) counts.set(c.value, (counts.get(c.value) ?? 0) + 1)
-
-  for (const [value, n] of counts) {
+  const counts = preCounted
+  for (const [value, n] of (counts ?? countByValue(hand))) {
     if (n < 2) continue
     const slot = suitSlotOf(value, power)
     const list = pairPowersBySlot.get(slot) ?? []
@@ -95,6 +101,13 @@ export function hasConsecutivePair(hand: readonly Card[], power: PowerTable): bo
     }
   }
   return false
+}
+
+/** 按牌值统计张数（与牌力表无关，可跨牌力表复用） */
+function countByValue(hand: readonly Card[]): Map<CardValue, number> {
+  const counts = new Map<CardValue, number>()
+  for (const c of hand) counts.set(c.value, (counts.get(c.value) ?? 0) + 1)
+  return counts
 }
 
 export interface NaturalTractorGuardOptions {
@@ -132,11 +145,21 @@ export function dealWithGuard(
 ): GuardedDealResult {
   const maxAttempts = opts.maxAttempts ?? 200
   const trumps: Trump[] = [0, 1, 2, 3]
+  // 16 张牌力表只依赖 opts.levels，跨 attempt 完全不变 ——
+  // 预建一次（旧实现每次重洗都重建 16 张表，最多 200 次 × 16 = 3200 次 buildPower）
+  const powerTables: { mode: 0 | 1; level: LevelRank; trump: Trump; power: PowerTable }[] = []
+  for (const mode of [0, 1] as const) {
+    for (const level of opts.levels) {
+      for (const trump of trumps) {
+        powerTables.push({ mode, level, trump, power: buildPower(mode, level, trump) })
+      }
+    }
+  }
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const deck = newShuffledDeck(rng)
     const deal = dealFromDeck(deck, dealer)
-    if (!anyNaturalTractor(deal.hands, opts, buildPower, trumps)) {
+    if (!anyNaturalTractor(deal.hands, powerTables)) {
       return { ...deal, attempts: attempt, degraded: false }
     }
   }
@@ -149,18 +172,13 @@ export function dealWithGuard(
 
 function anyNaturalTractor(
   hands: readonly (readonly Card[])[],
-  opts: NaturalTractorGuardOptions,
-  buildPower: (mode: 0 | 1, levelRank: LevelRank, trump: Trump) => PowerTable,
-  trumps: readonly Trump[],
+  powerTables: readonly { mode: 0 | 1; level: LevelRank; trump: Trump; power: PowerTable }[],
 ): boolean {
-  for (const mode of [0, 1] as const) {
-    for (const level of opts.levels) {
-      for (const trump of trumps) {
-        const power = buildPower(mode, level, trump)
-        for (const hand of hands) {
-          if (hasConsecutivePair(hand, power)) return true
-        }
-      }
+  // counts（按牌值张数）与牌力表无关，每手牌只算一次、16 张表共享
+  const countsByHand = hands.map((hand) => countByValue(hand))
+  for (const { power } of powerTables) {
+    for (let i = 0; i < hands.length; i++) {
+      if (hasConsecutivePair(hands[i]!, power, countsByHand[i])) return true
     }
   }
   return false

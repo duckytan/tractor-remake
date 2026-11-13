@@ -21,7 +21,7 @@
  * 分层：只依赖 `core` 与 `app` 的类型，不碰 UI / 音频。
  */
 
-import { DECK_SIZE, suitSlotOf } from '@core'
+import { CARD_VALUE_COUNT, DECK_SIZE, suitSlotOf } from '@core'
 import type { Card, RuleContext, Seat, SuitSlot } from '@core'
 import { SEAT_COUNT } from '@core'
 import type { GameState } from '@app/state'
@@ -39,6 +39,16 @@ export interface Belief {
   /** 我的座位 */
   readonly seat: Seat
 }
+
+/**
+ * 全副牌的 id→Card 常量表（Card.value 只由 id 决定：value = id >> 1）。
+ * buildBelief 每次决策都要构造 unseen，旧实现逐张新建对象 —— 现在直接引用只读对象。
+ * Belief 的 unseen 只被读取（countBeating* / beatChance），复用安全。
+ */
+const ALL_CARDS_BY_ID: readonly Card[] = Array.from(
+  { length: DECK_SIZE },
+  (_, id) => ({ id, value: id >> 1 }),
+)
 
 /**
  * 从公开信息构造信念。
@@ -66,7 +76,7 @@ export function buildBelief(s: GameState, seat: Seat): Belief {
   // 底牌/已出的牌分散在别的字段，容易漏。
   for (let id = 0; id < DECK_SIZE; id++) {
     if (seen.has(id)) continue
-    unseen.push({ id, value: id >> 1 })
+    unseen.push(ALL_CARDS_BY_ID[id] as Card)
   }
 
   const handSizes: number[] = []
@@ -117,6 +127,16 @@ function countBeatingSingles(
   return k
 }
 
+/**
+ * 复用的牌值计数缓冲（value 0..53）。
+ *
+ * 旧实现每次调用都 `new Map` 统计 unseen（~80 张）里每个牌值出现几次；
+ * beatChance 在 L3 跟牌路径每个候选都可能调一次，60 候选 = 60 次 Map 分配。
+ * 牌值范围固定 0..53，改用模块级复用的 Uint8Array + fill(0) 清零，零分配。
+ * 该函数是纯同步计算、无回调、不会重入，复用缓冲安全。
+ */
+const pairValueCounts = new Uint8Array(CARD_VALUE_COUNT)
+
 /** 某槽里「能凑成一对且压过我」的未知点数（每项代表一对） */
 function countBeatingPairs(
   unseen: readonly Card[],
@@ -124,11 +144,11 @@ function countBeatingPairs(
   mySlot: SuitSlot,
   myPower: number,
 ): number {
-  const counts = new Map<number, number>()
-  for (const c of unseen) counts.set(c.value, (counts.get(c.value) ?? 0) + 1)
+  pairValueCounts.fill(0)
+  for (const c of unseen) pairValueCounts[c.value] = (pairValueCounts[c.value] as number) + 1
   let n = 0
-  for (const [value, cnt] of counts) {
-    if (cnt < 2) continue
+  for (let value = 0; value < CARD_VALUE_COUNT; value++) {
+    if ((pairValueCounts[value] as number) < 2) continue
     const slot = suitSlotOf(value, ctx.power)
     if (mySlot === 4) {
       if (slot === 4 && ctx.power.get(value) > myPower) n += 1

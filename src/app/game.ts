@@ -24,8 +24,10 @@ import { isSameTeam,
   calcBottomBonus,
   canCounter,
   canGuard,
+  cardScore,
   cardsScore,
   checkPlay,
+  checkPlayBatch,
   counterNeed,
   dealWithGuard,
   hasJokerPair,
@@ -34,6 +36,7 @@ import { isSameTeam,
   mulberry32,
   nextSeat,
   partnerOf,
+  preComputeHand,
   rankOfValue,
   resolveTrick,
   settleRound,
@@ -42,7 +45,7 @@ import { isSameTeam,
   teamOf,
   trickStanding,
 } from '@core'
-import type { Card, LevelRank, Play, PlayRejectReason, Rng, RuleContext, Seat, Suit, Trump } from '@core'
+import type { Card, LevelRank, Play, PlayAnalysis, PlayRejectReason, Rng, RuleContext, Seat, Suit, Trump } from '@core'
 import type { Action, GameState, TrickRecord } from './state'
 import { HUMAN_SEAT, STATE_VERSION, ctxOf, emptyState, seatToPlay } from './state'
 import type { Prefs } from './persist'
@@ -359,16 +362,20 @@ function unexaminedRevealedSuits(s: GameState): Trump[] {
 function aiGrabPick(s: GameState, seat: Seat): Trump | null {
   if (s.forcedNT) return null
   const hand = revealedHandOf(s, seat)
-  const suits = levelSuitsIn(hand, s).filter(
-    (suit) => hand.filter((c) => suitOfValue(c.value) === suit).length >= AI_GRAB_SUIT_MIN,
-  )
+  // 一次遍历按花色计数（旧实现 filter 谓词里算一遍、选最多时又 filter 一遍）
+  const suitCounts: number[] = [0, 0, 0, 0]
+  for (const c of hand) {
+    const suit = suitOfValue(c.value)
+    if (suit !== null) suitCounts[suit] = (suitCounts[suit] as number) + 1
+  }
+  const suits = levelSuitsIn(hand, s).filter((suit) => (suitCounts[suit as number] as number) >= AI_GRAB_SUIT_MIN)
   if (suits.length === 0) return null
   if (rngFor(s.seed, s.step + 2000).int(100) >= AI_GRAB_PCT) return null
   // 张数最多的一门（并列取编码小的，保证确定性）
   let best = suits[0] as Suit
   let bestN = -1
   for (const suit of suits) {
-    const n = hand.filter((c) => suitOfValue(c.value) === suit).length
+    const n = suitCounts[suit as number] as number
     if (n > bestN) {
       best = suit
       bestN = n
@@ -880,20 +887,24 @@ export function chooseBuryIds(s: GameState, seat: Seat): number[] {
   const countOf = new Map<number, number>()
   for (const c of hand) countOf.set(c.value, (countOf.get(c.value) ?? 0) + 1)
 
-  /** 垫它的意愿：越大越想垫 */
-  const willing = (c: Card): number => {
+  /** 垫它的意愿：越大越想垫（预计算到 Map，避免 sort 闭包内 O(n log n) 次重复调用） */
+  const willingMap = new Map<number, number>()
+  for (const c of hand) {
     let w = 1 - ctx.power.get(c.value) / 80
     const slot = slotOf(c)
     if (slot === 4) w -= 3 // 主牌基本不垫
     else if (c.value % 13 === 12) w -= 1.5 // 副牌 A
-    w -= cardsScore([c]) * pointWeight // 分牌按主牌数打折
+    w -= cardScore(c.value) * pointWeight // 分牌按主牌数打折（直接 cardScore，省掉 [c] 数组分配）
     if ((countOf.get(c.value) ?? 0) >= 2) w -= 0.6 // 别拆对子
     else w += 0.4 // 孤张优先垫
-    return w
+    willingMap.set(c.id, w)
   }
-
-  const scoreOf = (cards: readonly Card[]): number => cards.reduce((n, c) => n + willing(c), 0)
-  const byWilling = [...hand].sort((a, b) => willing(b) - willing(a))
+  const scoreOf = (cards: readonly Card[]): number => {
+    let n = 0
+    for (const c of cards) n += willingMap.get(c.id)!
+    return n
+  }
+  const byWilling = [...hand].sort((a, b) => willingMap.get(b.id)! - willingMap.get(a.id)!)
 
   // 方案 1：纯按意愿垫
   let best = byWilling.slice(0, need)
@@ -1097,7 +1108,8 @@ export function playCards(s: GameState, seat: Seat, cards: readonly Card[]): Gam
   if (!result.ok) return reject(s, result.reason, result.detail)
 
   const actual = result.cards
-  const analysis = analyze(actual, ctx)
+  // 复用 checkPlay 内部已算好的 analysis，避免重复调 analyze（残局搜索热路径）
+  const analysis = result.analysis
   const play: Play = { seat, cards: actual, analysis }
 
   const hands = s.hands.map((h) => h.slice())
@@ -1113,6 +1125,36 @@ export function playCards(s: GameState, seat: Seat, cards: readonly Card[]): Gam
     trick: { ...s.trick, plays: [...s.trick.plays, play] },
   }
 
+  if (next.trick.plays.length === 4) next = resolveCurrentTrick(next)
+  return next
+}
+
+/**
+ * 残局搜索专用的**免校验落子**：跳过 `checkPlay` / 空手牌 / 重复出牌防御，
+ * 直接把已验证的候选落到状态上。
+ *
+ * 调用前提（由 `solveEndgame` 保证）：候选刚从 `endgameCandidates` 出来 ——
+ * 那里已经用 `checkPlayBatch` 逐个验证过合法性（含甩牌裁剪，裁剪后的牌就是返回的 cards）。
+ * 落子前再跑一遍完整 `checkPlay`（含对手手牌校验 + analyze）纯属重复计算，
+ * 而搜索树每个节点都会调这里（节点预算 12 万）。
+ *
+ * 注意：`notice` / `lastReject` 语义只在人类对局路径上有意义，搜索里不需要；
+ * `hands` 的 slice 拷贝仍是必须的（搜索会回溯，各分支状态必须独立）。
+ */
+function applyPlayTrusted(s: GameState, seat: Seat, cards: readonly Card[], analysis: PlayAnalysis): GameState {
+  const play: Play = { seat, cards, analysis }
+  const hands = s.hands.map((h) => h.slice())
+  const usedIds = new Set(cards.map((c) => c.id))
+  hands[seat] = (hands[seat] as Card[]).filter((c) => !usedIds.has(c.id))
+
+  let next: GameState = {
+    ...withStep(s),
+    hands,
+    selected: [],
+    lastReject: null,
+    notice: null,
+    trick: { ...s.trick, plays: [...s.trick.plays, play] },
+  }
   if (next.trick.plays.length === 4) next = resolveCurrentTrick(next)
   return next
 }
@@ -1175,6 +1217,35 @@ function settleCurrentRound(s: GameState, lastWinnerAnalysis: ReturnType<typeof 
       ? `扣底 ×${bonus.multiplier}，底分 ${s.bottomScore} → 加 ${bonus.extra} 分`
       : null,
   }
+}
+
+/**
+ * 收集一墩的公共上下文：opponents / remainingSeats / trickPoints。
+ *
+ * `choosePlay` 和 `chooseSafePlay` 原来各写一遍相同的循环，
+ * 提取为共用函数后零行为变化、零分配增加。
+ */
+interface TrickCtx {
+  readonly opponents: Card[][]
+  readonly remainingSeats: Seat[]
+  readonly trickPoints: number
+}
+function trickContextOf(s: GameState, seat: Seat): TrickCtx {
+  const playedSeats = new Set<Seat>()
+  let trickPoints = 0
+  for (const p of s.trick.plays) {
+    playedSeats.add(p.seat)
+    // 复用 Play.analysis.score（analyze 时已内联计算），省掉 cardsScore 的逐张遍历
+    trickPoints += p.analysis.score
+  }
+  const opponents: Card[][] = []
+  const remainingSeats: Seat[] = []
+  for (let x = 0; x < 4; x++) {
+    if (x === seat) continue
+    opponents.push(s.hands[x] as readonly Card[] as Card[])
+    if (!playedSeats.has(x as Seat)) remainingSeats.push(x as Seat)
+  }
+  return { opponents, remainingSeats, trickPoints }
 }
 
 /**
@@ -1244,24 +1315,8 @@ export function choosePlay(
   // 复用上方已算好的 ctx，避免 currentWinnerOf 内部再 buildPowerTable 一次
   const currentWinner = currentWinnerOf(s, ctx)
 
-  // 单次遍历同时收集 opponents / remainingSeats / trickPoints，
-  // 避免旧实现的三次独立遍历：
-  //   · [0,1,2,3].filter(x => x !== seat).map(x => hands[x])  — opponents
-  //   · [0,1,2,3].filter(x => x !== seat && !plays.some(...)) — remainingSeats
-  //   · plays.reduce((n, p) => n + cardsScore(p.cards), 0)    — trickPoints
-  const playedSeats = new Set<Seat>()
-  let trickPoints = 0
-  for (const p of s.trick.plays) {
-    playedSeats.add(p.seat)
-    trickPoints += cardsScore(p.cards as readonly Card[])
-  }
-  const opponents: Card[][] = []
-  const remainingSeats: Seat[] = []
-  for (let x = 0; x < 4; x++) {
-    if (x === seat) continue
-    opponents.push(s.hands[x] as readonly Card[] as Card[])
-    if (!playedSeats.has(x as Seat)) remainingSeats.push(x as Seat)
-  }
+  // 单次遍历同时收集 opponents / remainingSeats / trickPoints
+  const { opponents, remainingSeats, trickPoints } = trickContextOf(s, seat)
 
   const decision = decide(
     {
@@ -1325,19 +1380,7 @@ export function chooseSafePlay(s: GameState, seat: Seat): readonly Card[] {
   const winner = currentWinnerOf(s, ctx)
 
   // 单次遍历同时收集 opponents / remainingSeats / trickPoints
-  const playedSeats = new Set<Seat>()
-  let trickPoints = 0
-  for (const p of s.trick.plays) {
-    playedSeats.add(p.seat)
-    trickPoints += cardsScore(p.cards as readonly Card[])
-  }
-  const opponents: Card[][] = []
-  const remainingSeats: Seat[] = []
-  for (let x = 0; x < 4; x++) {
-    if (x === seat) continue
-    opponents.push(s.hands[x] as readonly Card[] as Card[])
-    if (!playedSeats.has(x as Seat)) remainingSeats.push(x as Seat)
-  }
+  const { opponents, remainingSeats, trickPoints } = trickContextOf(s, seat)
 
   return safeHint({
     hand: s.hands[seat] as readonly Card[],
@@ -1783,7 +1826,12 @@ const ENDGAME_ABORT = Symbol('endgame-abort')
  * 但不能直接复用 —— 那是 policy 的私有函数，而 policy 反过来要调本文件，
  * 会形成双向依赖。这段只有十几行，重复的代价小于依赖环的代价。
  */
-function endgameCandidates(s: GameState, seat: Seat): Card[][] {
+interface EndgameCandidate {
+  readonly cards: readonly Card[]
+  readonly analysis: PlayAnalysis
+}
+
+function endgameCandidates(s: GameState, seat: Seat): EndgameCandidate[] {
   const ctx = ctxOf(s)
   // **手牌必须按规范序排**：`enumeratePlays` 的产出顺序跟着输入走，
   // 而搜索结果里有大量并列最优（同一分值的不同出法）。不规范化的话
@@ -1801,25 +1849,42 @@ function endgameCandidates(s: GameState, seat: Seat): Card[][] {
   const opponents = [0, 1, 2, 3]
     .filter((x) => x !== seat)
     .map((x) => s.hands[x] as readonly Card[])
-  const out: Card[][] = []
+  // 预算一次手牌结构（池 + 槽分析），所有候选复用 ——
+  // 旧实现每个候选都 new Map(hand...) 做 allFromHand 校验
+  const pre = preComputeHand(hand, ctx)
+  const batchOpts = {
+    ctx,
+    ...(leadPlay ? { lead: { cards: leadPlay.cards, analysis: leadPlay.analysis } } : {}),
+    opponents,
+    pre,
+  }
+  const out: EndgameCandidate[] = []
   for (const cards of raw) {
     if (cards.length === 0) continue
-    const r = checkPlay({
-      hand,
-      cards,
-      ctx,
-      ...(leadPlay ? { lead: { cards: leadPlay.cards, analysis: leadPlay.analysis } } : {}),
-      opponents,
-    })
-    if (r.ok) out.push(r.cards.slice())
+    const r = checkPlayBatch(cards, batchOpts)
+    if (r.ok) out.push({ cards: r.cards, analysis: r.analysis })
+    // r.cards 是 checkPlayBatch 产出的独立数组（adjusted 时是新数组），
+    // analysis 同样由内部 analyze 带出 —— solveEndgame 落子时直接复用
   }
   // 候选也按规范键排序：并列最优时永远取「值序列最小」的那一手
-  out.sort((x, y) => {
-    const kx = x.map((c) => c.value).sort((a, b) => a - b).join(',')
-    const ky = y.map((c) => c.value).sort((a, b) => a - b).join(',')
-    return kx < ky ? -1 : kx > ky ? 1 : 0
+  // Schwartzian transform：预计算每个候选的排序键，避免 sort 比较器内 O(n log n) 次 map+sort
+  const keyed: (EndgameCandidate & { readonly key: number[] })[] = new Array(out.length)
+  for (let i = 0; i < out.length; i++) {
+    const { cards, analysis } = out[i]!
+    const key = new Array(cards.length)
+    for (let j = 0; j < cards.length; j++) key[j] = cards[j]!.value
+    key.sort((a, b) => a - b)
+    keyed[i] = { cards, analysis, key }
+  }
+  keyed.sort((a, b) => {
+    const len = Math.min(a.key.length, b.key.length)
+    for (let i = 0; i < len; i++) {
+      const d = a.key[i]! - b.key[i]!
+      if (d !== 0) return d
+    }
+    return a.key.length - b.key.length
   })
-  return out
+  return keyed
 }
 
 /**
@@ -1834,7 +1899,7 @@ export function solveEndgame(
   seat: Seat,
   /** 是否允许用四家真实手牌（默认跟玩家设置走；标定脚本可以强制） */
   allowPeek: boolean = s.aiPeekHands,
-): Card[] | null {
+): readonly Card[] | null {
   if (s.phase !== 'play') return null
   if (seatToPlay(s) !== seat) return null
   // 搜索要用四家的真实手牌 ⇒ 只在「读牌」开着时启用（否则等于偷偷用隐藏信息）
@@ -1866,9 +1931,10 @@ export function solveEndgame(
     let best = maximizing ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY
     let a = alpha
     let b = beta
-    for (const cards of cands) {
-      const next = playCards(st, acting, cards)
-      if (next === st) continue // 被规则拒绝
+    for (const cand of cands) {
+      // 候选已在 endgameCandidates 里验证过 ⇒ 走免校验落子，
+      // 省掉每个节点的二次 checkPlay + analyze（旧实现同手牌算两遍）
+      const next = applyPlayTrusted(st, acting, cand.cards, cand.analysis)
       const v = search(next, a, b, depth + 1)
       if (maximizing) {
         if (v > best) best = v
@@ -1886,16 +1952,15 @@ export function solveEndgame(
   const rootCands = endgameCandidates(s, seat)
   if (rootCands.length === 0) return null
 
-  let bestCards: Card[] | null = null
+  let bestCards: readonly Card[] | null = null
   let bestVal = Number.NEGATIVE_INFINITY
   try {
-    for (const cards of rootCands) {
-      const next = playCards(s, seat, cards)
-      if (next === s) continue
+    for (const cand of rootCands) {
+      const next = applyPlayTrusted(s, seat, cand.cards, cand.analysis)
       const v = search(next, bestVal, Number.POSITIVE_INFINITY, 1)
       if (v > bestVal) {
         bestVal = v
-        bestCards = cards
+        bestCards = cand.cards
       }
     }
   } catch (e) {

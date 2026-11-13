@@ -90,13 +90,16 @@ export function levelRankToRankIndex(lr: LevelRank): Rank | null {
 /**
  * 单张牌的分值。5 → 5 分，10 → 10 分，K → 10 分，其余 0。
  * 两副牌 108 张合计 200 分。
+ *
+ * 内联实现（不调 rankOfValue / isJokerValue）：`v >= 52` 是王，
+ * `v % 13` 是点数（0=A, 1=2, ..., 3=5, 8=10, 11=K）。
+ * 消除三层函数调用，与 analyze.ts / policy.ts 的内联口径一致。
  */
 export function cardScore(v: CardValue): number {
-  const r = rankOfValue(v)
-  if (r === null) return 0 // 王不计分
+  if (v >= 52) return 0 // 王不计分
+  const r = v % 13
   if (r === 3) return 5 // 点数 5
-  if (r === 8) return 10 // 点数 10
-  if (r === 11) return 10 // 点数 K
+  if (r === 8 || r === 11) return 10 // 点数 10 / K
   return 0
 }
 

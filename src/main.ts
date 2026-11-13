@@ -132,7 +132,9 @@ function step(a: Action): void {
   }
   if (a.type === 'playSelected' && prev.phase === 'play' && state !== prev) {
     const hand = prev.hands[HUMAN_SEAT] as readonly Card[]
-    const picked = hand.filter((c) => prev.selected.includes(c.id))
+    // Set 查找替代 O(hand × selected) 的 includes 嵌套扫（与 game.ts 的 playSelected 同口径）
+    const selectedIds = new Set(prev.selected)
+    const picked = hand.filter((c) => selectedIds.has(c.id))
     if (picked.length > 0) {
       noteHumanPlay(prev, picked, choosePlay(prev, HUMAN_SEAT, 3, { peek: true }), hintUsedThisTurn, hintCardsThisTurn)
     }
@@ -236,19 +238,36 @@ function scheduleDeal(): void {
 }
 
 /**
- * 上次成功写入 localStorage 的 prefs 序列化串。
+ * 上次成功写入 localStorage 的 prefs 快照。
  *
  * 发牌动画期间 afterChange 每 55ms 触发一次（revealTick），而 prefs 的
  * 九个字段在此期间完全相同 —— 每 tick 重写一遍 localStorage 纯浪费。
- * 首调用时缓存为空串，必然与首份 prefs 不同 ⇒ 首次一定落盘。
+ * 逐字段浅比较替代 JSON.stringify（Prefs 全是一等标量 + ruleConfig 对象）：
+ * 旧实现每 tick 都要 stringify 整份 prefs（20 字段）只为和上次比较。
+ * 首调用时缓存为 null，必然与首份 prefs 不同 ⇒ 首次一定落盘。
  */
-let lastPrefsSerialized = ''
+let lastPrefs: Prefs | null = null
+
+/** 逐字段浅比较两份 prefs（ruleConfig 逐键比较；两边字段集由编译期护栏保证一致） */
+function prefsEqual(a: Prefs, b: Prefs): boolean {
+  for (const k of Object.keys(a) as (keyof Prefs)[]) {
+    if (k === 'ruleConfig') {
+      const ra = a.ruleConfig as unknown as Record<string, unknown>
+      const rb = b.ruleConfig as unknown as Record<string, unknown>
+      for (const rk of Object.keys(ra)) {
+        if (ra[rk] !== rb[rk]) return false
+      }
+      continue
+    }
+    if (a[k] !== b[k]) return false
+  }
+  return true
+}
 
 /** prefs 内容与上次成功写入一致时跳过写盘（state 仍然每次全写） */
 function savePrefsIfChanged(p: Prefs): void {
-  const serialized = JSON.stringify(p)
-  if (serialized === lastPrefsSerialized) return
-  lastPrefsSerialized = serialized
+  if (lastPrefs !== null && prefsEqual(p, lastPrefs)) return
+  lastPrefs = p
   savePrefs(p)
 }
 

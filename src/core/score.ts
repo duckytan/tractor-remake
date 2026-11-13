@@ -4,7 +4,6 @@
  */
 
 import type { PlayAnalysis } from './analyze'
-import { cardsScore } from './cards'
 import type { Card } from './types'
 
 /** 扣底倍数：单张 2 / 对子 4 / 拖拉机 8（ADR-006） */
@@ -41,6 +40,11 @@ export function calcBottomBonus(
 /** 一墩里分数牌的张数（用于「本墩有几分」提示） */
 export function countScoreCards(cards: readonly Card[]): number {
   let n = 0
-  for (const c of cards) if (cardsScore([c]) > 0) n += 1
+  for (const c of cards) {
+    // 内联 cardScore 判定，避免逐张分配 [c] 临时数组再调 cardsScore
+    if (c.value >= 52) continue
+    const r = c.value % 13
+    if (r === 3 || r === 8 || r === 11) n += 1
+  }
   return n
 }
