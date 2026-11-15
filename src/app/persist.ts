@@ -15,6 +15,7 @@ import {
   DEAL_TOTAL,
   DECK_SIZE,
   DEFAULT_RULE_CONFIG,
+  RULE_CONFIG_KEYS,
   SEAT_COUNT,
   analyze,
 } from '@core'
@@ -125,20 +126,17 @@ function sanitizeConfig(o: unknown, legacy: boolean): RuleConfig {
   const r = o as Record<string, unknown>
   const bool = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : d)
   const d = DEFAULT_RULE_CONFIG
-  return {
-    allowSelfCounter: bool(r.allowSelfCounter, d.allowSelfCounter),
-    // v1.2.2 把 twoAsPermanent 的默认值从 false 改成 true（对齐原版）。
-    // 旧档里的 false 大概率只是旧默认值的镜像；无法区分它是不是玩家的显式选择，
-    // 故按镜像处理（可接受的一次性取舍）⇒ 升级时改用新默认。
-    // 新档（带 prefsVersion）则完全尊重存档值：玩家自己关掉的不能给他打开。
-    twoAsPermanent: legacy ? d.twoAsPermanent : bool(r.twoAsPermanent, d.twoAsPermanent),
-    allowPartnerGuard: bool(r.allowPartnerGuard, d.allowPartnerGuard),
-    allowCounterNT: bool(r.allowCounterNT, d.allowCounterNT),
-    guardScoreLevels: bool(r.guardScoreLevels, d.guardScoreLevels),
-    guardJack: bool(r.guardJack, d.guardJack),
-    guardAce: bool(r.guardAce, d.guardAce),
-    guardKingLevel: bool(r.guardKingLevel, d.guardKingLevel),
-  }
+  // 逐字段走 RULE_CONFIG_KEYS：与下面的 isRuleConfig 共用同一份清单，
+  // 往 RuleConfig 加字段时不会漏掉（编译期护栏见 core/types.ts）。
+  // 偏好侧是「宽容」口径：单个字段坏了只回落该字段的默认值，不让玩家重开一局。
+  const out = { ...d } as Record<keyof RuleConfig, boolean>
+  for (const k of RULE_CONFIG_KEYS) out[k] = bool(r[k], d[k])
+  // v1.2.2 把 twoAsPermanent 的默认值从 false 改成 true（对齐原版）。
+  // 旧档里的 false 大概率只是旧默认值的镜像；无法区分它是不是玩家的显式选择，
+  // 故按镜像处理（可接受的一次性取舍）⇒ 升级时改用新默认。
+  // 新档（带 prefsVersion）则完全尊重存档值：玩家自己关掉的不能给他打开。
+  if (legacy) out.twoAsPermanent = d.twoAsPermanent
+  return out
 }
 
 export function loadPrefs(): Prefs {
@@ -281,6 +279,18 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const isInt = (v: unknown): v is number => isNum(v) && Number.isInteger(v)
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean'
+/**
+ * 对局存档里的 `RuleConfig`：**8 个开关必须逐字段是 boolean**（KN-27）。
+ *
+ * 与偏好侧 `sanitizeConfig` 的区别：那边是「宽容」（坏一个字段回落一个默认值，
+ * 玩家不至于重开一局）；这里是「严格」（整份丢弃）。因为对局存档的 `config`
+ * 是**本局正在生效的规则** —— `ctxOf` 拿 `twoAsPermanent` 决定牌力表 mode、
+ * `counter.ts` / `settle.ts` 拿其余开关做 `if (!config.X)` 判断，
+ * 任何非 boolean 值都会被 truthy/falsy 规则静默解释成另一套规则，
+ * 比「起不来」更难发现。缺字段也必须拒绝：`undefined` 同样会被当 false。
+ */
+const isRuleConfig = (v: unknown): v is RuleConfig =>
+  isObj(v) && RULE_CONFIG_KEYS.every((k) => isBool((v as Record<string, unknown>)[k]))
 const isSeat = (v: unknown): v is Seat => v === 0 || v === 1 || v === 2 || v === 3
 const isSeatOrNull = (v: unknown): v is Seat | null => v === null || isSeat(v)
 const isTrump = (v: unknown): v is Trump => v === 0 || v === 1 || v === 2 || v === 3 || v === 'NT'
@@ -380,7 +390,11 @@ export function loadStateDetailed(): LoadResult {
     return { state: null, issue: 'corrupt' }
   }
   if (!isBool(o.forcedNT)) return { state: null, issue: 'corrupt' }
-  if (!isObj(o.config) || !isObj(o.pendingConfig)) return { state: null, issue: 'corrupt' }
+  // 规则开关：逐字段校验（KN-27）。只验 isObj 会让 8 个开关全裸奔，
+  // 非 boolean 值被 ctxOf / counter / settle 当 truthy 解释 ⇒ 本局规则被静默改写。
+  if (!isRuleConfig(o.config) || !isRuleConfig(o.pendingConfig)) {
+    return { state: null, issue: 'corrupt' }
+  }
 
   if (!isInt(o.seed) || !isInt(o.step) || !isInt(o.round) || o.round < 1) {
     return { state: null, issue: 'corrupt' }

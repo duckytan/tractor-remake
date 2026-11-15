@@ -91,6 +91,37 @@ export const DEFAULT_RULE_CONFIG: RuleConfig = {
   guardKingLevel: true,
 }
 
+/**
+ * 规则开关字段清单 —— **单一可信来源**（v1.3.58 / KN-27）。
+ *
+ * 为什么要有它：`RuleConfig` 的字段被三处各自手写枚举，任何一处漏加字段都会
+ * 悄悄分叉 —— 这正是 KN-24（`PREF_FIELDS` 漏 4 项导致悔牌吞设置）、
+ * KN-26（写侧手写 `Prefs` 字面量）的成因。消费方：
+ *   - `app/persist.ts :: isRuleConfig` —— 对局存档 `config` / `pendingConfig` 逐字段校验；
+ *   - `app/persist.ts :: sanitizeConfig` —— 偏好存档 `ruleConfig` 逐字段清洗；
+ *   - `ui/render.ts :: RULE_LABEL` 已有 `Record<keyof RuleConfig, string>` 护栏，不依赖本清单。
+ *
+ * `satisfies` 保证清单里不出现 `RuleConfig` 之外的键；下面的 `RuleConfigKeysCoverRuleConfig`
+ * 反过来保证 `RuleConfig` 的每个键都在清单里 —— 两侧都锁死，加字段忘同步 ⇒ `tsc` 直接红。
+ */
+export const RULE_CONFIG_KEYS = [
+  'allowSelfCounter',
+  'twoAsPermanent',
+  'allowPartnerGuard',
+  'allowCounterNT',
+  'guardScoreLevels',
+  'guardJack',
+  'guardAce',
+  'guardKingLevel',
+] as const satisfies readonly (keyof RuleConfig)[]
+
+/** 只有 `T = never` 才合法 —— 把「集合差为空」变成一条真正的编译错误（同 game.ts 的护栏） */
+type AssertNever<T extends never> = T
+/** 若下面这行报错：`RuleConfig` 加了字段但没同步进 `RULE_CONFIG_KEYS` */
+export type RuleConfigKeysCoverRuleConfig = AssertNever<
+  Exclude<keyof RuleConfig, (typeof RULE_CONFIG_KEYS)[number]>
+>
+
 /** 规则上下文：所有需要判断大小/归属的函数都接收它 */
 export interface RuleContext {
   readonly power: PowerTable

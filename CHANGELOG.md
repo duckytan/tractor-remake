@@ -8,6 +8,28 @@
 
 ---
 
+## [1.3.58] - 2026-11-15
+
+> **对局存档的规则开关补上字段级校验** —— 此前 `config` / `pendingConfig`
+> 只验「是对象」，8 个规则开关全部裸奔。
+
+### 修复 · 存档里的规则开关非 boolean 会被静默解释成另一套规则（KN-27）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `loadStateDetailed` 文件头宣称「声明式字段校验 + 不合法整份丢弃」，数字字段一律要求 `Number.isFinite`、牌 id 全局唯一、`Play.analysis` 重算 —— 但对 `config` / `pendingConfig` 只做了 `isObj` 一个判断。存档里任一开关被写成字符串 / `null` / 数字 / 对象，或缺字段，都会被原样放行 |
+| 风险 | `config` 是**本局正在生效的规则**：`ctxOf` 拿 `twoAsPermanent` 决定牌力表 `mode`，`core/counter.ts` 与 `core/settle.ts` 拿其余开关做 `if (!config.X)` 判定。字符串 `'false'` 是 truthy ⇒ 本该「关」的开关被当成「开」，规则被静默改写，且比「起不来」更难发现；`pendingConfig` 还会被设置面板直接渲染成 `aria-checked` |
+| 修复 | `core/types.ts` 新增 `RULE_CONFIG_KEYS` **单一可信清单** + 编译期护栏 `RuleConfigKeysCoverRuleConfig`（`RuleConfig` 加字段忘了同步清单 ⇒ `tsc` 直接红，同 KN-24 / KN-26 的手法）。`persist.ts` 新增 `isRuleConfig`（8 个开关逐字段必须是 boolean，严格整份丢弃）；偏好侧 `sanitizeConfig` 改为走同一份清单，继续保留「坏一个字段回落一个默认值」的宽容口径，两处不再各手写一份清单 |
+| 效果 | 任意开关非法 / 缺字段 ⇒ 整份存档判 `corrupt`；合法存档（含玩家显式关掉的 `false`）往返逐字段不变。JS 150.46 → 150.29 kB（gzip 53.98 → 53.91 kB，循环改写让产物略减） |
+
+### 验证
+
+- 60 个测试文件 / **659 例**全通过（新增 `tests/app/ruleConfigValidation.test.ts` 23 例，修复前探针 19 例变红并打印出被放行的坏状态）
+- `typecheck` / `build` 通过
+- 浏览器端到端 19/19，零 console error（覆盖刷新恢复存档）
+
+---
+
 ## [1.3.57] - 2026-11-14
 
 > **提示默认风格切换为「最强」** —— 基于第 3 批真实对局的逐手推演证据。
