@@ -19,7 +19,7 @@ import {
   SEAT_COUNT,
   analyze,
 } from '@core'
-import type { Card, LevelRank, Play, Seat, Trump } from '@core'
+import type { Card, LevelRank, Play, Seat, SettleResult, Team, Trump } from '@core'
 import type { RuleConfig } from '@core'
 import type { AiLevel } from '@ai/policy'
 
@@ -292,10 +292,66 @@ const isBool = (v: unknown): v is boolean => typeof v === 'boolean'
 const isRuleConfig = (v: unknown): v is RuleConfig =>
   isObj(v) && RULE_CONFIG_KEYS.every((k) => isBool((v as Record<string, unknown>)[k]))
 const isSeat = (v: unknown): v is Seat => v === 0 || v === 1 || v === 2 || v === 3
-const isSeatOrNull = (v: unknown): v is Seat | null => v === null || isSeat(v)
-const isTrump = (v: unknown): v is Trump => v === 0 || v === 1 || v === 2 || v === 3 || v === 'NT'
+const isTeam = (v: unknown): v is Team => v === 0 || v === 1
 /** `LevelRank` 只有 1..13 与 18（打王级）—— **没有 14~17** */
 const isLevelRank = (v: unknown): v is LevelRank => isInt(v) && ((v >= 1 && v <= 13) || v === 18)
+
+/**
+ * `SettleResult` 的可选字段 —— 由类型自动推导（`winnerTeam?` / `guardLevel?`）。
+ * 给 `SettleResult` 加可选字段时这里自动跟上，无需手改。
+ */
+type SettleOptionalKeys = {
+  [K in keyof SettleResult]-?: undefined extends SettleResult[K] ? K : never
+}[keyof SettleResult]
+type SettleRequiredKeys = Exclude<keyof SettleResult, SettleOptionalKeys>
+
+/**
+ * `SettleResult` 每个字段的校验器 —— **单一可信清单 + 编译期护栏**（KN-28）。
+ *
+ * 两个 map 的类型标注都是 `keyof SettleResult` 的完备映射：
+ * 给 `SettleResult` 加字段却忘了在这里加校验器 ⇒ `tsc` 直接红（缺属性）。
+ * 这样避免 KN-24 / KN-26 / KN-27 那种「清单和类型各自手写、再次分叉」。
+ */
+const SETTLE_REQUIRED_CHECKS: {
+  readonly [K in SettleRequiredKeys]: (v: unknown) => boolean
+} = {
+  defenderScore: (v) => isInt(v) && v >= 0,
+  levelUpTeam: isTeam,
+  levels: (v) => isInt(v) && v >= 0,
+  actualLevels: (v) => isInt(v) && v >= 0,
+  newLevels: (v) => {
+    if (!isObj(v)) return false
+    const lv = v as Record<string, unknown>
+    return isLevelRank(lv.a) && isLevelRank(lv.b)
+  },
+  dealerChanged: isBool,
+  newDealer: isSeat,
+  gameOver: isBool,
+}
+const SETTLE_OPTIONAL_CHECKS: {
+  readonly [K in SettleOptionalKeys]: (v: unknown) => boolean
+} = {
+  winnerTeam: isTeam,
+  guardLevel: isLevelRank,
+}
+
+/**
+ * 结算结果字段级校验（KN-28）。此前 `lastSettle` 经 `...o` 原样进运行时，一个字段没验 ——
+ * 但 `nextRound` 拿它的 `newLevels` / `newDealer` 定下一局的级牌与庄家，
+ * `settlePanel` 直接解引用 `newLevels.a` / `newLevels.b`，三处跨局记录器也读它。
+ * 坏值（newLevels=null / newDealer=9 / a=99）会白屏或静默污染下一局。
+ */
+const isSettleResult = (v: unknown): v is SettleResult =>
+  isObj(v) &&
+  (Object.keys(SETTLE_REQUIRED_CHECKS) as readonly SettleRequiredKeys[]).every((k) =>
+    SETTLE_REQUIRED_CHECKS[k]((v as Record<string, unknown>)[k]),
+  ) &&
+  (Object.keys(SETTLE_OPTIONAL_CHECKS) as readonly SettleOptionalKeys[]).every((k) => {
+    const val = (v as Record<string, unknown>)[k]
+    return val === undefined || SETTLE_OPTIONAL_CHECKS[k](val)
+  })
+const isSeatOrNull = (v: unknown): v is Seat | null => v === null || isSeat(v)
+const isTrump = (v: unknown): v is Trump => v === 0 || v === 1 || v === 2 || v === 3 || v === 'NT'
 
 const isCard = (v: unknown): v is Card =>
   isObj(v) &&
@@ -393,6 +449,12 @@ export function loadStateDetailed(): LoadResult {
   // 规则开关：逐字段校验（KN-27）。只验 isObj 会让 8 个开关全裸奔，
   // 非 boolean 值被 ctxOf / counter / settle 当 truthy 解释 ⇒ 本局规则被静默改写。
   if (!isRuleConfig(o.config) || !isRuleConfig(o.pendingConfig)) {
+    return { state: null, issue: 'corrupt' }
+  }
+  // 结算结果：settle/over 阶段必须有一份逐字段合法的 SettleResult（KN-28），
+  // 其余阶段必须是 null / 缺省。此前它整个裸奔，坏值会污染下一局或让结算页白屏。
+  const settlePhase = o.phase === 'settle' || o.phase === 'over'
+  if (settlePhase ? !isSettleResult(o.lastSettle) : o.lastSettle != null) {
     return { state: null, issue: 'corrupt' }
   }
 

@@ -8,6 +8,29 @@
 
 ---
 
+## [1.3.59] - 2026-11-17
+
+> **对局存档的结算结果补上字段级校验** —— 此前 `lastSettle` 一个字段都没验，
+> 坏档会污染下一局级牌/庄家或让结算页白屏。
+
+### 修复 · 结算结果 `lastSettle` 裸奔（KN-28）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `loadStateDetailed` 文件头宣称「声明式字段校验 + 不合法整份丢弃」，数字字段要求 `Number.isFinite`、牌 id 全局唯一、`config`/`pendingConfig` 逐字段 boolean（KN-27）—— 但 `lastSettle`（`SettleResult \| null`）经 `...o` 原样进运行时，10 个字段一个都没验 |
+| 风险 | 它不是「展示用软字段」：`nextRound` 拿 `settle.newLevels` / `settle.newDealer` 定下一局的级牌与庄家；`settlePanel` 直接解引用 `newLevels.a` / `newLevels.b`；`stats` / `roundLog` / `settleRecord` 三处跨局记录器也读它。存档里 `newLevels=null` ⇒ 结算页 TypeError 白屏；`newDealer=9` / `newLevels.a=99` ⇒ 下一局状态被静默污染，且因非法级牌/座位在下一份存档校验时整份丢弃，玩家进度直接丢失 |
+| 修复 | `persist.ts` 新增 `isSettleResult`：8 个必填字段（数字/队伍/座位/布尔/嵌套 newLevels）逐一校验，2 个可选字段（`winnerTeam` / `guardLevel`）出现时也必须合法；`settle/over` 阶段必须有一份合法结果，其余阶段必须为 null。`SettleResult` 的键由 `keyof` **自动推导**成两个完备校验表 —— 给类型加字段忘加校验器 ⇒ `tsc` 直接红（已实测：加一个探针字段触发 TS2741），不重蹈 KN-24/26/27 的清单分叉 |
+| 效果 | 合法结算存档逐字段往返不变；任意字段非法 / 缺字段 / 阶段与结果不匹配 ⇒ 整份存档判 `corrupt`。JS 150.29 → 150.75 kB（gzip 53.91 → 54.10 kB，来自校验器） |
+
+### 验证
+
+- 61 个测试文件 / **674 例**全通过（新增 `tests/app/settleValidation.test.ts` 15 例，修复前探针 12 例变红并证明 `settlePanel` 崩溃）
+- `typecheck` / `build` 通过
+- 浏览器端到端 19/19，零 console error
+- coverage 门槛通过（statements 74.17 / branches 90.95 / functions 81.38）
+
+---
+
 ## [1.3.58] - 2026-11-15
 
 > **对局存档的规则开关补上字段级校验** —— 此前 `config` / `pendingConfig`
