@@ -15,7 +15,8 @@
  * 与 `stats.ts` 分开：那个只统计胜负（几行数字），这个是完整复盘数据。
  */
 
-import type { LevelRank, RuleConfig, Seat, Trump } from '@core'
+import { CARD_VALUE_COUNT, RULE_CONFIG_KEYS } from '@core'
+import type { LevelRank, RuleConfig, Seat, Team, Trump } from '@core'
 import type { GameState } from './state'
 import { HUMAN_SEAT } from './state'
 
@@ -108,6 +109,128 @@ interface Store {
   readonly rounds: readonly RoundLog[]
 }
 
+/* ============================================================
+   日志档的字段级校验（KN-29）
+   ------------------------------------------------------------
+   与 `persist.ts`（对局存档）、`stats.ts`（战绩）同属防篡改 / 防损坏档这条防线。
+   `initRoundLog` 此前只做 `Array.isArray(o.rounds)`，数组元素一个字段都没验 ——
+   而 `render.ts :: logPanel` 直接读 `prev.tricks.length` / `prev.settle.defenderScore`，
+   `view.ts :: loggedTrickView` 直接 `r.tricks.map(...)`：一条被篡改的日志档
+   就能让「对局记录」面板白屏。
+
+   口径照 KN-28（`isSettleResult`）：**逐层递归 + 单一可信校验表 + 编译期护栏**。
+   每个对象类型的校验表用 `keyof T` 完备映射标注 —— 给类型加字段却忘了加校验器
+   ⇒ `tsc` 直接红（缺属性），不会再出现「清单和类型各自手写、再次分叉」。
+   坏条目整条丢弃（同 stats.ts），不让一条脏记录拖垮整个面板。
+   ============================================================ */
+
+type OptionalKeysOf<T> = {
+  [K in keyof T]-?: undefined extends T[K] ? K : never
+}[keyof T]
+type RequiredKeysOf<T> = Exclude<keyof T, OptionalKeysOf<T>>
+
+/** 泛型校验器工厂：两个校验表都必须是 `keyof T` 的完备映射（缺字段 ⇒ tsc 红） */
+function objectCheck<T extends object>(
+  required: { readonly [K in RequiredKeysOf<T>]: (v: unknown) => boolean },
+  optional: { readonly [K in OptionalKeysOf<T>]: (v: unknown) => boolean },
+): (v: unknown) => v is T {
+  return (v: unknown): v is T =>
+    isObj(v) &&
+    (Object.keys(required) as unknown as readonly (keyof T)[]).every((k) =>
+      required[k as RequiredKeysOf<T>]((v as Record<string, unknown>)[k as string]),
+    ) &&
+    (Object.keys(optional) as unknown as readonly (keyof T)[]).every((k) => {
+      const val = (v as Record<string, unknown>)[k as string]
+      return val === undefined || optional[k as OptionalKeysOf<T>](val)
+    })
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const isInt = (v: unknown): v is number => isNum(v) && Number.isInteger(v)
+const isBool = (v: unknown): v is boolean => typeof v === 'boolean'
+const isStr = (v: unknown): v is string => typeof v === 'string'
+const isSeat = (v: unknown): v is Seat => v === 0 || v === 1 || v === 2 || v === 3
+const isTeam = (v: unknown): v is Team => v === 0 || v === 1
+/** `LevelRank` 只有 1..13 与 18（打王级） */
+const isLevelRank = (v: unknown): v is LevelRank => isInt(v) && ((v >= 1 && v <= 13) || v === 18)
+const isTrump = (v: unknown): v is Trump => v === 0 || v === 1 || v === 2 || v === 3 || v === 'NT'
+const isCardValue = (v: unknown): v is number => isInt(v) && v >= 0 && v < CARD_VALUE_COUNT
+const isCardValueArray = (v: unknown): v is readonly number[] =>
+  Array.isArray(v) && v.every(isCardValue)
+/** `config` 与对局存档共用 `RULE_CONFIG_KEYS` 单一清单（KN-27） */
+const isRuleConfig = (v: unknown): v is RuleConfig =>
+  isObj(v) && RULE_CONFIG_KEYS.every((k) => isBool((v as Record<string, unknown>)[k]))
+
+/** `[座位, 牌值数组]` —— 每墩 plays 的一个出牌项 */
+const isLoggedPlay = (v: unknown): v is readonly [Seat, readonly number[]] =>
+  Array.isArray(v) && v.length === 2 && isSeat(v[0]) && isCardValueArray(v[1])
+
+const isLoggedTrick = objectCheck<LoggedTrick>(
+  {
+    leader: isSeat,
+    plays: (v) => Array.isArray(v) && v.every(isLoggedPlay),
+    winner: isSeat,
+    score: isNum,
+  },
+  {},
+)
+const isLoggedHumanPlay = objectCheck<LoggedHumanPlay>(
+  {
+    trick: isInt,
+    cards: isCardValueArray,
+    ai: isCardValueArray,
+    hint: isBool,
+  },
+  { hintCards: isCardValueArray },
+)
+const isLoggedAiNote = objectCheck<LoggedAiNote>(
+  { trick: isInt, seat: isSeat, text: isStr, detail: isStr },
+  {},
+)
+
+/**
+ * 单条日志的字段级校验（递归到 5 层嵌套）。
+ * 只要求日志**实际会用到**的字段合法：可选字段（hintCards / aiNotes）允许缺席，
+ * 但一旦出现就必须合法。
+ */
+const isRoundLog = objectCheck<RoundLog>(
+  {
+    v: (x) => x === 1,
+    app: isStr,
+    ts: isNum,
+    seed: isNum,
+    round: (x) => isInt(x) && x >= 0,
+    config: isRuleConfig,
+    levelRank: isLevelRank,
+    trump: isTrump,
+    forcedNT: isBool,
+    dealer: isSeat,
+    ai: objectCheck<RoundLog['ai']>(
+      { partner: isNum, opponent: isNum, auto: isNum, peek: isBool, hintStyle: isStr },
+      {},
+    ),
+    hands: (v) => Array.isArray(v) && v.every(isCardValueArray),
+    bottom: isCardValueArray,
+    tricks: (v) => Array.isArray(v) && v.every(isLoggedTrick),
+    human: (v) => Array.isArray(v) && v.every(isLoggedHumanPlay),
+    settle: objectCheck<RoundLog['settle']>(
+      {
+        defenderScore: isNum,
+        levels: isInt,
+        actualLevels: isInt,
+        dealerChanged: isBool,
+        newDealer: isSeat,
+        gameOver: isBool,
+        levelUpTeam: isTeam,
+      },
+      {},
+    ),
+  },
+  { aiNotes: (v) => Array.isArray(v) && v.every(isLoggedAiNote) },
+)
+
 let cache: Store = { rounds: [] }
 /** 当前这一局的开局快照（进入 play/bury 时抓，结算时合并） */
 let pending: {
@@ -128,7 +251,10 @@ export function initRoundLog(): void {
       return
     }
     const o = JSON.parse(raw) as { rounds?: unknown }
-    cache = { rounds: Array.isArray(o.rounds) ? (o.rounds as RoundLog[]) : [] }
+    // 逐条校验：坏条目整条丢弃（同 stats.ts），不让一条脏记录拖垮「记录」面板（KN-29）
+    cache = {
+      rounds: Array.isArray(o.rounds) ? o.rounds.filter((r: unknown): r is RoundLog => isRoundLog(r)) : [],
+    }
   } catch {
     cache = { rounds: [] }
   }

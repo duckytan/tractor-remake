@@ -8,6 +8,29 @@
 
 ---
 
+## [1.3.60] - 2026-11-20
+
+> **对局日志档补上元素级字段校验** —— 此前 `tractor.logs.v1` 只验「是数组」，
+> 里面的 `RoundLog` 五层嵌套一个字段都没验，一条被篡改的日志档就能让「对局记录」面板白屏。
+
+### 修复 · 日志档元素裸奔（KN-29）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `initRoundLog` 读日志档时只做 `Array.isArray(o.rounds)`，数组里每条 `RoundLog`（`hands` / `tricks[].plays` / `human` / `aiNotes` / `settle` 五层嵌套）一个字段都没验 —— 与 KN-27（`config`）、KN-28（`lastSettle`）是同一条防线的最后一格 |
+| 风险 | `render.ts :: logPanel` 直接读 `prev.tricks.length` / `prev.settle.defenderScore`，`view.ts :: loggedTrickView` 直接 `r.tricks.map(...)`。一份被篡改 / 损坏的日志档（尤其是导入的分析档）让「对局记录」面板 TypeError 白屏 |
+| 修复 | `roundLog.ts` 新增递归校验器 `isRoundLog`，逐层校验 5 层嵌套 + 顶层标量 / config（复用 `RULE_CONFIG_KEYS`）/ ai / settle；用泛型 `objectCheck<T>` + 类型推导的完备校验表（必填 / 可选键由 `keyof T` 自动差分）—— 给类型加字段忘加校验器 ⇒ `tsc` 直接红（已实测：加探针字段触发 TS2741）。可选字段（`hintCards` / `aiNotes`）允许缺席但出现即校验；`initRoundLog` 坏条目整条丢弃（同 `stats.ts`），好条目照常保留 |
+| 效果 | 合法档（含老日志缺可选字段、无开局快照）逐字段往返不变；39 种坏条目逐一丢弃且互不拖累。JS 150.78 → 152.06 kB（gzip 54.12 → 54.53 kB，来自递归校验器） |
+
+### 验证
+
+- 62 个测试文件 / **719 例**全通过（新增 `tests/app/roundLogValidation.test.ts` 45 例，修复前 39 例变红并证明坏 `tricks` / `settle` 让复盘视图抛异常）
+- `typecheck` / `build` 通过
+- 浏览器端到端 19/19，零 console error
+- coverage 门槛通过（statements 74.75 / branches 91.06 / functions 82.70）
+
+---
+
 ## [1.3.59] - 2026-11-17
 
 > **对局存档的结算结果补上字段级校验** —— 此前 `lastSettle` 一个字段都没验，
