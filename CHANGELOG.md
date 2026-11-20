@@ -8,6 +8,39 @@
 
 ---
 
+## [1.3.61] - 2026-11-21
+
+> **存档「当前墩」关系不变量 + `ctxOf` 缓存键补 config** —— 读侧字段校验（KN-27/28/29）
+> 虽已收口，但「字段合法 ≠ 组合合法」：一份塞满 4 手却停在 `play` 的篡改档能骗过
+> 108 张守恒，让整局卡死；打王级换局时规则开关的改动被旧缓存吞掉、静默失效。
+
+### 修复 · 当前墩的关系不变量（KN-30）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `loadStateDetailed` 只验 `trick.plays.length <= 4` + 每手 `{seat,cards}` 形状 + 108 张守恒 + id 唯一，从不验「当前墩」是不是合法的部分墩。把 history 一整墩搬进 `trick.plays`、删掉该墩记录，总数仍 108、字段全合法 |
+| 风险 | phase='play' 且 4 手占满四座位 ⇒ `seatToPlay` 指向已出过牌的座位 ⇒ `playCards` 的「本墩已出过」防御拒绝每次出牌（人类/AI），而 `resolveCurrentTrick` 只在落第 4 手之后触发、时机已过 ⇒ **整局卡死只能重开**；座位重复/跳序则让 `seatToPlay` 算错人 |
+| 修复 | `persist.ts` 新增 `isValidPartialTrick`：play 阶段当前墩必须是「从 leader 起、顺时针连续、座位互异、长度 0..3」的部分墩（第 4 手一落即结算清空）；非 play 阶段当前墩必须为空。读档时整份丢弃畸形档 |
+| 效果 | 合法对局逐帧存档往返不受影响（全量 729 例含逐帧存档保真测试全绿）；5 类畸形档（满 4 手 / 座位重复 / 跳序 / plays[0] 非 leader / 结算阶段非空墩）全部拒之门外 |
+
+### 修复 · `ctxOf` 缓存键漏 config（KN-31）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `ctxOf` 模块级缓存的键只有 `(twoAsPermanent, levelRank, trump, forcedNT)` 四字段，而返回的 `RuleContext.config` 里 `allowSelfCounter`/`allowCounterNT`/`allowPartnerGuard` 三个开关**不进键** |
+| 风险 | 规则改动走 `updateConfig → pendingConfig → nextRound → startRound`，下一局 `config` 换新对象；打王级（forcedNT=true、trump='NT'、levelRank=18 均不变）时四键全同 ⇒ 命中旧 `RuleContext`、读到旧 `config` ⇒ 玩家改的反主/反无将/加固开关**静默失效** |
+| 修复 | 缓存键加一次 `config` 引用比较（config 是 immutable 更新，换对象即换规则），零字符串分配、开销可忽略 |
+| 效果 | 同键不同 config 必重建；config 引用不变时仍命中同一对象（零重建）。JS 152.06 → 152.36 kB（gzip 54.53 → 54.63 kB） |
+
+### 验证
+
+- 64 个测试文件 / **729 例**全通过（新增 `trickRelationValidation.test.ts` 7 例 + `ctxOfCache.test.ts` 3 例，修复前 7 例变红并证明卡死/陈旧 config）
+- `typecheck` / `build` 通过（152.36 kB / gzip 54.63 kB）
+- 浏览器端到端 18/18，零 console error
+- coverage 门槛通过（statements 74.83 / branches 91.08 / functions 82.75）
+
+---
+
 ## [1.3.60] - 2026-11-20
 
 > **对局日志档补上元素级字段校验** —— 此前 `tractor.logs.v1` 只验「是数组」，

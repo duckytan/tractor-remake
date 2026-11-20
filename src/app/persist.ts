@@ -389,6 +389,22 @@ function isTrickRecord(v: unknown): boolean {
 }
 
 /**
+ * 当前墩的座位序列是不是一个合法的「部分墩」（KN-30）。
+ *
+ * 合法墩从第 `leader` 家起、按顺时针逐家出牌，每人恰好一次；
+ * 凑满 4 手的瞬间就被 `resolveCurrentTrick` 结算并清空。因此**进行中**的墩
+ * 只可能是长度 0..3、座位依次为 `leader, leader+1, ...`（模 4）的连续序列。
+ * 满 4 手、座位重复、跳序、`plays[0]` 不是 leader —— 都是组合畸形，读档即拒。
+ */
+function isValidPartialTrick(leader: Seat, seats: readonly Seat[]): boolean {
+  if (seats.length >= SEAT_COUNT) return false
+  for (let i = 0; i < seats.length; i++) {
+    if (seats[i] !== ((leader + i) % SEAT_COUNT)) return false
+  }
+  return true
+}
+
+/**
  * `Play.analysis` 是**派生数据**：它完全由 `cards` + `RuleContext` 决定。
  *
  * 存档里存着它只是为了序列化方便。读档时若原样信任，一份被篡改的 analysis
@@ -539,6 +555,25 @@ export function loadStateDetailed(): LoadResult {
     seenIds.add(c.id)
   }
   if (seenIds.size !== DECK_SIZE) return { state: null, issue: 'corrupt' }
+
+  // ---- 当前墩的关系不变量（KN-30）----
+  //
+  // 上面的字段级校验 + 108 守恒 + id 唯一都是「每张牌合法、总数对」，但挡不住
+  // **组合畸形**：把 history 里一整墩搬进 trick.plays、删掉该墩记录，总数仍 108。
+  // 若 phase='play' 且 plays 已有 4 手（占满四座位）：seatToPlay 取末手下家，必然
+  // 已出过牌 ⇒ playCards 的「本墩已出过」防御把每次出牌都拒掉，而 resolveCurrentTrick
+  // 只在「落第 4 手之后」触发、时机已过 ⇒ phase 永远停在 play ⇒ 整局卡死。
+  // 座位重复 / 跳序则让 seatToPlay 算错人。这里统一要求当前墩是合法的**部分墩**：
+  //   - play 阶段：长度 0..3，座位从 leader 起顺时针连续且互异
+  //   - 非 play 阶段：当前墩必须为空（结算/定主/埋底都已清空）
+  const trickPlaysSeats = trickPlays.map((p) => p.seat)
+  if (o.phase === 'play') {
+    if (!isValidPartialTrick(o.trick.leader as Seat, trickPlaysSeats)) {
+      return { state: null, issue: 'corrupt' }
+    }
+  } else if (trickPlaysSeats.length !== 0) {
+    return { state: null, issue: 'corrupt' }
+  }
 
   // ---- 组合成完整状态。能走到这里的字段已全部校验过，剩下的是「软字段」----
   const base: GameState = {

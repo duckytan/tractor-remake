@@ -333,11 +333,19 @@ export type HintStyle = 'safe' | 'ai'
  *
  * **缓存键**（v1.3.58）：用 4 个独立字段比较代替模板字符串拼接，
  * 每次调 `ctxOf` 都省掉一次字符串分配（热路径函数被调十几次/手）。
+ *
+ * **缓存键补 config 引用**（v1.3.61，KN-31）：4 个字段没覆盖 `config` 里的
+ * `allowSelfCounter` / `allowCounterNT` / `allowPartnerGuard`。规则开关改动走
+ * `updateConfig → pendingConfig → nextRound → startRound`，下一局 `config` 换成新对象；
+ * 打王级（forcedNT=true、trump='NT'、levelRank=18 不变）时 4 键全同，旧实现会命中旧
+ * `RuleContext`、读到旧 `config` ⇒ 玩家改的反主/反无将/加固开关**静默失效**。
+ * 加一次引用比较（`config` 是 immutable 更新，换对象即换规则），零分配、开销可忽略。
  */
 let _ctxTwoAsPerm = false
 let _ctxLevelRank = -1
 let _ctxTrump: Trump | null = null
 let _ctxForcedNT = false
+let _ctxConfig: RuleConfig | null = null
 let _ctxCache: RuleContext | null = null
 
 export function ctxOf(state: GameState): RuleContext {
@@ -347,13 +355,15 @@ export function ctxOf(state: GameState): RuleContext {
     _ctxTwoAsPerm === two &&
     _ctxLevelRank === state.levelRank &&
     _ctxTrump === state.trump &&
-    _ctxForcedNT === state.forcedNT
+    _ctxForcedNT === state.forcedNT &&
+    _ctxConfig === state.config
   )
     return _ctxCache
   _ctxTwoAsPerm = two
   _ctxLevelRank = state.levelRank
   _ctxTrump = state.trump
   _ctxForcedNT = state.forcedNT
+  _ctxConfig = state.config
   _ctxCache = {
     power: buildPowerTable({
       mode: two ? 1 : 0,
